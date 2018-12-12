@@ -1,9 +1,9 @@
 package gl.ao.addi.storage;
 
 import gl.ao.addi.Construct;
-import gl.ao.addi.DatabaseObject;
+import gl.ao.addi.schema.DatabaseObject;
 import gl.ao.addi.Globals;
-import gl.ao.addi.TableObject;
+import gl.ao.addi.schema.TableObject;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -149,7 +149,7 @@ public class Storage {
         } catch (Exception e) {
             e.printStackTrace();
         }
-        
+
         return sro;
     }
 

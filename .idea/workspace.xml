@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="abe8f7d5-88c3-4e26-9356-ecab695b70e6" name="Default" comment="" />
+    <list default="true" id="abe8f7d5-88c3-4e26-9356-ecab695b70e6" name="Default" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/addi/DatabaseObject.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/DatabaseObject.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/addi/TableObject.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/TableObject.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/addi/storage/Storage.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/addi/storage/Storage.java" afterDir="false" />
+    </list>
     <ignored path="$PROJECT_DIR$/out/" />
     <ignored path="$PROJECT_DIR$/target/" />
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
@@ -53,16 +58,46 @@
           </provider>
         </entry>
       </file>
-      <file pinned="false" current-in-tab="true">
+      <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/storage/Storage.java">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="461">
-              <caret line="134" column="48" lean-forward="true" selection-start-line="134" selection-start-column="48" selection-end-line="134" selection-end-column="48" />
+            <state relative-caret-position="232">
+              <caret line="34" column="43" lean-forward="true" selection-start-line="34" selection-start-column="43" selection-end-line="34" selection-end-column="43" />
               <folding>
                 <element signature="imports" expanded="true" />
                 <element signature="e#1187#1188#0" expanded="true" />
                 <element signature="e#1263#1264#0" expanded="true" />
               </folding>
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="true">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/DatabaseObject.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="135">
+              <caret line="17" column="11" selection-start-line="17" selection-start-column="11" selection-end-line="17" selection-end-column="11" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/TableObject.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="195">
+              <caret line="13" column="22" lean-forward="true" selection-start-line="13" selection-start-column="22" selection-end-line="13" selection-end-column="22" />
+              <folding>
+                <element signature="imports" expanded="true" />
+              </folding>
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/Globals.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="510">
+              <caret line="34" column="21" lean-forward="true" selection-start-line="34" selection-start-column="21" selection-end-line="34" selection-end-column="21" />
             </state>
           </provider>
         </entry>
@@ -112,6 +147,9 @@
       <find>json</find>
     </findStrings>
   </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
   <component name="IdeDocumentHistory">
     <option name="CHANGED_PATHS">
       <list>
@@ -152,6 +190,7 @@
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/DatabaseObject.java" />
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/storage/StorageResponseObject.java" />
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/storage/Storage.java" />
+        <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/DatabaseObject.java" />
       </list>
     </option>
   </component>
@@ -199,6 +238,7 @@
     <option name="width" value="1920" />
     <option name="height" value="1140" />
   </component>
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
   <component name="ProjectView">
     <navigator proportions="" version="1">
       <foldersAlwaysOnTop value="true" />
@@ -317,6 +357,15 @@
               <item name="main" type="462c0819:PsiDirectoryNode" />
               <item name="java" type="462c0819:PsiDirectoryNode" />
               <item name="addi" type="462c0819:PsiDirectoryNode" />
+              <item name="schema" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="ADDI" type="b2602c69:ProjectViewProjectNode" />
+              <item name="addi" type="462c0819:PsiDirectoryNode" />
+              <item name="src" type="462c0819:PsiDirectoryNode" />
+              <item name="main" type="462c0819:PsiDirectoryNode" />
+              <item name="java" type="462c0819:PsiDirectoryNode" />
+              <item name="addi" type="462c0819:PsiDirectoryNode" />
               <item name="storage" type="462c0819:PsiDirectoryNode" />
             </path>
           </expand>
@@ -332,7 +381,7 @@
     <property name="SearchEverywhereHistoryKey" value="Inter&#9;FILE&#9;file:///Users/44047642/Mine/addi/src/main/java/gl/ao/addi/Interactive.java&#10;wrap&#9;ACTION&#9;EditorToggleUseSoftWraps" />
     <property name="WebServerToolWindowFactoryState" value="false" />
     <property name="aspect.path.notification.shown" value="true" />
-    <property name="com.android.tools.idea.instantapp.provision.ProvisionBeforeRunTaskProvider.myTimeStamp" value="1544631985693" />
+    <property name="com.android.tools.idea.instantapp.provision.ProvisionBeforeRunTaskProvider.myTimeStamp" value="1544632990047" />
     <property name="com.intellij.testIntegration.createTest.CreateTestDialog.defaultLibrary" value="JUnit5" />
     <property name="js-jscs-nodeInterpreter" value="$USER_HOME$/homebrew/bin/node" />
     <property name="js.eslint.eslintPackage" value="" />
@@ -711,12 +760,12 @@
       <workItem from="1541807569030" duration="102386000" />
       <workItem from="1543500219582" duration="50358000" />
       <workItem from="1544180494565" duration="2504000" />
-      <workItem from="1544503909488" duration="5138000" />
+      <workItem from="1544503909488" duration="5621000" />
     </task>
     <servers />
   </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="164826000" />
+    <option name="totallyTimeSpent" value="165309000" />
   </component>
   <component name="TodoView">
     <todo-panel id="selected-file">
@@ -731,7 +780,7 @@
     <frame x="0" y="23" width="1920" height="1140" extended-state="6" />
     <editor active="true" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.2539936" />
+      <window_info content_ui="combo" id="Project" order="0" visible="true" weight="0.2539936" />
       <window_info id="Structure" order="1" weight="0.25" />
       <window_info id="Nl-Palette" order="2" />
       <window_info id="Capture Tool" order="3" />
@@ -741,13 +790,13 @@
       <window_info id="Image Layers" order="7" />
       <window_info anchor="bottom" id="Message" order="0" />
       <window_info anchor="bottom" id="Find" order="1" weight="0.3281412" />
-      <window_info anchor="bottom" id="Run" order="2" weight="0.29130435" />
+      <window_info active="true" anchor="bottom" id="Run" order="2" visible="true" weight="0.29103053" />
       <window_info anchor="bottom" id="Debug" order="3" weight="0.23964968" />
       <window_info anchor="bottom" id="Cvs" order="4" weight="0.25" />
       <window_info anchor="bottom" id="Inspection" order="5" weight="0.4" />
       <window_info anchor="bottom" id="TODO" order="6" />
       <window_info anchor="bottom" id="Event Log" order="7" side_tool="true" />
-      <window_info anchor="bottom" id="Version Control" order="8" show_stripe_button="false" />
+      <window_info anchor="bottom" id="Version Control" order="8" />
       <window_info anchor="bottom" id="Terminal" order="9" />
       <window_info anchor="bottom" id="Messages" order="10" weight="0.40705433" />
       <window_info anchor="bottom" id="Inspection Results" order="11" weight="0.32976446" />
@@ -773,7 +822,7 @@
     <breakpoint-manager>
       <breakpoints>
         <line-breakpoint enabled="true" type="java-line">
-          <url>file://$PROJECT_DIR$/src/main/java/gl/ao/addi/TableObject.java</url>
+          <url>file://$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/TableObject.java</url>
           <line>43</line>
           <properties />
           <option name="timeStamp" value="91" />
@@ -881,13 +930,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/Globals.java">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="588">
-          <caret line="46" lean-forward="true" selection-start-line="46" selection-end-line="46" />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/src/main/java/org/json/JSONObject.java">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="192">
@@ -908,18 +950,6 @@
         <state relative-caret-position="90">
           <caret line="8" column="40" selection-start-line="8" selection-start-column="13" selection-end-line="8" selection-end-column="40" />
           <folding />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/TableObject.java">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="971">
-          <caret line="80" column="26" selection-start-line="80" selection-start-column="26" selection-end-line="80" selection-end-column="26" />
-          <folding>
-            <element signature="imports" expanded="true" />
-            <element signature="e#1922#1923#0" expanded="true" />
-            <element signature="e#1973#1974#0" expanded="true" />
-          </folding>
         </state>
       </provider>
     </entry>
@@ -970,26 +1000,39 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/DatabaseObject.java">
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/TableObject.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="165">
-          <caret line="16" column="11" selection-start-line="16" selection-start-column="11" selection-end-line="16" selection-end-column="11" />
+        <state relative-caret-position="195">
+          <caret line="13" column="22" lean-forward="true" selection-start-line="13" selection-start-column="22" selection-end-line="13" selection-end-column="22" />
           <folding>
-            <element signature="e#2217#2218#0" expanded="true" />
-            <element signature="e#2268#2269#0" expanded="true" />
+            <element signature="imports" expanded="true" />
           </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/Globals.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="510">
+          <caret line="34" column="21" lean-forward="true" selection-start-line="34" selection-start-column="21" selection-end-line="34" selection-end-column="21" />
         </state>
       </provider>
     </entry>
     <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/storage/Storage.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="461">
-          <caret line="134" column="48" lean-forward="true" selection-start-line="134" selection-start-column="48" selection-end-line="134" selection-end-column="48" />
+        <state relative-caret-position="232">
+          <caret line="34" column="43" lean-forward="true" selection-start-line="34" selection-start-column="43" selection-end-line="34" selection-end-column="43" />
           <folding>
             <element signature="imports" expanded="true" />
             <element signature="e#1187#1188#0" expanded="true" />
             <element signature="e#1263#1264#0" expanded="true" />
           </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/DatabaseObject.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="135">
+          <caret line="17" column="11" selection-start-line="17" selection-start-column="11" selection-end-line="17" selection-end-column="11" />
         </state>
       </provider>
     </entry>

@@ -1,4 +1,7 @@
-package gl.ao.addi;
+package gl.ao.addi.schema;
+
+import gl.ao.addi.Construct;
+import gl.ao.addi.Globals;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -11,8 +14,8 @@ public class DatabaseObject implements Serializable {
 
     static final long serialVersionUID = 1L;
 
-    String name = "";
-    String creator = null;
+    public String name = "";
+    public String creator = null;
 
     public Map<String, Map<String, Integer>> tables = new HashMap<>();
 
