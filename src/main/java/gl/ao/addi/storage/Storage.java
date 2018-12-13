@@ -145,6 +145,12 @@ public class Storage {
             sro.pieceId = pieceId;
             sro.success = true;
 
+            for (Object key : json.keySet()) {
+                String k = (String) key;
+                String v = (String) json.get(k);
+                sro.index.put(k, v);
+            }
+
             return sro;
         } catch (Exception e) {
             e.printStackTrace();

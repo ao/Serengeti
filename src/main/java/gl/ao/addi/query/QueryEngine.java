@@ -1,6 +1,7 @@
 package gl.ao.addi.query;
 
 import gl.ao.addi.Construct;
+import gl.ao.addi.storage.StorageResponseObject;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -159,8 +160,9 @@ public class QueryEngine {
                             String v = values.get(i).replaceAll("^\'|\'$", "").trim();
                             json.put(k, v);
                         }
-                        Construct.storage.insert(databaseName, tableName, json);
-                        qro.executed = true;
+                        StorageResponseObject sro = Construct.storage.insert(databaseName, tableName, json);
+                        Construct.indexer.addToQueue(sro);
+                        qro.executed = sro.success;
                     }
 
                 } else {
