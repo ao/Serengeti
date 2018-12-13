@@ -13,9 +13,16 @@ public class Indexer {
         executeIndexer();
     }
 
-    public boolean addToQueue(Object obj) {
+    public synchronized boolean addToQueue(Object obj) {
         queue.add(obj);
         return true;
+    }
+    public synchronized Object pollQueue() {
+        if (queue.size()>0) {
+            return queue.poll();
+        } else {
+            return null;
+        }
     }
 
     private void executeIndexer() {
@@ -23,11 +30,10 @@ public class Indexer {
             @Override
             public void run() {
                 for (;;) {
-                    if (queue.size()>0) {
-                        Object item = queue.poll();
-
+                    Object item;
+                    if (null != (item=pollQueue())) {
                         Map<String, String> index = new HashMap<>();
-                        index.put(Integer.toString(index.hashCode()), Integer.toString(index.hashCode())+"_1");
+                        index.put(Integer.toString(item.hashCode()), Integer.toString(item.hashCode())+"_1");
                     }
                 }
             }
