@@ -1,4 +1,4 @@
-package gl.ao.addi;
+package gl.ao.addi.index;
 
 import gl.ao.addi.storage.StorageResponseObject;
 
@@ -43,7 +43,10 @@ public class Indexer {
 
     }
 
-    public void runIndexer() {
+    public void loadIndex(String db, String table) {
+
+    }
+    public void saveIndex(String db, String table) {
 
     }
 }
