@@ -1,5 +1,6 @@
 package gl.ao.addi;
 
+import gl.ao.addi.index.Indexer;
 import gl.ao.addi.network.Network;
 import gl.ao.addi.storage.Storage;
 
