@@ -161,7 +161,7 @@ public class QueryEngine {
                             json.put(k, v);
                         }
                         StorageResponseObject sro = Construct.storage.insert(databaseName, tableName, json);
-                        Construct.indexer.addToQueue(sro);
+//                        Construct.indexer.addToQueue(sro);
                         qro.executed = sro.success;
                     }
 

@@ -15,7 +15,7 @@ public class Indexer {
         executeIndexer();
     }
 
-    public synchronized  boolean addToQueue(StorageResponseObject sro) {
+    public synchronized boolean addToQueue(StorageResponseObject sro) {
         queue.add(sro);
         return true;
     }
