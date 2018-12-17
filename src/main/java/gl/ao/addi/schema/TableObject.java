@@ -80,13 +80,29 @@ public class TableObject implements Serializable {
         return true;
     }
     public JSONObject get(String key, String value) {
-        for (String row: rows.values()) {
+        for (String k: rows.keySet()) {
+            String row = rows.get(k);
             JSONObject json = new JSONObject(row);
             if (json.has(key) && json.get(key).equals(value)) {
-                return json;
+                JSONObject returnJSON = json;
+                returnJSON.put("__key", k);
+                returnJSON.put("__piece", pieceId);
+                return returnJSON;
             }
         }
         return null;
+    }
+    public boolean update(String update_key, String update_val, String where_col, String where_val) {
+        for (String k: rows.keySet()) {
+            String row = rows.get(k);
+            JSONObject json = new JSONObject(row);
+            if (json.has(where_col) && json.get(where_col).equals(where_val)) {
+                JSONObject r = new JSONObject(rows.get(k));
+                r.put(update_key, update_val);
+                rows.put(k, r.toString());
+            }
+        }
+        return true;
     }
 
     public boolean saveToDisk() {
