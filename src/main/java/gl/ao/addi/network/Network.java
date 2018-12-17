@@ -11,15 +11,21 @@ public class Network {
 
     public Map<String, JSONObject> nodes = new HashMap<>();
 
+    int pingInterval = 10 * 1000;
+    int networkTimeout = 5000;
+    int successStatus = 200;
+    int networkPort = 1985;
+
     public void analyse() {
         System.out.println(nodes);
         new Thread(new Runnable() {
             @Override
             public void run() {
-                getNetworkIPsPorts();
                 try {
-                    Thread.sleep(10 * 1000);
-                    analyse();
+                    for (;;) {
+                        getNetworkIPsPorts();
+                        Thread.sleep(pingInterval);
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -34,14 +40,12 @@ public class Network {
             InetAddress ina = InetAddress.getLocalHost();
             ip = ina.getAddress();
         } catch (Exception e) {
-            // exit method, otherwise "ip might not have been initialized"
+            // IP might not have been initialized
             return;
         }
 
         for(int i=1;i<=254;i++) {
-            // i as non-final variable cannot be referenced from inner class
-            final int j = i;
-            // new thread for parallel execution
+            final int j = i; // i as non-final variable cannot be referenced from inner class
             new Thread(new Runnable() {
                 public void run() {
                     ip[3] = (byte) j;
@@ -52,16 +56,16 @@ public class Network {
                         InetAddress address = InetAddress.getByAddress(ip);
                         String _ip = tryingIp = address.getHostAddress();
 
-                        URL url = new URL("http://" + _ip + ":1985");
+                        URL url = new URL("http://" + _ip + ":"+Integer.toString(networkPort));
                         HttpURLConnection con = (HttpURLConnection) url.openConnection();
                         con.setRequestMethod("GET");
                         con.getDoOutput();
-                        con.setConnectTimeout(5000);
-                        con.setReadTimeout(5000);
+                        con.setConnectTimeout(networkTimeout);
+                        con.setReadTimeout(networkTimeout);
                         con.setRequestProperty("Content-Type", "application/json");
 
                         int status = con.getResponseCode();
-                        if (status == 200) {
+                        if (status == successStatus) {
                             BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
                             String inputLine;
                             StringBuffer content = new StringBuffer();
@@ -71,7 +75,6 @@ public class Network {
 
                             JSONObject jsonObj = new JSONObject(content.toString());
                             JSONObject nodeJSON = (JSONObject) jsonObj.get("this");
-
 
                             if (nodes.containsKey(_ip)) nodes.replace(_ip, nodeJSON);
                             else nodes.put(_ip, nodeJSON);
@@ -83,12 +86,11 @@ public class Network {
 
                         con.disconnect();
 
-
                     } catch (SocketTimeoutException ste) {
                         // our own little /dev/null
                     } catch (ConnectException ce) {
                         // Connection refused (corporate network blocking?)
-                        System.out.println(tryingIp+" : "+ce.getMessage());
+                        //System.out.println(tryingIp+" : "+ce.getMessage());
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
