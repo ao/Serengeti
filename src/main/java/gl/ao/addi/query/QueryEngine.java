@@ -220,8 +220,8 @@ public class QueryEngine {
             String where = one.get(1).trim();
 
             List<String> dbAndTable = Arrays.asList(one.get(0).replace("delete", "").split("\\."));
-            String databaseName = dbAndTable.get(0);
-            String tableName = dbAndTable.get(1);
+            String databaseName = dbAndTable.get(0).trim();
+            String tableName = dbAndTable.get(1).trim();
 
             List<String> w = Arrays.asList(where.split("="));
             if (w.size()==2) {
