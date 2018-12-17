@@ -102,6 +102,16 @@ public class TableObject implements Serializable {
         }
         return true;
     }
+    public boolean delete(String where_col, String where_val) {
+        for (String k: rows.keySet()) {
+            String row = rows.get(k);
+            JSONObject json = new JSONObject(row);
+            if (json.has(where_col) && json.get(where_col).equals(where_val)) {
+                rows.remove(k);
+            }
+        }
+        return true;
+    }
 
     public boolean saveToDisk() {
         try {
