@@ -39,7 +39,6 @@ public class Server {
 
             JSONObject jsonObjThis = new JSONObject();
 
-
             jsonObjThis.put("version", "0.0.1");
             jsonObjThis.put("started", Construct.currentDate);
 
@@ -98,7 +97,7 @@ public class Server {
 
 
             JSONObject jsonObjRoot = new JSONObject();
-            jsonObjRoot.put("_", "Automatically Distributed Database System - by Andrew Odendaal (ao.gl)");
+            jsonObjRoot.put("_", "Autonomous Distributed Database");
             jsonObjRoot.put("this", jsonObjThis);
             jsonObjRoot.put("totalNodes", Integer.toString(Construct.network.nodes.size()));
             jsonObjRoot.put("nodes", Construct.network.nodes);
