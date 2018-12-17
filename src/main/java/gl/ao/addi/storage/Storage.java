@@ -122,8 +122,7 @@ public class Storage {
             createTablePathIfNotExists(db, table);
 
             String pieceId = getPieceId(db, table);
-            TableObject to = new TableObject();
-            if (to.isPieceFull(db, table, pieceId)) {
+            if (new TableObject().isPieceFull(db, table, pieceId)) {
                 Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
                 DatabaseObject dbo = new DatabaseObject().loadExisting(file);
                 String oldPiece = pieceId;
@@ -138,9 +137,9 @@ public class Storage {
                 }
             }
 
-            TableObject _table = new TableObject(db, table, pieceId);
-            _table.add(json);
-            _table.saveToDisk();
+            TableObject to = new TableObject(db, table, pieceId);
+            to.add(json);
+            to.saveToDisk();
 
             sro.pieceId = pieceId;
             sro.success = true;
@@ -163,17 +162,26 @@ public class Storage {
      * Update
      * @param db
      * @param table
-     * @param key
-     * @param val
+     * @param update_key
+     * @param update_val
      * @param where_col
      * @param where_val
      * @return
      */
-    public boolean update(String db, String table, String key, String val, String where_col, String where_val) {
+    public boolean update(String db, String table, String update_key, String update_val, String where_col, String where_val) {
         try {
+            Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
+            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+            if (tableExists(db, table)) {
+                Map<String, Integer> pieces = dbo.tables.get(table);
 
-
-            return true;
+                for (String pieceId : pieces.keySet()) {
+                    TableObject to = new TableObject(db, table, pieceId);
+                    to.update(update_key, update_val, where_col, where_val);
+                    to.saveToDisk();
+                }
+                return true;
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
