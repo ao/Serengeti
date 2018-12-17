@@ -75,8 +75,6 @@ public class TableObject implements Serializable {
     public boolean add(JSONObject json) {
         String rowId = UUID.randomUUID().toString();
         rows.put(rowId, json.toString());
-
-//        saveToDisk();
         return true;
     }
     public JSONObject get(String key, String value) {
