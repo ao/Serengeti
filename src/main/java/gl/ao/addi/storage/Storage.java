@@ -198,10 +198,18 @@ public class Storage {
      */
     public boolean delete(String db, String table, String where_col, String where_val) {
         try {
+            Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
+            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+            if (tableExists(db, table)) {
+                Map<String, Integer> pieces = dbo.tables.get(table);
 
-
-
-            return true;
+                for (String pieceId : pieces.keySet()) {
+                    TableObject to = new TableObject(db, table, pieceId);
+                    to.delete(where_col, where_val);
+                    to.saveToDisk();
+                }
+                return true;
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
