@@ -9,9 +9,7 @@ import java.io.Serializable;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 public class TableObject implements Serializable {
 
@@ -103,12 +101,17 @@ public class TableObject implements Serializable {
         return true;
     }
     public boolean delete(String where_col, String where_val) {
+        List<String> keysToDelete = new LinkedList<>();
         for (String k: rows.keySet()) {
             String row = rows.get(k);
             JSONObject json = new JSONObject(row);
             if (json.has(where_col) && json.get(where_col).equals(where_val)) {
-                rows.remove(k);
+                //rows.remove(k); -- don't do this, otherwise you'll get an java.util.ConcurrentModificationException !
+                keysToDelete.add(k);
             }
+        }
+        for (int i=0; i<keysToDelete.size(); i++) {
+            rows.remove(keysToDelete.get(i));
         }
         return true;
     }
