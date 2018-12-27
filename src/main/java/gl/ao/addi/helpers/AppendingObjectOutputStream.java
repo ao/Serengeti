@@ -1,4 +1,4 @@
-package gl.ao.addi;
+package gl.ao.addi.helpers;
 
 import java.io.IOException;
 import java.io.ObjectOutputStream;

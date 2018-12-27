@@ -1,5 +1,6 @@
-package gl.ao.addi;
+package gl.ao.addi.helpers;
 
+import gl.ao.addi.Construct;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
