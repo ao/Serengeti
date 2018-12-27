@@ -15,8 +15,9 @@ public class Network {
     int networkTimeout = 5000;
     int successStatus = 200;
     int networkPort = 1985;
+    int communicationPort = 19851;
 
-    public void analyse() {
+    public void findNodes() {
         System.out.println(nodes);
         new Thread(new Runnable() {
             @Override
@@ -97,6 +98,94 @@ public class Network {
 
                 }
             }).start();
+        }
+    }
+
+    public void listenForCommunications() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                Socket socket = null;
+                try {
+                    ServerSocket serverSocket = new ServerSocket(communicationPort);
+
+                    while (true) {
+                        //Reading the message from the client
+                        socket = serverSocket.accept();
+                        InputStream is = socket.getInputStream();
+                        InputStreamReader isr = new InputStreamReader(is);
+                        BufferedReader br = new BufferedReader(isr);
+                        String number = br.readLine();
+                        System.out.println("Message received from client is " + number);
+
+                        //Multiplying the number by 2 and forming the return message
+                        String returnMessage;
+                        try {
+                            int numberInIntFormat = Integer.parseInt(number);
+                            int returnValue = numberInIntFormat * 2;
+                            returnMessage = String.valueOf(returnValue) + "\n";
+                        } catch (NumberFormatException e) {
+                            //Input was not a number. Sending proper message back to client.
+                            returnMessage = "Please send a proper number\n";
+                        }
+
+                        //Sending the response back to the client.
+                        OutputStream os = socket.getOutputStream();
+                        OutputStreamWriter osw = new OutputStreamWriter(os);
+                        BufferedWriter bw = new BufferedWriter(osw);
+                        bw.write(returnMessage);
+                        System.out.println("Message sent to the client is " + returnMessage);
+                        bw.flush();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                finally {
+                    try {
+                        if (socket != null && !socket.isClosed()){
+                            socket.close();
+                        }
+                    }
+                    catch (Exception e) {}
+                }
+            }
+        });
+    }
+
+    public void sendCommunicationsToNode(String nodeIP, String message) {
+        Socket socket = null;
+        try {
+            InetAddress address = InetAddress.getByName(nodeIP);
+            socket = new Socket(address, communicationPort);
+
+            //Send the message to the server
+            OutputStream os = socket.getOutputStream();
+            OutputStreamWriter osw = new OutputStreamWriter(os);
+            BufferedWriter bw = new BufferedWriter(osw);
+
+            String sendMessage = message + "\n";
+            bw.write(sendMessage);
+            bw.flush();
+            System.out.println("Message sent to the server : "+sendMessage);
+
+            //Get the return message from the server
+            InputStream is = socket.getInputStream();
+            InputStreamReader isr = new InputStreamReader(is);
+            BufferedReader br = new BufferedReader(isr);
+            String responseMessage = br.readLine();
+            System.out.println("Message received from the server : " +responseMessage);
+        }
+        catch (Exception exception) {
+            exception.printStackTrace();
+        }
+        finally {
+            //Closing the socket
+            try {
+                socket.close();
+            }
+            catch(Exception e) {
+                e.printStackTrace();
+            }
         }
     }
 
