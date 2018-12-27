@@ -2,7 +2,7 @@ package gl.ao.addi.storage;
 
 import gl.ao.addi.Construct;
 import gl.ao.addi.schema.DatabaseObject;
-import gl.ao.addi.Globals;
+import gl.ao.addi.helpers.Globals;
 import gl.ao.addi.schema.TableObject;
 import org.json.JSONObject;
 

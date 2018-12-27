@@ -1,6 +1,6 @@
 package gl.ao.addi.index;
 
-import gl.ao.addi.Globals;
+import gl.ao.addi.helpers.Globals;
 
 import java.io.FileOutputStream;
 import java.io.ObjectOutputStream;
