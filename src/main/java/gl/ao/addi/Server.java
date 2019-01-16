@@ -13,6 +13,7 @@ import java.util.Map;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import gl.ao.addi.network.Network;
 import gl.ao.addi.query.QueryEngine;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -41,6 +42,8 @@ public class Server {
 
             jsonObjThis.put("version", "0.0.1");
             jsonObjThis.put("started", Construct.currentDate);
+
+            jsonObjThis.put("cluster", Construct.network.clusterId);
 
             DateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
             dateFormat.setTimeZone(java.util.TimeZone.getTimeZone("GMT"));
@@ -99,8 +102,8 @@ public class Server {
             JSONObject jsonObjRoot = new JSONObject();
             jsonObjRoot.put("_", "Autonomous Distributed Database");
             jsonObjRoot.put("this", jsonObjThis);
-            jsonObjRoot.put("totalNodes", Integer.toString(Construct.network.nodes.size()));
-            jsonObjRoot.put("nodes", Construct.network.nodes);
+            jsonObjRoot.put("totalNodes", Integer.toString(Construct.network.availableNodes.size()));
+            jsonObjRoot.put("availableNodes", Construct.network.availableNodes);
 
             //response
             String response = jsonObjRoot.toString();
