@@ -31,8 +31,7 @@ public class Construct {
     private void init() {
         this.instance = this;
         this.server.serve();
-        this.network.findNodes();
-        this.network.listenForCommunications();
+        this.network.initiate();
     }
 
 }

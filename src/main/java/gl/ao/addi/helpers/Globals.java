@@ -16,6 +16,11 @@ public class Globals {
     public static String pieces_path = Construct.data_path + "pieces/";
     public static int piece_size = 1*1024*1024;
 
+    public static int port_default = 1985;
+    public static int port_communication = 19851;
+
+    public static int max_cluster_nodes = 3;
+
     /***
      * Convert to Bytes
      * @param object
