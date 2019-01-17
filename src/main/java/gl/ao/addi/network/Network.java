@@ -49,17 +49,9 @@ public class Network {
          */
         final byte[] ip;
         try {
-//            InetAddress ina = InetAddress.getLocalHost();
-//            ip = ina.getAddress();
-
-//            ip = InetAddress.getByAddress(Globals.getHost4Address().getBytes()).getHostAddress().getBytes(); //.getBytes();
-
             String __ip = Globals.getHost4Address();
             InetAddress ina = InetAddress.getByName(__ip);
             ip = ina.getAddress();
-
-            System.out.println(Globals.getHost4Address());
-
         } catch (Exception e) {
             // IP might not have been initialized
             return;
