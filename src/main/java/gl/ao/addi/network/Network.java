@@ -54,10 +54,12 @@ public class Network {
 
 //            ip = InetAddress.getByAddress(Globals.getHost4Address().getBytes()).getHostAddress().getBytes(); //.getBytes();
 
-            ip = Globals.getHost4Address().getBytes();
+            String __ip = Globals.getHost4Address();
+            InetAddress ina = InetAddress.getByName(__ip);
+            ip = ina.getAddress();
+
             System.out.println(Globals.getHost4Address());
 
-            String a = "";
         } catch (Exception e) {
             // IP might not have been initialized
             return;
