@@ -112,6 +112,8 @@ public class Network {
                     } catch (ConnectException ce) {
                         // Connection refused (corporate network blocking?)
                         //System.out.println(tryingIp+" : "+ce.getMessage());
+                    } catch (NoRouteToHostException e) {
+                        //java.net.NoRouteToHostException: No route to host (Host unreachable)
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
