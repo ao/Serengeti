@@ -121,7 +121,11 @@ public class Network {
             public void run() {
                 Socket socket = null;
                 try {
-                    ServerSocket serverSocket = new ServerSocket(Globals.port_communication);
+
+                    String __ip = Globals.getHost4Address();
+                    InetAddress ina = InetAddress.getByName(__ip);
+
+                    ServerSocket serverSocket = new ServerSocket(Globals.port_communication, 50, ina);
 
                     while (true) {
                         //Reading the message from the client
@@ -132,24 +136,24 @@ public class Network {
                         String number = br.readLine();
                         System.out.println("Message received from client is " + number);
 
-                        //Multiplying the number by 2 and forming the return message
-                        String returnMessage;
-                        try {
-                            int numberInIntFormat = Integer.parseInt(number);
-                            int returnValue = numberInIntFormat * 2;
-                            returnMessage = String.valueOf(returnValue) + "\n";
-                        } catch (NumberFormatException e) {
-                            //Input was not a number. Sending proper message back to client.
-                            returnMessage = "Please send a proper number\n";
-                        }
-
-                        //Sending the response back to the client.
-                        OutputStream os = socket.getOutputStream();
-                        OutputStreamWriter osw = new OutputStreamWriter(os);
-                        BufferedWriter bw = new BufferedWriter(osw);
-                        bw.write(returnMessage);
-                        System.out.println("Message sent to the client is " + returnMessage);
-                        bw.flush();
+//                        //Multiplying the number by 2 and forming the return message
+//                        String returnMessage;
+//                        try {
+//                            int numberInIntFormat = Integer.parseInt(number);
+//                            int returnValue = numberInIntFormat * 2;
+//                            returnMessage = String.valueOf(returnValue) + "\n";
+//                        } catch (NumberFormatException e) {
+//                            //Input was not a number. Sending proper message back to client.
+//                            returnMessage = "Please send a proper number\n";
+//                        }
+//
+//                        //Sending the response back to the client.
+//                        OutputStream os = socket.getOutputStream();
+//                        OutputStreamWriter osw = new OutputStreamWriter(os);
+//                        BufferedWriter bw = new BufferedWriter(osw);
+//                        bw.write(returnMessage);
+//                        System.out.println("Message sent to the client is " + returnMessage);
+//                        bw.flush();
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -170,24 +174,40 @@ public class Network {
         Socket socket = null;
         try {
             InetAddress address = InetAddress.getByName(nodeIP);
+            System.out.println(address);
             socket = new Socket(address, Globals.port_communication);
 
-            //Send the message to the server
             OutputStream os = socket.getOutputStream();
             OutputStreamWriter osw = new OutputStreamWriter(os);
             BufferedWriter bw = new BufferedWriter(osw);
 
-            String sendMessage = message + "\n";
-            bw.write(sendMessage);
-            bw.flush();
-            System.out.println("Message sent to the server : "+sendMessage);
+            String sendMessage = "";
 
-            //Get the return message from the server
-            InputStream is = socket.getInputStream();
-            InputStreamReader isr = new InputStreamReader(is);
-            BufferedReader br = new BufferedReader(isr);
-            String responseMessage = br.readLine();
-            System.out.println("Message received from the server : " +responseMessage);
+            boolean messageSent = false;
+
+            if (!message.equals("")) {
+                if (message.startsWith("JOIN_CLUSTER")) {
+                    //String _clusterId = message.replace("JOIN_CLUSTER=", "");
+
+                    sendMessage = message + "\n";
+                    bw.write(sendMessage);
+                    bw.flush();
+                    System.out.println("Message sent to the server : "+sendMessage);
+
+                    messageSent = true;
+                }
+            }
+
+
+
+            if (messageSent) {
+                //Get the return message from the server
+                InputStream is = socket.getInputStream();
+                InputStreamReader isr = new InputStreamReader(is);
+                BufferedReader br = new BufferedReader(isr);
+                String responseMessage = br.readLine();
+                System.out.println("Message received from the server : " + responseMessage);
+            }
         }
         catch (Exception exception) {
             exception.printStackTrace();
@@ -195,12 +215,16 @@ public class Network {
         finally {
             //Closing the socket
             try {
-                socket.close();
+                if (socket!=null) socket.close();
             }
             catch(Exception e) {
                 e.printStackTrace();
             }
         }
+    }
+
+    public String generateClusterID() {
+        return UUID.randomUUID().toString();
     }
 
     public void coordinateCluster() {
@@ -213,40 +237,38 @@ public class Network {
             @Override
             public void run() {
                 try {
+                    for (;;) {
+                        // check if clusterNodes has 3 in total and if all are connected/healthy
+                        if (clusterNodes.size()>0) {
+                            // see if we can connect to existing clusterNodes
+                            // try connect to clusterNodes and unset them if there's an issue
 
-                    // check if clusterNodes has 3 in total and if all are connected/healthy
-                    if (clusterNodes.size()>0) {
-                        // see if we can connect to existing clusterNodes
-                        // try connect to clusterNodes and unset them if there's an issue
+                            // if problem with node then `clusterNodes.remove(index)`
+                        }
+                        if (clusterNodes.size()==2) {
+                            // this means all nodes are healthy, no need to connect again
+                            return;
+                        }
 
-                        // if problem with node then `clusterNodes.remove(index)`
-                    }
-                    if (clusterNodes.size()==2) {
-                        // this means all nodes are healthy, no need to connect again
-                        return;
-                    }
-
-                    if (availableNodes.size()>0) {
-                        // There are at least 3 nodes available to form a cluster
-                        List<String> list = new ArrayList<>();
-                        for (String key: availableNodes.keySet()) {
-                            JSONObject json = availableNodes.get(key);
-                            String a = "";
+                        if (availableNodes.size()>0) {
+                            // There are at least 3 nodes available to form a cluster
+                            List<String> list = new ArrayList<>();
+                            for (String key: availableNodes.keySet()) {
+                                JSONObject json = availableNodes.get(key);
+                                String a = "";
+                                if (json.get("cluster").equals("")) {
+                                    clusterId = generateClusterID();
+                                    sendCommunicationsToNode(key, "JOIN_CLUSTER="+clusterId);
+                                }
 //                            if (clusterId.equals("")) {
 //                                //this node is not part of a cluster
 //                            }
 //                        if (json.get("ip"))
+                            }
                         }
+
+                        Thread.sleep(pingInterval);
                     }
-
-                    Thread.sleep(pingInterval);
-
-
-//                    availableNodes.get()
-//                    for (;;) {
-//
-//
-//                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
