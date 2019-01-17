@@ -5,10 +5,7 @@ import org.json.JSONObject;
 
 import java.io.*;
 import java.net.*;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class Network {
 
@@ -52,8 +49,11 @@ public class Network {
          */
         final byte[] ip;
         try {
-            InetAddress ina = InetAddress.getLocalHost();
-            ip = ina.getAddress();
+//            InetAddress ina = InetAddress.getLocalHost();
+//            ip = ina.getAddress();
+            ip = InetAddress.getByAddress(Globals.getHost4Address().getBytes()).getHostAddress().getBytes(); //.getBytes();
+
+            String a = "";
         } catch (Exception e) {
             // IP might not have been initialized
             return;
