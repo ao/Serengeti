@@ -51,7 +51,11 @@ public class Network {
         try {
 //            InetAddress ina = InetAddress.getLocalHost();
 //            ip = ina.getAddress();
-            ip = InetAddress.getByAddress(Globals.getHost4Address().getBytes()).getHostAddress().getBytes(); //.getBytes();
+
+//            ip = InetAddress.getByAddress(Globals.getHost4Address().getBytes()).getHostAddress().getBytes(); //.getBytes();
+
+            ip = Globals.getHost4Address().getBytes();
+            System.out.println(Globals.getHost4Address());
 
             String a = "";
         } catch (Exception e) {
