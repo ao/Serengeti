@@ -17,7 +17,16 @@ public class Network {
     int networkTimeout = 5000;
     int successStatus = 200;
 
+    public String myIP = null;
+    public InetAddress myINA = null;
+
     public void initiate() {
+        try {
+            myIP = Globals.getHost4Address();
+            myINA = InetAddress.getByName(myIP);
+        } catch (Exception e) {
+            //
+        }
         findNodes();
         listenForCommunications();
         coordinateCluster();
@@ -49,9 +58,7 @@ public class Network {
          */
         final byte[] ip;
         try {
-            String __ip = Globals.getHost4Address();
-            InetAddress ina = InetAddress.getByName(__ip);
-            ip = ina.getAddress();
+            ip = myINA.getAddress();
         } catch (Exception e) {
             // IP might not have been initialized
             return;
@@ -122,12 +129,10 @@ public class Network {
                 Socket socket = null;
                 try {
 
-                    String __ip = Globals.getHost4Address();
-                    InetAddress ina = InetAddress.getByName(__ip);
+                    ServerSocket serverSocket = new ServerSocket(Globals.port_communication, 50, myINA);
+                    System.out.println("Listening on "+myIP+":"+Integer.toString(Globals.port_communication));
 
-                    ServerSocket serverSocket = new ServerSocket(Globals.port_communication, 50, ina);
-
-                    while (true) {
+                    for(;;) {
                         //Reading the message from the client
                         socket = serverSocket.accept();
                         InputStream is = socket.getInputStream();
@@ -167,7 +172,7 @@ public class Network {
                     catch (Exception e) {}
                 }
             }
-        });
+        }).start();
     }
 
     public void sendCommunicationsToNode(String nodeIP, String message) {
@@ -256,14 +261,12 @@ public class Network {
                             for (String key: availableNodes.keySet()) {
                                 JSONObject json = availableNodes.get(key);
                                 String a = "";
-                                if (json.get("cluster").equals("")) {
-                                    clusterId = generateClusterID();
-                                    sendCommunicationsToNode(key, "JOIN_CLUSTER="+clusterId);
+                                if (!key.equals(myIP)) {
+                                    if (json.get("cluster").equals("")) {
+                                        clusterId = generateClusterID();
+                                        sendCommunicationsToNode(key, "JOIN_CLUSTER=" + clusterId);
+                                    }
                                 }
-//                            if (clusterId.equals("")) {
-//                                //this node is not part of a cluster
-//                            }
-//                        if (json.get("ip"))
                             }
                         }
 
