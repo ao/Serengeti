@@ -24,11 +24,10 @@ public class Network {
         try {
             myIP = Globals.getHost4Address();
             myINA = InetAddress.getByName(myIP);
-        } catch (Exception e) {
-            //
-        }
-        findNodes();
+        } catch (Exception e) {}
+
         listenForCommunications();
+        findNodes();
         coordinateCluster();
     }
 
@@ -133,43 +132,30 @@ public class Network {
                     System.out.println("Listening on "+myIP+":"+Integer.toString(Globals.port_communication));
 
                     for(;;) {
-                        //Reading the message from the client
+                        //Reading the message
                         socket = serverSocket.accept();
                         InputStream is = socket.getInputStream();
                         InputStreamReader isr = new InputStreamReader(is);
                         BufferedReader br = new BufferedReader(isr);
-                        String number = br.readLine();
-                        System.out.println("Message received from client is " + number);
+                        String message = br.readLine();
+                        System.out.println("Message received: " + message);
 
-//                        //Multiplying the number by 2 and forming the return message
-//                        String returnMessage;
-//                        try {
-//                            int numberInIntFormat = Integer.parseInt(number);
-//                            int returnValue = numberInIntFormat * 2;
-//                            returnMessage = String.valueOf(returnValue) + "\n";
-//                        } catch (NumberFormatException e) {
-//                            //Input was not a number. Sending proper message back to client.
-//                            returnMessage = "Please send a proper number\n";
-//                        }
-//
-//                        //Sending the response back to the client.
-//                        OutputStream os = socket.getOutputStream();
-//                        OutputStreamWriter osw = new OutputStreamWriter(os);
-//                        BufferedWriter bw = new BufferedWriter(osw);
-//                        bw.write(returnMessage);
-//                        System.out.println("Message sent to the client is " + returnMessage);
-//                        bw.flush();
+                        if (!message.equals("")) {
+                            if (message.startsWith("JOIN_CLUSTER")) {
+                                if (clusterId.equals("")) {
+                                    String _joinClusterId = message.replace("JOIN_CLUSTER=", "");
+                                    clusterId = _joinClusterId;
+                                }
+                            }
+                        }
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
                 finally {
                     try {
-                        if (socket != null && !socket.isClosed()){
-                            socket.close();
-                        }
-                    }
-                    catch (Exception e) {}
+                        if (socket != null && !socket.isClosed()) socket.close();
+                    } catch (Exception e) {}
                 }
             }
         }).start();
@@ -201,17 +187,6 @@ public class Network {
 
                     messageSent = true;
                 }
-            }
-
-
-
-            if (messageSent) {
-                //Get the return message from the server
-                InputStream is = socket.getInputStream();
-                InputStreamReader isr = new InputStreamReader(is);
-                BufferedReader br = new BufferedReader(isr);
-                String responseMessage = br.readLine();
-                System.out.println("Message received from the server : " + responseMessage);
             }
         }
         catch (Exception exception) {
