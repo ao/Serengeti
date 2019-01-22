@@ -2,6 +2,7 @@ package gl.ao.addi;
 
 import gl.ao.addi.index.Indexer;
 import gl.ao.addi.network.Network;
+import gl.ao.addi.server.Server;
 import gl.ao.addi.storage.Storage;
 
 import java.util.Date;
@@ -16,6 +17,7 @@ public class Construct {
     public static String me = null;
     public static Network network = new Network();
     public static Indexer indexer = new Indexer();
+    public Interactive interactive = new Interactive();
 
     /***
      * Main application entry point
@@ -30,6 +32,7 @@ public class Construct {
      */
     private void init() {
         this.instance = this;
+        this.server.init();
         this.server.serve();
         this.network.initiate();
     }

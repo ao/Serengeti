@@ -8,7 +8,7 @@ public class Interactive {
      * @param uri
      * @return
      */
-    static String IndexTemplate(String host, String uri) {
+    public static String IndexTemplate(String host, String uri) {
         return "<html>\n" +
                 "   <head>\n" +
                 "       <title>Interactive</title>\n" +
