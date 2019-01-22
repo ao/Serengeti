@@ -1,24 +1,53 @@
-package gl.ao.addi;
+package gl.ao.addi.server;
 
 import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.net.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import gl.ao.addi.network.Network;
+import gl.ao.addi.Construct;
+import gl.ao.addi.Interactive;
+import gl.ao.addi.helpers.Globals;
 import gl.ao.addi.query.QueryEngine;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class Server {
+
+    private ServerConstants server_constants = null;
+    private String server_constants_file_location = Construct.data_path + "server.constants";
+    private Path server_constants_file = null;
+
+    public void init() {
+
+        try {
+            server_constants_file = Paths.get(server_constants_file_location);
+            if (Files.exists(server_constants_file)) {
+                server_constants = (ServerConstants) Globals.convertFromBytes(Files.readAllBytes(server_constants_file));
+            } else {
+                server_constants = new ServerConstants();
+                server_constants.id = UUID.randomUUID().toString();
+                saveServerConstants();
+            }
+        } catch (Exception e) {}
+    }
+
+    private void saveServerConstants() {
+        byte data[] = Globals.convertToBytes(server_constants);
+
+        try {
+            Files.write(server_constants_file, data);
+        } catch (Exception e) {}
+    }
+
     public void serve() {
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress(1985), 0);
