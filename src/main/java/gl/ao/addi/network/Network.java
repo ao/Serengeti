@@ -26,6 +26,11 @@ public class Network {
             myINA = InetAddress.getByName(myIP);
         } catch (Exception e) {}
 
+        if (myIP == null || myIP.equals("127.0.0.1")) {
+            System.out.println("This node is not connected to a network.");
+            System.exit(1);
+        }
+
         listenForCommunications();
         findNodes();
         coordinateCluster();
