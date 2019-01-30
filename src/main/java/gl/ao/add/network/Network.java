@@ -12,6 +12,7 @@ public class Network {
     public Map<String, JSONObject> availableNodes = new HashMap<>();
     public Map<String, JSONObject> clusterNodes = new HashMap<>();
     public String clusterId = "";
+    public static String coordinator = "";
 
     int pingInterval = 10 * 1000;
     int networkTimeout = 5000;
@@ -33,7 +34,6 @@ public class Network {
 
         listenForCommunications();
         findNodes();
-        coordinateCluster();
     }
 
     public void findNodes() {
@@ -60,6 +60,7 @@ public class Network {
         /**
          * Create a list(Map) of these available availableNodes
          */
+
         final byte[] ip;
         try {
             ip = myINA.getAddress();
@@ -68,9 +69,11 @@ public class Network {
             return;
         }
 
+        List<Thread> threads = new ArrayList<>();
+
         for(int i=1;i<=254;i++) {
             final int j = i; // i as non-final variable cannot be referenced from inner class
-            new Thread(new Runnable() {
+            Thread t = new Thread(new Runnable() {
                 public void run() {
                     ip[3] = (byte) j;
 
@@ -100,6 +103,8 @@ public class Network {
                             JSONObject jsonObj = new JSONObject(content.toString());
                             JSONObject nodeJSON = (JSONObject) jsonObj.get("this");
 
+//                            String nodeId = nodeJSON.get("id").toString();
+
                             if (availableNodes.containsKey(_ip)) availableNodes.replace(_ip, nodeJSON);
                             else availableNodes.put(_ip, nodeJSON);
 
@@ -122,8 +127,18 @@ public class Network {
                     }
 
                 }
-            }).start();
+            });
+
+            t.start();
+            threads.add(t);
         }
+        for (Thread t: threads) {
+            try {
+                t.join();
+            } catch (InterruptedException e) {}
+        }
+
+        coordinateCluster();
     }
 
     public void listenForCommunications() {
@@ -150,6 +165,7 @@ public class Network {
                                 if (clusterId.equals("")) {
                                     String _joinClusterId = message.replace("JOIN_CLUSTER=", "");
                                     clusterId = _joinClusterId;
+
                                 }
                             }
                         }
@@ -223,32 +239,41 @@ public class Network {
             public void run() {
                 try {
                     for (;;) {
-                        // check if clusterNodes has 3 in total and if all are connected/healthy
-                        if (clusterNodes.size()>0) {
-                            // see if we can connect to existing clusterNodes
-                            // try connect to clusterNodes and unset them if there's an issue
 
-                            // if problem with node then `clusterNodes.remove(index)`
-                        }
-                        if (clusterNodes.size()==2) {
-                            // this means all nodes are healthy, no need to connect again
-                            return;
-                        }
 
                         if (availableNodes.size()>0) {
-                            // There are at least 3 nodes available to form a cluster
-                            List<String> list = new ArrayList<>();
+                            //make the lowest IP in the availableNodes the coordinator
+                            Integer coordinator_Int = 0;
                             for (String key: availableNodes.keySet()) {
                                 JSONObject json = availableNodes.get(key);
-                                String a = "";
-                                if (!key.equals(myIP)) {
-                                    if (json.get("cluster").equals("")) {
-                                        clusterId = generateClusterID();
-                                        sendCommunicationsToNode(key, "JOIN_CLUSTER=" + clusterId);
+                                String _ip = json.get("ip").toString();
+                                if (coordinator_Int==0) {
+                                    Integer new_coordinator = new Integer(_ip.replace(".",""));
+                                    if (new_coordinator < coordinator_Int || coordinator_Int==0) {
+                                        coordinator_Int = new_coordinator;
+                                        coordinator = _ip;
                                     }
                                 }
                             }
                         }
+
+
+
+
+//                        if (availableNodes.size()>0) {
+//                            // There are at least 3 nodes available to form a cluster
+//                            List<String> list = new ArrayList<>();
+//                            for (String key: availableNodes.keySet()) {
+//                                JSONObject json = availableNodes.get(key);
+//                                String a = "";
+//                                if (!key.equals(myIP)) {
+//                                    if (json.get("cluster").equals("")) {
+//                                        clusterId = generateClusterID();
+//                                        sendCommunicationsToNode(key, "JOIN_CLUSTER=" + clusterId);
+//                                    }
+//                                }
+//                            }
+//                        }
 
                         Thread.sleep(pingInterval);
                     }
