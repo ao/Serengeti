@@ -12,14 +12,17 @@ public class Network {
     public Map<String, JSONObject> availableNodes = new HashMap<>();
     public Map<String, JSONObject> clusterNodes = new HashMap<>();
     public String clusterId = "";
-    public static String coordinator = "";
+
+    public String myIP = null;
+    public InetAddress myINA = null;
+
+    public String coordinator = "";
 
     int pingInterval = 10 * 1000;
     int networkTimeout = 5000;
     int successStatus = 200;
 
-    public String myIP = null;
-    public InetAddress myINA = null;
+
 
     public void initiate() {
         try {
@@ -238,7 +241,7 @@ public class Network {
             @Override
             public void run() {
                 try {
-                    for (;;) {
+//                    for (;;) {
 
 
                         if (availableNodes.size()>0) {
@@ -255,12 +258,16 @@ public class Network {
                                     }
                                 }
                             }
+
+                            if (coordinator.equals(myIP)) {
+                                System.out.println("I AM THE COORDINATOR!");
+                            }
+
                         }
 
 
 
 
-//                        if (availableNodes.size()>0) {
 //                            // There are at least 3 nodes available to form a cluster
 //                            List<String> list = new ArrayList<>();
 //                            for (String key: availableNodes.keySet()) {
@@ -273,10 +280,8 @@ public class Network {
 //                                    }
 //                                }
 //                            }
-//                        }
 
-                        Thread.sleep(pingInterval);
-                    }
+
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
