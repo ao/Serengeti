@@ -78,6 +78,7 @@ public class Server {
             jsonObjThis.put("started", Construct.currentDate);
 
             jsonObjThis.put("cluster", Construct.network.clusterId);
+            jsonObjThis.put("coordinator", Construct.network.coordinator);
             jsonObjThis.put("id", Construct.server.server_constants.id);
 
             DateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
