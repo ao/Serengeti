@@ -1,4 +1,4 @@
-package gl.ao.addi.query;
+package gl.ao.add.query;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

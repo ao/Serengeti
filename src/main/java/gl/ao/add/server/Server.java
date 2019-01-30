@@ -1,4 +1,4 @@
-package gl.ao.addi.server;
+package gl.ao.add.server;
 
 import java.io.*;
 import java.lang.management.ManagementFactory;
@@ -13,10 +13,10 @@ import java.util.*;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import gl.ao.addi.Construct;
-import gl.ao.addi.Interactive;
-import gl.ao.addi.helpers.Globals;
-import gl.ao.addi.query.QueryEngine;
+import gl.ao.add.Construct;
+import gl.ao.add.Interactive;
+import gl.ao.add.helpers.Globals;
+import gl.ao.add.query.QueryEngine;
 import org.json.JSONArray;
 import org.json.JSONObject;
 

@@ -1,9 +1,6 @@
-package gl.ao.addi;
+package gl.ao.add;
 
 import java.net.*;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Enumeration;
 
 public class Multicaster {
 

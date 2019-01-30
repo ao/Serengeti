@@ -1,6 +1,6 @@
-package gl.ao.addi.schema;
+package gl.ao.add.schema;
 
-import gl.ao.addi.helpers.Globals;
+import gl.ao.add.helpers.Globals;
 import org.json.JSONObject;
 
 import java.io.FileOutputStream;
