@@ -64,6 +64,11 @@ public class Server {
         }
     }
 
+    static InetAddress getMyIP() throws IOException {
+        InetAddress IP = InetAddress.getLocalHost();
+        return IP;
+    }
+
     static class RootHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
 
@@ -73,13 +78,14 @@ public class Server {
             jsonObjThis.put("started", Construct.currentDate);
 
             jsonObjThis.put("cluster", Construct.network.clusterId);
+            jsonObjThis.put("id", Construct.server.server_constants.id);
 
             DateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
             dateFormat.setTimeZone(java.util.TimeZone.getTimeZone("GMT"));
             String formattedDate=dateFormat. format( new Date().getTime() - Construct.currentDate.getTime() );
             jsonObjThis.put("uptime", formattedDate);
 
-            InetAddress IP=InetAddress.getLocalHost();
+            InetAddress IP = getMyIP();
             jsonObjThis.put("ip", IP.getHostAddress());
             jsonObjThis.put("hostname", IP.getHostName());
 
