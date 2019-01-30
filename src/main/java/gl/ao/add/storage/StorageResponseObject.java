@@ -1,4 +1,4 @@
-package gl.ao.addi.storage;
+package gl.ao.add.storage;
 
 import java.util.HashMap;
 import java.util.Map;

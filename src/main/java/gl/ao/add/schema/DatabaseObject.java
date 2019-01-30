@@ -1,7 +1,7 @@
-package gl.ao.addi.schema;
+package gl.ao.add.schema;
 
-import gl.ao.addi.Construct;
-import gl.ao.addi.helpers.Globals;
+import gl.ao.add.Construct;
+import gl.ao.add.helpers.Globals;
 
 import java.io.*;
 import java.nio.file.Files;

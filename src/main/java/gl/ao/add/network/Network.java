@@ -1,6 +1,6 @@
-package gl.ao.addi.network;
+package gl.ao.add.network;
 
-import gl.ao.addi.helpers.Globals;
+import gl.ao.add.helpers.Globals;
 import org.json.JSONObject;
 
 import java.io.*;

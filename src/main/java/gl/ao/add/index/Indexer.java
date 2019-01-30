@@ -1,6 +1,6 @@
-package gl.ao.addi.index;
+package gl.ao.add.index;
 
-import gl.ao.addi.storage.StorageResponseObject;
+import gl.ao.add.storage.StorageResponseObject;
 
 import java.util.HashMap;
 import java.util.LinkedList;

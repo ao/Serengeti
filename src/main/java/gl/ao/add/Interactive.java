@@ -1,4 +1,4 @@
-package gl.ao.addi;
+package gl.ao.add;
 
 public class Interactive {
 

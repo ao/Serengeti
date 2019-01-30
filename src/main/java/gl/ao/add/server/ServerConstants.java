@@ -1,4 +1,4 @@
-package gl.ao.addi.server;
+package gl.ao.add.server;
 
 import java.io.Serializable;
 

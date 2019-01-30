@@ -1,9 +1,9 @@
-package gl.ao.addi.storage;
+package gl.ao.add.storage;
 
-import gl.ao.addi.Construct;
-import gl.ao.addi.schema.DatabaseObject;
-import gl.ao.addi.helpers.Globals;
-import gl.ao.addi.schema.TableObject;
+import gl.ao.add.Construct;
+import gl.ao.add.schema.DatabaseObject;
+import gl.ao.add.helpers.Globals;
+import gl.ao.add.schema.TableObject;
 import org.json.JSONObject;
 
 import java.io.File;
