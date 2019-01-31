@@ -87,7 +87,7 @@ public class Server {
             jsonObjThis.put("uptime", formattedDate);
 
             InetAddress IP = getMyIP();
-            jsonObjThis.put("ip", IP.getHostAddress());
+            jsonObjThis.put("ip", Globals.getHost4Address());
             jsonObjThis.put("hostname", IP.getHostName());
 
             //disk
