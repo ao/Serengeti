@@ -167,7 +167,7 @@ public class Network {
 
                             try {
                                 String data = "data=Hello+World!";
-                                URL url2 = new URL("http://" + json.get("ip").toString() + ":"+Globals.port_default+"/post");
+                                URL url2 = new URL("http://" + json.get("ip").toString() + ":" + Globals.port_default + "/post");
                                 HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
                                 con2.setRequestMethod("POST");
                                 con2.setDoOutput(true);
@@ -178,6 +178,9 @@ public class Network {
                                 System.out.println("Test");
 
 
+                            } catch (ConnectException ce) {
+                                // do nothing for now
+                                // the node we are trying to send messages to appears to be down?
                             } catch (Exception e) {
                                 e.printStackTrace();
                             }
