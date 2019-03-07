@@ -11,7 +11,7 @@ public class Construct {
 
     public static String data_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/data/" : "./data/";
     public Construct instance = null;
-    public static Storage storage = new Storage();
+    public static Storage storage = null;
     public static Server server = new Server();
     public static Date currentDate = new Date();
     public static String me = null;
@@ -33,6 +33,7 @@ public class Construct {
     private void init() {
         this.instance = this;
         this.server.init();
+        storage = new Storage();
         this.server.serve();
         this.network.initiate();
     }

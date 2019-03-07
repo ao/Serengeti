@@ -29,6 +29,12 @@ public class Server {
     public void init() {
 
         try {
+            File root_directory = new File(Construct.data_path);
+            if (! root_directory.exists()) root_directory.mkdir();
+
+            File pieces_directory = new File(Globals.pieces_path);
+            if (! pieces_directory.exists()) pieces_directory.mkdir();
+
             server_constants_file = Paths.get(server_constants_file_location);
             if (Files.exists(server_constants_file)) {
                 server_constants = (ServerConstants) Globals.convertFromBytes(Files.readAllBytes(server_constants_file));
