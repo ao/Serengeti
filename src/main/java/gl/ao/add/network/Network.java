@@ -9,6 +9,9 @@ import java.util.*;
 
 public class Network {
 
+    public Sender sender;
+    public Receiver receiver;
+
     public Map<String, JSONObject> availableNodes = new HashMap<>();
     public Map<String, JSONObject> clusterNodes = new HashMap<>();
     public String clusterId = "";
@@ -23,7 +26,6 @@ public class Network {
     int successStatus = 200;
 
 
-
     public void initiate() {
         try {
             myIP = Globals.getHost4Address();
@@ -31,11 +33,16 @@ public class Network {
         } catch (Exception e) {}
 
         if (myIP == null || myIP.equals("127.0.0.1")) {
-            System.out.println("This node is not connected to a network.");
-            System.exit(1);
+            System.out.println("This node is not connected to a network. It will therefore only function locally.");
         }
 
-        listenForCommunications();
+        try {
+            receiver = new Receiver(myIP, myINA);
+            sender = new Sender();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
         findNodes();
     }
 
@@ -51,6 +58,7 @@ public class Network {
                          */
                         getNetworkIPsPorts();
                         Thread.sleep(pingInterval);
+                        System.out.println(availableNodes);
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -144,89 +152,6 @@ public class Network {
         coordinateCluster();
     }
 
-    public void listenForCommunications() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                Socket socket = null;
-                try {
-
-                    ServerSocket serverSocket = new ServerSocket(Globals.port_communication, 50, myINA);
-                    System.out.println("Listening on "+myIP+":"+Integer.toString(Globals.port_communication));
-
-                    for(;;) {
-                        //Reading the message
-                        socket = serverSocket.accept();
-                        InputStream is = socket.getInputStream();
-                        InputStreamReader isr = new InputStreamReader(is);
-                        BufferedReader br = new BufferedReader(isr);
-                        String message = br.readLine();
-                        System.out.println("Message received: " + message);
-
-                        if (!message.equals("")) {
-                            if (message.startsWith("JOIN_CLUSTER")) {
-                                if (clusterId.equals("")) {
-                                    String _joinClusterId = message.replace("JOIN_CLUSTER=", "");
-                                    clusterId = _joinClusterId;
-
-                                }
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-                finally {
-                    try {
-                        if (socket != null && !socket.isClosed()) socket.close();
-                    } catch (Exception e) {}
-                }
-            }
-        }).start();
-    }
-
-    public void sendCommunicationsToNode(String nodeIP, String message) {
-        Socket socket = null;
-        try {
-            InetAddress address = InetAddress.getByName(nodeIP);
-            System.out.println(address);
-            socket = new Socket(address, Globals.port_communication);
-
-            OutputStream os = socket.getOutputStream();
-            OutputStreamWriter osw = new OutputStreamWriter(os);
-            BufferedWriter bw = new BufferedWriter(osw);
-
-            String sendMessage = "";
-
-            boolean messageSent = false;
-
-            if (!message.equals("")) {
-                if (message.startsWith("JOIN_CLUSTER")) {
-                    //String _clusterId = message.replace("JOIN_CLUSTER=", "");
-
-                    sendMessage = message + "\n";
-                    bw.write(sendMessage);
-                    bw.flush();
-                    System.out.println("Message sent to the server : "+sendMessage);
-
-                    messageSent = true;
-                }
-            }
-        }
-        catch (Exception exception) {
-            exception.printStackTrace();
-        }
-        finally {
-            //Closing the socket
-            try {
-                if (socket!=null) socket.close();
-            }
-            catch(Exception e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
     public String generateClusterID() {
         return UUID.randomUUID().toString();
     }
@@ -241,45 +166,27 @@ public class Network {
             @Override
             public void run() {
                 try {
-//                    for (;;) {
 
-
-                        if (availableNodes.size()>0) {
-                            //make the lowest IP in the availableNodes the coordinator
-                            Integer coordinator_Int = 0;
-                            for (String key: availableNodes.keySet()) {
-                                JSONObject json = availableNodes.get(key);
-                                String _ip = json.get("ip").toString();
-                                if (coordinator_Int==0) {
-                                    Integer new_coordinator = new Integer(_ip.replace(".",""));
-                                    if (new_coordinator < coordinator_Int || coordinator_Int==0) {
-                                        coordinator_Int = new_coordinator;
-                                        coordinator = _ip;
-                                    }
+                    if (availableNodes.size()>0) {
+                        //make the lowest IP in the availableNodes the coordinator
+                        Integer coordinator_Int = 0;
+                        for (String key: availableNodes.keySet()) {
+                            JSONObject json = availableNodes.get(key);
+                            String _ip = json.get("ip").toString();
+                            if (coordinator_Int==0) {
+                                Integer new_coordinator = new Integer(_ip.replace(".",""));
+                                if (new_coordinator < coordinator_Int || coordinator_Int==0) {
+                                    coordinator_Int = new_coordinator;
+                                    coordinator = _ip;
                                 }
                             }
-
-                            if (coordinator.equals(myIP)) {
-                                System.out.println("I AM THE COORDINATOR!");
-                            }
-
                         }
 
+                        if (coordinator.equals(myIP)) {
+                            System.out.println("I AM THE COORDINATOR!");
+                        }
 
-
-
-//                            // There are at least 3 nodes available to form a cluster
-//                            List<String> list = new ArrayList<>();
-//                            for (String key: availableNodes.keySet()) {
-//                                JSONObject json = availableNodes.get(key);
-//                                String a = "";
-//                                if (!key.equals(myIP)) {
-//                                    if (json.get("cluster").equals("")) {
-//                                        clusterId = generateClusterID();
-//                                        sendCommunicationsToNode(key, "JOIN_CLUSTER=" + clusterId);
-//                                    }
-//                                }
-//                            }
+                    }
 
 
                 } catch (Exception e) {
