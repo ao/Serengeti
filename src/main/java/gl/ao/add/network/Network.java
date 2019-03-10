@@ -21,8 +21,8 @@ public class Network {
 
     public String coordinator = "";
 
-    int pingInterval = 10 * 1000;
-    int networkTimeout = 5000;
+    int pingInterval = 5 * 1000;
+    int networkTimeout = 2500;
     int successStatus = 200;
 
 
@@ -47,7 +47,6 @@ public class Network {
     }
 
     public void findNodes() {
-        System.out.println(availableNodes);
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -82,19 +81,19 @@ public class Network {
 
         List<Thread> threads = new ArrayList<>();
 
+        final long currentTime = System.currentTimeMillis();
+
         for(int i=1;i<=254;i++) {
             final int j = i; // i as non-final variable cannot be referenced from inner class
             Thread t = new Thread(new Runnable() {
                 public void run() {
                     ip[3] = (byte) j;
 
-                    String tryingIp = "";
-
                     try {
                         InetAddress address = InetAddress.getByAddress(ip);
-                        String _ip = tryingIp = address.getHostAddress();
+                        String _ip = address.getHostAddress();
 
-                        URL url = new URL("http://" + _ip + ":"+Integer.toString(Globals.port_default));
+                        URL url = new URL("http://" + _ip + ":"+Globals.port_default);
                         HttpURLConnection con = (HttpURLConnection) url.openConnection();
                         con.setRequestMethod("GET");
                         con.getDoOutput();
@@ -113,11 +112,17 @@ public class Network {
 
                             JSONObject jsonObj = new JSONObject(content.toString());
                             JSONObject nodeJSON = (JSONObject) jsonObj.get("this");
+                            nodeJSON.put("last_checked", currentTime);
 
-//                            String nodeId = nodeJSON.get("id").toString();
+                            String nodeId = nodeJSON.get("id").toString();
 
-                            if (availableNodes.containsKey(_ip)) availableNodes.replace(_ip, nodeJSON);
-                            else availableNodes.put(_ip, nodeJSON);
+//                            System.out.println(nodeId);
+//                            System.out.println(currentTime);
+                            System.out.println("Added: "+nodeId+" "+_ip);
+
+
+                            if (availableNodes.containsKey(nodeId)) availableNodes.replace(nodeId, nodeJSON);
+                            else availableNodes.put(nodeId, nodeJSON);
 
                             in.close();
                         } else {
@@ -143,13 +148,30 @@ public class Network {
             t.start();
             threads.add(t);
         }
+        int threadcompletecount = 0;
         for (Thread t: threads) {
             try {
                 t.join();
+                threadcompletecount++;
+                if (threadcompletecount==254) {
+                    System.out.println("Completed");
+
+                    if (availableNodes.size()>0) {
+                        for (String key : availableNodes.keySet()) {
+                            JSONObject json = availableNodes.get(key);
+                            long _last_checked = Long.parseLong(json.get("last_checked").toString());
+
+                            if (_last_checked<currentTime) {
+                                System.out.println("delete: "+json.get("id")+" "+json.get("ip"));
+                                availableNodes.remove(json.get("id"));
+                            }
+                        }
+                    }
+                }
             } catch (InterruptedException e) {}
         }
 
-        coordinateCluster();
+//        coordinateCluster();
     }
 
     public String generateClusterID() {
