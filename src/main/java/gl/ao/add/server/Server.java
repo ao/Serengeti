@@ -9,6 +9,8 @@ import java.nio.file.Paths;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -56,18 +58,21 @@ public class Server {
 
     public void serve() {
         try {
-            HttpServer server = HttpServer.create(new InetSocketAddress(1985), 0);
+
+            final Executor multi = Executors.newFixedThreadPool(10);
+            final HttpServer server = HttpServer.create(new InetSocketAddress(Globals.port_default), 5);
             server.createContext("/", new RootHandler());
             server.createContext("/interactive", new InteractiveHandler());
             server.createContext("/get", new GenericGetHandler());
             server.createContext("/post", new GenericPostHandler());
             server.createContext("/put", new GenericPutHandler());
             server.createContext("/delete", new GenericDeleteHandler());
-            server.setExecutor(null);
+            server.setExecutor(multi);
             server.start();
         } catch (Exception e) {
             e.printStackTrace();
         }
+        System.out.println("Ready");
     }
 
     static InetAddress getMyIP() throws IOException {
@@ -92,9 +97,12 @@ public class Server {
             String formattedDate=dateFormat. format( new Date().getTime() - Construct.currentDate.getTime() );
             jsonObjThis.put("uptime", formattedDate);
 
-            InetAddress IP = getMyIP();
             jsonObjThis.put("ip", Globals.getHost4Address());
-            jsonObjThis.put("hostname", IP.getHostName());
+
+            // BUG REPORTED: https://stackoverflow.com/questions/33289695/inetaddress-getlocalhost-slow-to-run-30-seconds
+            // So will leave this out, as we don't really ever use the `hostname`
+            //InetAddress IP = getMyIP();
+            //jsonObjThis.put("hostname", IP.getHostName());
 
             //disk
             JSONObject jsonObjectThisDisk = new JSONObject();
@@ -146,7 +154,7 @@ public class Server {
             jsonObjRoot.put("this", jsonObjThis);
             jsonObjRoot.put("totalNodes", Integer.toString(Construct.network.availableNodes.size()));
             jsonObjRoot.put("availableNodes", Construct.network.availableNodes);
-
+//
             //response
             String response = jsonObjRoot.toString();
             t.sendResponseHeaders(200, response.length());
