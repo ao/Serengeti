@@ -145,9 +145,6 @@ public class Server {
             }
             jsonObjThis.put("os", jsonObjectThisOS);
 
-            //heath
-            jsonObjThis.put("health", "green");
-
 
             JSONObject jsonObjRoot = new JSONObject();
             jsonObjRoot.put("_", "Autonomous Distributed Database");
