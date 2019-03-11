@@ -161,6 +161,32 @@ public class Network {
                             JSONObject json = availableNodes.get(key);
                             long _last_checked = Long.parseLong(json.get("last_checked").toString());
 
+
+
+
+
+                            try {
+                                String data = "data=Hello+World!";
+                                URL url2 = new URL("http://" + json.get("ip").toString() + ":"+Globals.port_default+"/post");
+                                HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
+                                con2.setRequestMethod("POST");
+                                con2.setDoOutput(true);
+                                con2.setConnectTimeout(networkTimeout);
+                                con2.getOutputStream().write(data.getBytes("UTF-8"));
+                                con2.getInputStream();
+//                                con2.setRequestProperty("Content-Type", "application/json");
+                                System.out.println("Test");
+
+
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+
+
+
+
+
+
                             if (_last_checked<currentTime) {
                                 System.out.println("delete: "+json.get("id")+" "+json.get("ip"));
                                 availableNodes.remove(json.get("id"));

@@ -228,6 +228,9 @@ public class Server {
                         e.printStackTrace();
                     }
 
+                } else if (t.getRequestURI().toString().startsWith("/post")) {
+                    response = "This is a test message";
+                    System.out.println(response);
                 }
 
                 t.sendResponseHeaders(200, response.length());
