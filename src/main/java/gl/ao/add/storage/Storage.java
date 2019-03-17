@@ -275,7 +275,7 @@ public class Storage {
             boolean deleted = Files.deleteIfExists(file);
             loadMetaDatabasesToMemory();
 
-            QueryLog.localAppend(new JSONObject().put("type", "dropTable").put("db", db).toString());
+            QueryLog.localAppend(new JSONObject().put("type", "dropDatabase").put("db", db).toString());
 
             return deleted;
         } catch (Exception e) {
