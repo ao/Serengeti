@@ -12,6 +12,10 @@ import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.util.*;
 
+/***
+ * Static Globals
+ * Used for global reuse and configuration
+ */
 public class Globals {
 
     public static String meta_extention = ".ddbm";
@@ -28,7 +32,7 @@ public class Globals {
     /***
      * Convert to Bytes
      * @param object
-     * @return
+     * @return byte[]
      */
     public static byte[] convertToBytes(Object object) {
         try {
@@ -45,7 +49,7 @@ public class Globals {
     /***
      * Convert From Bytes
      * @param bytes
-     * @return
+     * @return Object
      */
     public static Object convertFromBytes(byte[] bytes) {
         try {
@@ -62,7 +66,7 @@ public class Globals {
     /***
      * JSONObject to Map
      * @param json
-     * @return
+     * @return Map<String, Object>
      * @throws JSONException
      */
     public static Map<String, Object> jsonToMap(JSONObject json) throws JSONException {
@@ -74,6 +78,12 @@ public class Globals {
         return retMap;
     }
 
+    /***
+     * JSONObject to Map
+     * @param object
+     * @return Map<String, Object>
+     * @throws JSONException
+     */
     public static Map<String, Object> toMap(JSONObject object) throws JSONException {
         Map<String, Object> map = new HashMap<String, Object>();
 
@@ -94,6 +104,12 @@ public class Globals {
         return map;
     }
 
+    /***
+     * JSONArray to List
+     * @param array
+     * @return List<Object>
+     * @throws JSONException
+     */
     public static List<Object> toList(JSONArray array) throws JSONException {
         List<Object> list = new ArrayList<Object>();
         for(int i = 0; i < array.length(); i++) {
@@ -114,8 +130,7 @@ public class Globals {
 
     /**
      * Returns this host's non-loopback IPv4 addresses.
-     *
-     * @return
+     * @return List<Inet4Address>
      * @throws SocketException
      */
     private static List<Inet4Address> getInet4Addresses() throws SocketException {
@@ -137,8 +152,7 @@ public class Globals {
     /**
      * Returns this host's first non-loopback IPv4 address string in textual
      * representation.
-     *
-     * @return
+     * @return String
      * @throws SocketException
      */
     public static String getHost4Address() throws SocketException {
