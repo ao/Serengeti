@@ -162,32 +162,25 @@ public class Network {
                             long _last_checked = Long.parseLong(json.get("last_checked").toString());
 
 
-
-
-
-                            try {
-                                String data = "data=Hello+World!";
-                                URL url2 = new URL("http://" + json.get("ip").toString() + ":" + Globals.port_default + "/post");
-                                HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
-                                con2.setRequestMethod("POST");
-                                con2.setDoOutput(true);
-                                con2.setConnectTimeout(networkTimeout);
-                                con2.getOutputStream().write(data.getBytes("UTF-8"));
-                                con2.getInputStream();
-//                                con2.setRequestProperty("Content-Type", "application/json");
-                                System.out.println("Test");
-
-
-                            } catch (ConnectException ce) {
-                                // do nothing for now
-                                // the node we are trying to send messages to appears to be down?
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                            }
-
-
-
-
+//                            try {
+//                                String data = "data=Hello+World!";
+//                                URL url2 = new URL("http://" + json.get("ip").toString() + ":" + Globals.port_default + "/post");
+//                                HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
+//                                con2.setRequestMethod("POST");
+//                                con2.setDoOutput(true);
+//                                con2.setConnectTimeout(networkTimeout);
+//                                con2.getOutputStream().write(data.getBytes("UTF-8"));
+//                                con2.getInputStream();
+////                                con2.setRequestProperty("Content-Type", "application/json");
+//                                System.out.println("Test");
+//
+//
+//                            } catch (ConnectException ce) {
+//                                // do nothing for now
+//                                // the node we are trying to send messages to appears to be down?
+//                            } catch (Exception e) {
+//                                e.printStackTrace();
+//                            }
 
 
                             if (_last_checked<currentTime) {
@@ -201,6 +194,30 @@ public class Network {
         }
 
 //        coordinateCluster();
+    }
+
+    public void communicateQueryLog(String jsonString) {
+
+        if (availableNodes.size()>0) {
+            for (String key : availableNodes.keySet()) {
+                JSONObject json = availableNodes.get(key);
+
+                try {
+                    String data = "data="+jsonString;
+                    URL url2 = new URL("http://" + json.get("ip").toString() + ":" + Globals.port_default + "/post");
+                    HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
+                    con2.setRequestMethod("POST");
+                    con2.setDoOutput(true);
+                    con2.setConnectTimeout(networkTimeout);
+                    con2.getOutputStream().write(data.getBytes("UTF-8"));
+                    con2.getInputStream();
+
+
+                } catch (ConnectException ce) {} catch (Exception e) {}
+
+            }
+        }
+
     }
 
     public String generateClusterID() {
