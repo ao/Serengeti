@@ -1,6 +1,7 @@
 package gl.ao.add.storage;
 
 import gl.ao.add.Construct;
+import gl.ao.add.query.QueryLog;
 import gl.ao.add.schema.DatabaseObject;
 import gl.ao.add.helpers.Globals;
 import gl.ao.add.schema.TableObject;
@@ -39,7 +40,7 @@ public class Storage {
 
     /***
      * Get a List of existing Databases
-     * @return
+     * @return List
      */
     public List getDatabases() {
         File dir = new File(Construct.data_path);
@@ -58,6 +59,12 @@ public class Storage {
         return ddbs;
     }
 
+    /***
+     * Get a Piece ID
+     * @param db
+     * @param table
+     * @return String
+     */
     public String getPieceId(String db, String table) {
         Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
         DatabaseObject dbo = new DatabaseObject().loadExisting(file);
@@ -77,7 +84,7 @@ public class Storage {
      * @param selectWhat
      * @param col
      * @param val
-     * @return
+     * @return List<String>
      */
     public List<String> select(String db, String table, String selectWhat, String col, String val) {
         try {
@@ -111,7 +118,7 @@ public class Storage {
      * @param db
      * @param table
      * @param json
-     * @return
+     * @return StorageResponseObject
      */
     public StorageResponseObject insert(String db, String table, JSONObject json) {
         StorageResponseObject sro = new StorageResponseObject();
@@ -141,6 +148,8 @@ public class Storage {
             to.add(json);
             to.saveToDisk();
 
+            QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).toString());
+
             sro.pieceId = pieceId;
             sro.success = true;
 
@@ -166,7 +175,7 @@ public class Storage {
      * @param update_val
      * @param where_col
      * @param where_val
-     * @return
+     * @return boolean
      */
     public boolean update(String db, String table, String update_key, String update_val, String where_col, String where_val) {
         try {
@@ -180,6 +189,8 @@ public class Storage {
                     to.update(update_key, update_val, where_col, where_val);
                     to.saveToDisk();
                 }
+
+                QueryLog.localAppend(new JSONObject().put("type", "update").put("update_key", update_key).put("update_val", update_val).put("where_col", where_col).put("where_val", where_val).put("db", db).put("table", table).toString());
                 return true;
             }
         } catch (Exception e) {
@@ -194,7 +205,7 @@ public class Storage {
      * @param table
      * @param where_col
      * @param where_val
-     * @return
+     * @return boolean
      */
     public boolean delete(String db, String table, String where_col, String where_val) {
         try {
@@ -208,6 +219,9 @@ public class Storage {
                     to.delete(where_col, where_val);
                     to.saveToDisk();
                 }
+
+                QueryLog.localAppend(new JSONObject().put("type", "delete").put("db", db).put("table", table).toString());
+
                 return true;
             }
         } catch (Exception e) {
@@ -220,7 +234,7 @@ public class Storage {
     /***
      * Does Database Exist?
      * @param db
-     * @return
+     * @return boolean
      */
     public boolean databaseExists(String db) {
         File f = new File(Construct.data_path + db + Globals.meta_extention);
@@ -230,7 +244,7 @@ public class Storage {
     /***
      * Create a new Database
      * @param db
-     * @return
+     * @return boolean
      */
     public boolean createDatabase(String db) {
         try {
@@ -240,6 +254,9 @@ public class Storage {
             Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
             Files.write(file, data);
             loadMetaDatabasesToMemory();
+
+            QueryLog.localAppend(new JSONObject().put("type", "createDatabase").put("db", db).toString());
+
             return true;
         } catch (Exception e) {
             e.printStackTrace();
@@ -250,13 +267,16 @@ public class Storage {
     /***
      * Drop an existing Database
      * @param db
-     * @return
+     * @return boolean
      */
     public boolean dropDatabase(String db) {
         try {
             Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
             boolean deleted = Files.deleteIfExists(file);
             loadMetaDatabasesToMemory();
+
+            QueryLog.localAppend(new JSONObject().put("type", "dropTable").put("db", db).toString());
+
             return deleted;
         } catch (Exception e) {
             e.printStackTrace();
@@ -268,7 +288,7 @@ public class Storage {
      * Create a new Table
      * @param db
      * @param table
-     * @return
+     * @return boolean
      */
     public boolean createTable(String db, String table) {
         try {
@@ -286,6 +306,9 @@ public class Storage {
                 byte[] data = dbo.returnDBObytes();
                 Files.write(file, data);
                 loadMetaDatabasesToMemory();
+
+                QueryLog.localAppend(new JSONObject().put("type", "createTable").put("table", table).put("db", db).toString());
+
                 return true;
             }
         } catch (Exception e) {
@@ -298,7 +321,7 @@ public class Storage {
      * Does a Table Exist?
      * @param db
      * @param table
-     * @return
+     * @return boolean
      */
     public boolean tableExists(String db, String table) {
         Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
@@ -313,7 +336,7 @@ public class Storage {
      * Drop a Table
      * @param db
      * @param table
-     * @return
+     * @return boolean
      */
     public boolean dropTable(String db, String table) {
         Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
@@ -325,6 +348,9 @@ public class Storage {
                     byte[] data = dbo.returnDBObytes();
                     try {
                         Files.write(file, data);
+
+                        QueryLog.localAppend(new JSONObject().put("type", "dropTable").put("table", table).put("db", db).toString());
+
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
@@ -340,7 +366,7 @@ public class Storage {
     /***
      * Get a List of existing Tables
      * @param db
-     * @return
+     * @return List
      */
     public List getTables(String db) {
         Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
@@ -356,6 +382,12 @@ public class Storage {
         } else return null;
     }
 
+    /***
+     * Create Table Path if not exists
+     * @param db
+     * @param table
+     * @return boolean
+     */
     public boolean createTablePathIfNotExists(String db, String table) {
         try {
             // make sure `pieces` directory exists
@@ -376,6 +408,12 @@ public class Storage {
         return false;
     }
 
+    /***
+     * Create Blank Shard Piece
+     * @param db
+     * @param table
+     * @return String
+     */
     public String createBlankShardPiece(String db, String table) {
         File _table_dir = new File(Globals.pieces_path + db + "/" + table + "/");
         if (_table_dir.exists()) {
@@ -385,6 +423,9 @@ public class Storage {
                 FileOutputStream fos = new FileOutputStream(Globals.pieces_path + db + "/" + table + "/" + newPieceId + Globals.piece_extention);
                 ObjectOutputStream oos = new ObjectOutputStream(fos);
                 oos.writeObject(new TableObject());
+
+                QueryLog.localAppend(new JSONObject().put("type", "createBlankShardPiece").put("table", table).put("db", db).toString());
+
                 return newPieceId;
             } catch (Exception e) {
                 e.printStackTrace();
