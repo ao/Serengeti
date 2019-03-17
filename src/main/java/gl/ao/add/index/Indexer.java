@@ -7,6 +7,9 @@ import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
 
+/***
+ * Indexer
+ */
 public class Indexer {
 
     public Queue<StorageResponseObject> queue = new LinkedList<>();
