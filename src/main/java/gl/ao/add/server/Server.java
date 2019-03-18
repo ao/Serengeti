@@ -19,6 +19,7 @@ import gl.ao.add.Construct;
 import gl.ao.add.Interactive;
 import gl.ao.add.helpers.Globals;
 import gl.ao.add.query.QueryEngine;
+import gl.ao.add.query.QueryLog;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -229,8 +230,6 @@ public class Server {
                     InputStreamReader isr =  new InputStreamReader(t.getRequestBody(),"utf-8");
                     BufferedReader br = new BufferedReader(isr);
 
-                    // From now on, the right way of moving from bytes to utf-8 characters:
-
                     int b;
                     StringBuilder buf = new StringBuilder(512);
                     while ((b = br.read()) != -1) {
@@ -240,9 +239,9 @@ public class Server {
                     br.close();
                     isr.close();
 
-                    System.out.println(buf.toString());
-                    // The resulting string is: buf.toString()
-                    // and the number of BYTES (not utf-8 characters) from the body is: buf.length()
+//                    System.out.println(buf.toString());
+
+                    QueryLog.performReplicationAction(buf.toString());
                 }
 
                 t.sendResponseHeaders(200, response.length());

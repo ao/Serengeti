@@ -13,8 +13,12 @@ import java.util.Map;
 
 public class QueryLog {
 
+    /***
+     * Log local actions and tell the network about it
+     * @param jsonString
+     */
     public static void localAppend(String jsonString) {
-        System.out.println(jsonString);
+//        System.out.println(jsonString);
 
         JSONObject jsonObject = new JSONObject(jsonString);
 
@@ -51,6 +55,46 @@ public class QueryLog {
 
         */
 
+
+    }
+
+
+    /***
+     * A networked node has been told about a replication action
+     * and now need to perform it
+     * @param jsonString
+     */
+    public static void performReplicationAction(String jsonString) {
+        // First validate we have valid JSON
+
+        boolean validJSON = false;
+        JSONObject jsonObject = null;
+
+        try {
+            jsonObject = new JSONObject(jsonString);
+            validJSON = true;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        if (validJSON) {
+            String type = jsonObject.getString("type");
+
+            switch (type) {
+                case "createDatabase":
+                    Construct.storage.createDatabase(jsonObject.get("db").toString());
+                    break;
+                case "dropDatabase":
+                    Construct.storage.dropDatabase(jsonObject.get("db").toString());
+                    break;
+                case "createTable":
+                    Construct.storage.createTable(jsonObject.get("db").toString(), jsonObject.get("table").toString());
+                    break;
+                case "dropTable":
+                    Construct.storage.dropTable(jsonObject.get("db").toString(), jsonObject.get("table").toString());
+                    break;
+            }
+        }
 
     }
 
