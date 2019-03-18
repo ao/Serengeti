@@ -121,6 +121,9 @@ public class Storage {
      * @return StorageResponseObject
      */
     public StorageResponseObject insert(String db, String table, JSONObject json) {
+        return insert(db, table, json, false);
+    }
+    public StorageResponseObject insert(String db, String table, JSONObject json, boolean isReplicationAction) {
         StorageResponseObject sro = new StorageResponseObject();
 
         try {
@@ -148,7 +151,8 @@ public class Storage {
             to.add(json);
             to.saveToDisk();
 
-            QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).toString());
+            if (!isReplicationAction)
+                QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).toString());
 
             sro.pieceId = pieceId;
             sro.success = true;
@@ -178,6 +182,9 @@ public class Storage {
      * @return boolean
      */
     public boolean update(String db, String table, String update_key, String update_val, String where_col, String where_val) {
+        return update(db, table, update_key, update_val, where_col, where_val, false);
+    }
+    public boolean update(String db, String table, String update_key, String update_val, String where_col, String where_val, boolean isReplicationAction) {
         try {
             Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
@@ -190,7 +197,9 @@ public class Storage {
                     to.saveToDisk();
                 }
 
-                QueryLog.localAppend(new JSONObject().put("type", "update").put("update_key", update_key).put("update_val", update_val).put("where_col", where_col).put("where_val", where_val).put("db", db).put("table", table).toString());
+                if (!isReplicationAction)
+                    QueryLog.localAppend(new JSONObject().put("type", "update").put("update_key", update_key).put("update_val", update_val).put("where_col", where_col).put("where_val", where_val).put("db", db).put("table", table).toString());
+
                 return true;
             }
         } catch (Exception e) {
@@ -208,6 +217,9 @@ public class Storage {
      * @return boolean
      */
     public boolean delete(String db, String table, String where_col, String where_val) {
+        return delete(db, table, where_col, where_val, false);
+    }
+    public boolean delete(String db, String table, String where_col, String where_val, boolean isReplicationAction) {
         try {
             Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
@@ -220,7 +232,8 @@ public class Storage {
                     to.saveToDisk();
                 }
 
-                QueryLog.localAppend(new JSONObject().put("type", "delete").put("db", db).put("table", table).toString());
+                if (!isReplicationAction)
+                    QueryLog.localAppend(new JSONObject().put("type", "delete").put("db", db).put("table", table).toString());
 
                 return true;
             }
@@ -247,6 +260,9 @@ public class Storage {
      * @return boolean
      */
     public boolean createDatabase(String db) {
+        return createDatabase(db, false);
+    }
+    public boolean createDatabase(String db, boolean isReplicationAction) {
         try {
             DatabaseObject dbo = new DatabaseObject();
             dbo.createNew(db, Construct.me, null);
@@ -255,7 +271,8 @@ public class Storage {
             Files.write(file, data);
             loadMetaDatabasesToMemory();
 
-            QueryLog.localAppend(new JSONObject().put("type", "createDatabase").put("db", db).toString());
+            if (!isReplicationAction)
+                QueryLog.localAppend(new JSONObject().put("type", "createDatabase").put("db", db).toString());
 
             return true;
         } catch (Exception e) {
@@ -270,12 +287,16 @@ public class Storage {
      * @return boolean
      */
     public boolean dropDatabase(String db) {
+        return dropDatabase(db, false);
+    }
+    public boolean dropDatabase(String db, boolean isReplicationAction) {
         try {
             Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
             boolean deleted = Files.deleteIfExists(file);
             loadMetaDatabasesToMemory();
 
-            QueryLog.localAppend(new JSONObject().put("type", "dropDatabase").put("db", db).toString());
+            if (!isReplicationAction)
+                QueryLog.localAppend(new JSONObject().put("type", "dropDatabase").put("db", db).toString());
 
             return deleted;
         } catch (Exception e) {
@@ -291,6 +312,9 @@ public class Storage {
      * @return boolean
      */
     public boolean createTable(String db, String table) {
+        return createTable(db, table, false);
+    }
+    public boolean createTable(String db, String table, boolean isReplicationAction) {
         try {
             Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
@@ -307,7 +331,8 @@ public class Storage {
                 Files.write(file, data);
                 loadMetaDatabasesToMemory();
 
-                QueryLog.localAppend(new JSONObject().put("type", "createTable").put("table", table).put("db", db).toString());
+                if (!isReplicationAction)
+                    QueryLog.localAppend(new JSONObject().put("type", "createTable").put("table", table).put("db", db).toString());
 
                 return true;
             }
@@ -339,6 +364,9 @@ public class Storage {
      * @return boolean
      */
     public boolean dropTable(String db, String table) {
+        return dropTable(db, table, false);
+    }
+    public boolean dropTable(String db, String table, boolean isReplicationAction) {
         Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
         DatabaseObject dbo = new DatabaseObject().loadExisting(file);
         if (dbo.tables.size()>0) {
@@ -349,7 +377,8 @@ public class Storage {
                     try {
                         Files.write(file, data);
 
-                        QueryLog.localAppend(new JSONObject().put("type", "dropTable").put("table", table).put("db", db).toString());
+                        if (!isReplicationAction)
+                            QueryLog.localAppend(new JSONObject().put("type", "dropTable").put("table", table).put("db", db).toString());
 
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -415,6 +444,9 @@ public class Storage {
      * @return String
      */
     public String createBlankShardPiece(String db, String table) {
+        return createBlankShardPiece(db, table, false);
+    }
+    public String createBlankShardPiece(String db, String table, boolean isReplicationAction) {
         File _table_dir = new File(Globals.pieces_path + db + "/" + table + "/");
         if (_table_dir.exists()) {
 
@@ -424,7 +456,8 @@ public class Storage {
                 ObjectOutputStream oos = new ObjectOutputStream(fos);
                 oos.writeObject(new TableObject());
 
-                QueryLog.localAppend(new JSONObject().put("type", "createBlankShardPiece").put("table", table).put("db", db).toString());
+                if (!isReplicationAction)
+                    QueryLog.localAppend(new JSONObject().put("type", "createBlankShardPiece").put("table", table).put("db", db).toString());
 
                 return newPieceId;
             } catch (Exception e) {

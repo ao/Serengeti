@@ -18,8 +18,6 @@ public class QueryLog {
      * @param jsonString
      */
     public static void localAppend(String jsonString) {
-//        System.out.println(jsonString);
-
         JSONObject jsonObject = new JSONObject(jsonString);
 
         String type = jsonObject.getString("type");
@@ -55,13 +53,12 @@ public class QueryLog {
 
         */
 
-
     }
 
 
     /***
      * A networked node has been told about a replication action
-     * and now need to perform it
+     * and now needs to perform it
      * @param jsonString
      */
     public static void performReplicationAction(String jsonString) {
@@ -80,18 +77,20 @@ public class QueryLog {
         if (validJSON) {
             String type = jsonObject.getString("type");
 
+            boolean isReplicationAction = true;
+
             switch (type) {
                 case "createDatabase":
-                    Construct.storage.createDatabase(jsonObject.get("db").toString());
+                    Construct.storage.createDatabase(jsonObject.get("db").toString(), isReplicationAction);
                     break;
                 case "dropDatabase":
-                    Construct.storage.dropDatabase(jsonObject.get("db").toString());
+                    Construct.storage.dropDatabase(jsonObject.get("db").toString(), isReplicationAction);
                     break;
                 case "createTable":
-                    Construct.storage.createTable(jsonObject.get("db").toString(), jsonObject.get("table").toString());
+                    Construct.storage.createTable(jsonObject.get("db").toString(), jsonObject.get("table").toString(), isReplicationAction);
                     break;
                 case "dropTable":
-                    Construct.storage.dropTable(jsonObject.get("db").toString(), jsonObject.get("table").toString());
+                    Construct.storage.dropTable(jsonObject.get("db").toString(), jsonObject.get("table").toString(), isReplicationAction);
                     break;
             }
         }
