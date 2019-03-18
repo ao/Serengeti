@@ -226,9 +226,23 @@ public class Server {
                     }
 
                 } else if (t.getRequestURI().toString().startsWith("/post")) {
-                    System.out.println(t.getRequestBody().toString());
-//                    response = "This is a test message";
-//                    System.out.println(response);
+                    InputStreamReader isr =  new InputStreamReader(t.getRequestBody(),"utf-8");
+                    BufferedReader br = new BufferedReader(isr);
+
+                    // From now on, the right way of moving from bytes to utf-8 characters:
+
+                    int b;
+                    StringBuilder buf = new StringBuilder(512);
+                    while ((b = br.read()) != -1) {
+                        buf.append((char) b);
+                    }
+
+                    br.close();
+                    isr.close();
+
+                    System.out.println(buf.toString());
+                    // The resulting string is: buf.toString()
+                    // and the number of BYTES (not utf-8 characters) from the body is: buf.length()
                 }
 
                 t.sendResponseHeaders(200, response.length());
