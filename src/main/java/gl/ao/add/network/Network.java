@@ -1,5 +1,6 @@
 package gl.ao.add.network;
 
+import gl.ao.add.Construct;
 import gl.ao.add.helpers.Globals;
 import org.json.JSONObject;
 
@@ -57,7 +58,7 @@ public class Network {
                          */
                         getNetworkIPsPorts();
                         Thread.sleep(pingInterval);
-                        System.out.println(availableNodes);
+//                        System.out.println(availableNodes);
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -118,7 +119,7 @@ public class Network {
 
 //                            System.out.println(nodeId);
 //                            System.out.println(currentTime);
-                            System.out.println("Added: "+nodeId+" "+_ip);
+//                            System.out.println("Added: "+nodeId+" "+_ip);
 
 
                             if (availableNodes.containsKey(nodeId)) availableNodes.replace(nodeId, nodeJSON);
@@ -154,7 +155,7 @@ public class Network {
                 t.join();
                 threadcompletecount++;
                 if (threadcompletecount==254) {
-                    System.out.println("Completed");
+//                    System.out.println("Completed");
 
                     if (availableNodes.size()>0) {
                         for (String key : availableNodes.keySet()) {
@@ -184,7 +185,7 @@ public class Network {
 
 
                             if (_last_checked<currentTime) {
-                                System.out.println("delete: "+json.get("id")+" "+json.get("ip"));
+//                                System.out.println("delete: "+json.get("id")+" "+json.get("ip"));
                                 availableNodes.remove(json.get("id"));
                             }
                         }
@@ -202,18 +203,24 @@ public class Network {
             for (String key : availableNodes.keySet()) {
                 JSONObject json = availableNodes.get(key);
 
-                try {
-                    String data = "data="+jsonString;
-                    URL url2 = new URL("http://" + json.get("ip").toString() + ":" + Globals.port_default + "/post");
-                    HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
-                    con2.setRequestMethod("POST");
-                    con2.setDoOutput(true);
-                    con2.setConnectTimeout(networkTimeout);
-                    con2.getOutputStream().write(data.getBytes("UTF-8"));
-                    con2.getInputStream();
+                if (json.get("ip").toString().equals(Construct.network.myIP)) {
+                    // Don't send messages to ourselves!
+                } else {
 
+                    try {
+                        String data = "data=" + jsonString;
+                        System.out.println(json.get("ip").toString());
+                        URL url2 = new URL("http://" + json.get("ip").toString() + ":" + Globals.port_default + "/post");
+                        HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
+                        con2.setRequestMethod("POST");
+                        con2.setDoOutput(true);
+                        con2.setConnectTimeout(networkTimeout);
+                        con2.getOutputStream().write(data.getBytes("UTF-8"));
+                        con2.getInputStream();
 
-                } catch (ConnectException ce) {} catch (Exception e) {}
+                    } catch (ConnectException ce) {} catch (Exception e) {}
+
+                }
 
             }
         }
