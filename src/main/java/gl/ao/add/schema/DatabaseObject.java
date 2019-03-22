@@ -46,6 +46,14 @@ public class DatabaseObject implements Serializable {
         this.tables.put(name, piece);
     }
 
+    /***
+     * Update Table with a New Piece ID
+     * @param db
+     * @param table
+     * @param oldPieceId
+     * @param newPieceId
+     * @return Map
+     */
     public Map updateTableNewPieceId(String db, String table, String oldPieceId, String newPieceId) {
         Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
         DatabaseObject dbo = new DatabaseObject().loadExisting(file);
