@@ -162,4 +162,24 @@ public class Globals {
                 : null;
     }
 
+    /***
+     * Helper to recursively delete a directory and all files within
+     * @param path
+     */
+    static public void deleteDirectory(File path) {
+        if (path == null)
+            return;
+        if (path.exists()) {
+            for(File f : path.listFiles()) {
+                if(f.isDirectory()) {
+                    deleteDirectory(f);
+                    f.delete();
+                } else {
+                    f.delete();
+                }
+            }
+            path.delete();
+        }
+    }
+
 }

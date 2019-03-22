@@ -373,6 +373,8 @@ public class Storage {
             for (String t: dbo.tables.keySet()) {
                 if (t.equals(table)) {
                     dbo.tables.remove(t);
+                    deleteTablePathIfExists(db, table);
+
                     byte[] data = dbo.returnDBObytes();
                     try {
                         Files.write(file, data);
@@ -429,6 +431,26 @@ public class Storage {
             File _table_dir = new File(Globals.pieces_path + db + "/" + table + "/");
             if (!_table_dir.exists()) {
                 _table_dir.mkdir();
+                return true;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    /***
+     * Deleted the Table path and all table data
+     * @param db
+     * @param table
+     * @return boolean
+     */
+    public boolean deleteTablePathIfExists(String db, String table) {
+        try {
+            // make sure `table` directory exists
+            File _table_dir = new File(Globals.pieces_path + db + "/" + table + "/");
+            if (_table_dir.exists()) {
+                Globals.deleteDirectory(_table_dir);
                 return true;
             }
         } catch (Exception e) {
