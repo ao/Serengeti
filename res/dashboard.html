@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Dashboard</title>
+
+        <script type='text/javascript'>
+
+            var myCanvas;
+            var ctx;
+
+            var queryRoot = function() {
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', 'http://localhost:1985/', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.onreadystatechange = function () {
+                    if (this.readyState != 4) return;
+                    if (this.status == 200) {
+                        var data = '';
+                        try {
+                            data = JSON.parse(this.responseText);
+                            htmlData = JSON.stringify(data);
+                        } catch (ex) {
+                            data = this.responseText;
+                            htmlData = data;
+                        }
+
+                        document.getElementById('totalNodesCount').innerHTML = data.totalNodes;
+
+
+                        //this
+                        document.getElementById('_this_disk_usable').lastChild.innerHTML = data.this.disk.usable;
+                        document.getElementById('_this_disk_total').lastChild.innerHTML = data.this.disk.total;
+                        document.getElementById('_this_disk_free').lastChild.innerHTML = data.this.disk.free;
+                        document.getElementById('_this_memory_total').lastChild.innerHTML = data.this.memory.total;
+                        document.getElementById('_this_memory_free').lastChild.innerHTML = data.this.memory.free;
+                        document.getElementById('_this_os_name').lastChild.innerHTML = data.this.os.name;
+                        document.getElementById('_this_os_arch').lastChild.innerHTML = data.this.os.arch;
+                        document.getElementById('_this_os_version').lastChild.innerHTML = data.this.os.version;
+                        document.getElementById('_this_ip').lastChild.innerHTML = data.this.ip;
+                        document.getElementById('_this_started').lastChild.innerHTML = data.this.started;
+                        document.getElementById('_this_id').lastChild.innerHTML = data.this.id;
+                        document.getElementById('_this_processors').lastChild.innerHTML = data.this.processors;
+                        document.getElementById('_this_version').lastChild.innerHTML = data.this.version;
+                        document.getElementById('_this_uptime').lastChild.innerHTML = data.this.uptime;
+
+                        document.getElementById('_cluster').innerHTML = JSON.stringify(data.availableNodes, null, 4);
+                    }
+
+                    setTimeout(()=>queryRoot(), 2000);
+                };
+                xhr.send();
+            };
+
+            var drawLine = function(ctx, startX, startY, endX, endY){
+                ctx.beginPath();
+                ctx.moveTo(startX,startY);
+                ctx.lineTo(endX,endY);
+                ctx.stroke();
+            };
+
+
+            window.onload = function() {
+                myCanvas = document.getElementById("myCanvas");
+                myCanvas.width = 300;
+                myCanvas.height = 300;
+                ctx = myCanvas.getContext("2d");
+
+                queryRoot();
+            };
+        </script>
+        <style>
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+                font-family: sans-serif;
+                font-size: 14px;
+            }
+            h1 {
+                font-size: 32px;
+                margin-bottom: 10px;
+            }
+            .wrapper {
+
+            }
+            .header {
+                padding: 5px;
+            }
+            .logo {
+
+            }
+                .logo img {
+                    height:35px;
+                }
+            .framer {
+
+            }
+            .stat_box_container {
+                display: block;
+            }
+            .stat_box {
+                width: 25%;
+                text-align: center;
+                height: 100px;
+                box-shadow: 0px 0px 2px -1px #efefef;
+                float: left;
+                display: inline-block;
+            }
+                .stat_box .count {
+                    font-size: 70px;
+                    color: #353756;
+                }
+                .stat_box .label {
+                    font-size: 13px;
+                    color: #b1b1b1;
+                }
+            .root_response {
+                padding: 10px;
+            }
+                #_this {
+                    float: left;
+                    width: 30%;
+                    /*max-height: 200px;*/
+                    /*overflow-y: scroll;*/
+                }
+                    #_this u {
+                        min-width: 100px;
+                        display: inline-block;
+                    }
+                    #_this_disk, #_this_memory, #_this_os {
+                        margin-bottom: 5px;
+                    }
+                #_nodes {
+                    float: left;
+                    width: 70%;
+                }
+                    #_nodes #_cluster {
+                        max-height: 700px;
+                        overflow-y: scroll;
+                    }
+        </style>
+    </head>
+    <body>
+        <div class="wrapper">
+            <div class="header">
+                <!--base64 image of `./artwork/logo.png`-->
+                <a href="/dashboard" class="logo"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOgAAABGCAYAAADGv9jmAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAABo9JREFUeNrsnU9uIlcQxlvIu2yQss0CpKwjzw0YKQfw3AD2VgwnAE4AE2UPOYFzAEvmBqCsI5lI2UbyxvtUkcLxOAP0q/f/va+k1ngxI41f96+/+t5X3d00KK/1w4ef7+mYYSXM6u/vvh/Q8ch/1rwOHVwK3qtLx5QgfaJjiOUwKoaTIV3R0QOgEeubX368pqNb8FrzBbYSUAdgz6j4xvYkoHYBaJxayFF6MaiPBOkjQFWDOqsF1CQAJeUcSDszpJ9raWUGAip71B7YM7MMAuoYgIap1Zufp5VdcDd8sRGkK4BqDOqCIGVQhwDUn3oOpe17bWPYj1bavm15x5eOLvgz8/YE6bbEHd8UFHR6wo9W3b4hmjEuvqk/lhbNRAWUlHL2Tj1f/Zn40qp9FqIZvbcvJZrpRISTL8I7Q2Wtsn0TUG+wHMaW4Sl3UGMq6FiU4uSdUPwp6l9Q7xHN6L19rtFMFEAlSrlT+tPq2zcBtYflMPf2DCoAbQdem7tZDyp6ElREM0pQc4pmggMq6mmyOIvCRwCtfRaiGZ23F1AHAPQdcIq73hjX1MWOBKDqQE06mgkKqEQnmt3IO6hoa5+1RTSj8/YE6X1qO76hFXRqefGhWrZviGZUdRi7TCmaCQbom4F4bY0rGqR3BSqiGb23TyKaCamgq4gKXH37hmhG3bVFjWaCAPqVgXj1na3SQXpXoCKaUYIaK5oJpaAulW+Ba8a6fWNQF9jxNff2AupNMYCS4o0dqeerElQ+SO+qxg2iGbW3DxXNdDzD6Wv3FV7Usc9CNKPz9gJqL0tAm8sD8TYqigjBLagrPN6m9/a+ohlvgLZ4nAxeNFGfhWhG7+1dRzMdzwD59DYYpPfcvgmo2DU3t1/OQPUCqGIgXr0YGAH0DuoW0Yza229toxlfChpqE6fXYJA+WPuGaEZnGWyiGeeASgQSsvXEIH24QjSjB1UVzfhQ0NARCB5Hi9O+YcdX6e0F1OvggDoYiLfxovBI4UFFNGPh7dtEM64VNGb0geGFiD6LIN0imtF5e4J0cWrH1xmgEnnE3JIfQkWj1uHF0chQ9d7+a9GMSwVNQcFWONdp+CxEM3pv/zaacQKoh4F49cWBQfq02jcBFTu+ht7++HhbxwGcqb2OBF40PY8KQHWg9lwo6DixEwAVTaM2dHz8ffsTH3ssR+t6pmNOR//bv/6YXTlQz7sEf0n2on2c6yjFME4Iyt+wFMa1ZjgJzL0rD+p7IF7dVmGQPgqYIwKzDzhVYLJijt7CyaVW0IAD8TZedI1zH6Ql+0xQzrAUKhvAirk59Rc6lgAkvTkh3x9FefZKgNO4duzPCcyP5+BUK6i8WS+HFpIH6Zcvtw/PuCbceyVs/qhsACtm685O2+Lm8jaD4yA97vBuir3lBGDqug0Cc2n6D41b3IgD8TYq2sM1Yu2VOC75BDh1NkADp1ZBcxsEOA5SjHC9qFoy3pndYClUNmBCYFrZKyMFlehikOFiYZBeB2YfcKrAPEYm1nsfpgqa8xgd++ZPuH4ut2QE5RJLobIB80u7st4U1OH3VWLVDUYAL3slwKnz520iE28KKiN9JbyHdioLinrnlQhMRFHmNsAoMvHZ4qY2EK+twyD9y+0DIEWWadNtTHyD2RrQhAfitVX7IP1GwMRNyhzMz3QsXWz+uFTQaVPW83yHQXpS0XVlF9hOWlmAaV5LaWeD24CrC+rZa8p8pWVNg/R7Ucw1ONPZgPdPmCQDaFPu2wlYRcekoiXvWCIysbMB7DN3sf8jnTPqmctAvFpFC30jPSITOzCPkckuhf/QOQUt/fN+JQ7SL0U1EZmY2wBWzOQeNO+cUM9Bk+dIn2mV8l2XtSgm8kxzMHkkr58inOcUtJY34x0HMHIdpD94JYJyB9aMbUDwyMQJoPJp+UFFJ4sH6ecvtw/7zMBElqmreQ5gnlPQGj8tn8vjaPsGkYmNDYgamVgDWsBAvI2K/prwCOCztLIAU9dtjHID83+AJviG+BgqukkQzINXwuaPzgb4eMIkloKm8n2VWJXaIP0cYKptwCTVXVkVoAUOxGuL/feHFLwSnjLR+fNQT5mEVtBSHiezreuIg/QHrwQwdTaAv2NS4i93JQPx+CLYl150HRhMRCYW/jyXyESroIDzywr1ONrBK+E7JnobkOvOrCmgf8qGBOq/6noGE1mmrg4vzq4BzFdASSlmOO9hWzLszOpsQO6RiVZBUf4LkYm+2xjVCOax/hFgAAtt3Uc7hGPUAAAAAElFTkSuQmCC" /></a>
+            </div>
+            <div class="framer">
+                <div class="stat_box_container">
+                    <div class="stat_box">
+                        <div class="count" id="totalNodesCount">0</div>
+                        <div class="label">Total Nodes</div>
+                    </div>
+                    <div class="stat_box">
+                        <div class="count" id="">0</div>
+                        <div class="label">Health check</div>
+                    </div>
+                    <div class="stat_box">
+                        <div class="count" id="">0</div>
+                        <div class="label">Latency</div>
+                    </div>
+                    <div class="stat_box">
+                        <div class="count" id="">0</div>
+                        <div class="label">Communications</div>
+                    </div>
+                    <br clear="all" />
+                </div>
+                <div class="root_response">
+                    <div id="_this">
+                        <h1>Local</h1>
+                        <div id="_this_disk">
+                            <h2>Disk</h2>
+                            <div id="_this_disk_usable"><u>Usable:</u> <span></span></div>
+                            <div id="_this_disk_total"><u>Total:</u> <span></span></div>
+                            <div id="_this_disk_free"><u>Free:</u> <span></span></div>
+                        </div>
+                        <div id="_this_memory">
+                            <h2>Memory</h2>
+                            <div id="_this_memory_total"><u>Total:</u> <span></span></div>
+                            <div id="_this_memory_free"><u>Free:</u> <span></span></div>
+                        </div>
+                        <div id="_this_os">
+                            <h2>OS</h2>
+                            <div id="_this_os_name"><u>Name:</u> <span></span></div>
+                            <div id="_this_os_arch"><u>Arch:</u> <span></span></div>
+                            <div id="_this_os_version"><u>Version:</u> <span></span></div>
+                        </div>
+                        <div id="_this_ip"><u>IP:</u> <span></span></div>
+                        <div id="_this_started"><u>Started:</u> <span></span></div>
+                        <div id="_this_id"><u>ID:</u> <span></span></div>
+                        <div id="_this_processors"><u>Processors:</u> <span></span></div>
+                        <div id="_this_version"><u>Version:</u> <span></span></div>
+                        <div id="_this_uptime"><u>Uptime:</u> <span></span></div>
+                    </div>
+                    <div id="_nodes">
+                        <h1>Cluster</h1>
+                        <pre id="_cluster"></pre>
+                    </div>
+                    <br clear="all" />
+                </div>
+                <div class="canvas">
+                    <canvas id="myCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>
