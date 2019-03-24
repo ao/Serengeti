@@ -150,19 +150,20 @@ public class Network {
                 t.join();
                 threadcompletecount++;
                 if (threadcompletecount==254) {
-
-                    if (availableNodes.size()>0) {
+                    if (availableNodes.size() > 0) {
                         for (String key : availableNodes.keySet()) {
                             JSONObject json = availableNodes.get(key);
                             long _last_checked = Long.parseLong(json.get("last_checked").toString());
 
-                            if (_last_checked<currentTime) {
+                            if (_last_checked < currentTime) {
                                 availableNodes.remove(json.get("id"));
-                            }
+                           }
                         }
                     }
                 }
-            } catch (InterruptedException e) {}
+            }
+            catch (InterruptedException e) {}
+            catch (ConcurrentModificationException cme) {}
         }
 
 //        coordinateCluster();
