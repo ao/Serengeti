@@ -16,6 +16,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import gl.ao.add.Construct;
+import gl.ao.add.Dashboard;
 import gl.ao.add.Interactive;
 import gl.ao.add.helpers.Globals;
 import gl.ao.add.query.QueryEngine;
@@ -64,6 +65,7 @@ public class Server {
             final HttpServer server = HttpServer.create(new InetSocketAddress(Globals.port_default), 5);
             server.createContext("/", new RootHandler());
             server.createContext("/interactive", new InteractiveHandler());
+            server.createContext("/dashboard", new DashboardHandler());
             server.createContext("/get", new GenericGetHandler());
             server.createContext("/post", new GenericPostHandler());
             server.createContext("/put", new GenericPutHandler());
@@ -165,6 +167,15 @@ public class Server {
     static class InteractiveHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
             String response = Interactive.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"), t.getRequestURI().getPath());
+            t.sendResponseHeaders(200, response.length());
+            OutputStream os = t.getResponseBody();
+            os.write(response.getBytes());
+            os.close();
+        }
+    }
+    static class DashboardHandler implements HttpHandler {
+        public void handle(HttpExchange t) throws IOException {
+            String response = Dashboard.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"), t.getRequestURI().getPath());
             t.sendResponseHeaders(200, response.length());
             OutputStream os = t.getResponseBody();
             os.write(response.getBytes());
