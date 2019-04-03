@@ -5,10 +5,6 @@
         <title>Dashboard</title>
 
         <script type='text/javascript'>
-
-            var myCanvas;
-            var ctx;
-
             var queryRoot = function() {
                 var xhr = new XMLHttpRequest();
                 xhr.open('GET', 'http://localhost:1985/', true);
@@ -45,6 +41,8 @@
                         document.getElementById('_this_uptime').lastChild.innerHTML = data.this.uptime;
 
                         document.getElementById('_cluster').innerHTML = JSON.stringify(data.availableNodes, null, 4);
+
+                        document.getElementById('_topology__inner').innerHTML = data.topology;
                     }
 
                     setTimeout(()=>queryRoot(), 2000);
@@ -52,20 +50,7 @@
                 xhr.send();
             };
 
-            var drawLine = function(ctx, startX, startY, endX, endY){
-                ctx.beginPath();
-                ctx.moveTo(startX,startY);
-                ctx.lineTo(endX,endY);
-                ctx.stroke();
-            };
-
-
             window.onload = function() {
-                myCanvas = document.getElementById("myCanvas");
-                myCanvas.width = 300;
-                myCanvas.height = 300;
-                ctx = myCanvas.getContext("2d");
-
                 queryRoot();
             };
         </script>
@@ -133,12 +118,16 @@
                     }
                 #_nodes {
                     float: left;
-                    width: 70%;
+                    width: 30%;
                 }
                     #_nodes #_cluster {
                         max-height: 700px;
                         overflow-y: scroll;
                     }
+                #_topology {
+                    float: left;
+                    width: 40%;
+                }
         </style>
     </head>
     <body>
@@ -198,10 +187,11 @@
                         <h1>Cluster</h1>
                         <pre id="_cluster"></pre>
                     </div>
+                    <div id="_topology">
+                        <h1>Topology</h1>
+                        <div id="_topology__inner">...</div>
+                    </div>
                     <br clear="all" />
-                </div>
-                <div class="canvas">
-                    <canvas id="myCanvas"></canvas>
                 </div>
             </div>
         </div>
