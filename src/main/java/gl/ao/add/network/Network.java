@@ -3,6 +3,7 @@ package gl.ao.add.network;
 import gl.ao.add.Construct;
 import gl.ao.add.helpers.Globals;
 import org.json.JSONObject;
+import org.json.JSONString;
 
 import java.io.*;
 import java.net.*;
@@ -11,8 +12,6 @@ import java.util.*;
 public class Network {
 
     public Map<String, JSONObject> availableNodes = new HashMap<>();
-    public Map<String, JSONObject> clusterNodes = new HashMap<>();
-    public String clusterId = "";
 
     public String myIP = null;
     public InetAddress myINA = null;
@@ -156,37 +155,57 @@ public class Network {
         }
     }
 
-    public void communicateQueryLog(String jsonString) {
-
+    public void communicateQueryLogAllNodes(String jsonString) {
         if (availableNodes.size()>0) {
             for (String key : availableNodes.keySet()) {
                 JSONObject json = availableNodes.get(key);
 
-                if (json.get("ip").toString().equals(Construct.network.myIP)) {
-                    // Don't send messages to ourselves!
-                } else {
-
-                    try {
-                        System.out.println(json.get("ip").toString());
-                        URL url2 = new URL("http://" + json.get("ip").toString() + ":" + Globals.port_default + "/post");
-                        HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
-                        con2.setRequestMethod("POST");
-                        con2.setDoOutput(true);
-                        con2.setConnectTimeout(networkTimeout);
-                        con2.getOutputStream().write(jsonString.getBytes("UTF-8"));
-                        con2.getInputStream();
-
-                    } catch (ConnectException ce) {} catch (Exception e) {}
-
-                }
+                if (!json.get("ip").toString().equals(myIP))
+                    communicateQueryLogSingleNode("", json.get("ip").toString(), json.toString());
 
             }
         }
-
+    }
+    public void communicateQueryLogSingleNode(String id, String ip, String jsonString) {
+        if (!ip.equals(myIP)) {
+            try {
+                System.out.println(ip);
+                URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
+                HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
+                con2.setRequestMethod("POST");
+                con2.setDoOutput(true);
+                con2.setConnectTimeout(networkTimeout);
+                con2.getOutputStream().write(jsonString.getBytes("UTF-8"));
+                con2.getInputStream();
+            } catch (ConnectException ce) {} catch (Exception e) {}
+        }
     }
 
-    public String generateClusterID() {
-        return UUID.randomUUID().toString();
+    public JSONObject getRandomAvailableNode() {
+        Map<String, JSONObject> an = new HashMap<String, JSONObject>();
+        an.putAll(this.availableNodes);
+
+        if (an.size() > 0) {
+            // Should first remove `self` from the list
+            Iterator it=an.entrySet().iterator();
+            while(it.hasNext()) {
+                Map.Entry<String, JSONObject> item = (Map.Entry<String, JSONObject>) it.next();
+                if (item.getValue().get("ip").toString().equals(myIP)) {
+                    it.remove();
+                }
+            }
+
+            List<JSONObject> list = new ArrayList<JSONObject>();
+            for (String key: an.keySet()) {
+                list.add(an.get(key));
+            }
+
+            // Shuffle and send the first one back
+            Collections.shuffle(list);
+            return (JSONObject) list.get(0);
+        }
+
+        return null;
     }
 
     public void coordinateCluster() {
