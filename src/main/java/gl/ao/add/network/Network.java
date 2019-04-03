@@ -10,9 +10,6 @@ import java.util.*;
 
 public class Network {
 
-//    public Sender sender;
-//    public Receiver receiver;
-
     public Map<String, JSONObject> availableNodes = new HashMap<>();
     public Map<String, JSONObject> clusterNodes = new HashMap<>();
     public String clusterId = "";
@@ -37,13 +34,6 @@ public class Network {
             System.out.println("This node is not connected to a network. It will therefore only function locally.");
         }
 
-//        try {
-//            receiver = new Receiver(myIP, myINA);
-//            sender = new Sender();
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//        }
-
         findNodes();
     }
 
@@ -58,7 +48,6 @@ public class Network {
                          */
                         getNetworkIPsPorts();
                         Thread.sleep(pingInterval);
-//                        System.out.println(availableNodes);
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -165,8 +154,6 @@ public class Network {
             catch (InterruptedException e) {}
             catch (ConcurrentModificationException cme) {}
         }
-
-//        coordinateCluster();
     }
 
     public void communicateQueryLog(String jsonString) {
