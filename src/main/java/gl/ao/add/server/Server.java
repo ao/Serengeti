@@ -26,7 +26,7 @@ import org.json.JSONObject;
 
 public class Server {
 
-    private ServerConstants server_constants = null;
+    public ServerConstants server_constants = null;
     private String server_constants_file_location = Construct.data_path + "server.constants";
     private Path server_constants_file = null;
 
@@ -91,7 +91,6 @@ public class Server {
             jsonObjThis.put("version", "0.0.1");
             jsonObjThis.put("started", Construct.currentDate);
 
-            jsonObjThis.put("cluster", Construct.network.clusterId);
             jsonObjThis.put("coordinator", Construct.network.coordinator);
             jsonObjThis.put("id", Construct.server.server_constants.id);
 
@@ -154,6 +153,7 @@ public class Server {
             jsonObjRoot.put("this", jsonObjThis);
             jsonObjRoot.put("totalNodes", Integer.toString(Construct.network.availableNodes.size()));
             jsonObjRoot.put("availableNodes", Construct.network.availableNodes);
+            jsonObjRoot.put("topology", "");
 //
             //response
             String response = jsonObjRoot.toString();
