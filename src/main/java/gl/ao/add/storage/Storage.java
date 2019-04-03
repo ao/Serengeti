@@ -148,11 +148,11 @@ public class Storage {
             }
 
             TableObject to = new TableObject(db, table, pieceId);
-            to.add(json);
+            String rowId = to.add(json);
             to.saveToDisk();
 
             if (!isReplicationAction)
-                QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).toString());
+                QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).put("rowId", rowId).put("pieceId", pieceId).toString());
 
             sro.pieceId = pieceId;
             sro.success = true;
@@ -169,6 +169,13 @@ public class Storage {
         }
 
         return sro;
+    }
+
+    public void updateReplicaByRowId(String db, String table, String pieceId, String rowId, String replica) {
+        TableObject to = new TableObject(db, table, pieceId);
+        to.loadExisting();
+        to.updateReplicaToRow(rowId, replica);
+        to.saveToDisk();
     }
 
     /***

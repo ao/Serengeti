@@ -70,10 +70,10 @@ public class TableObject implements Serializable {
      * @param json
      * @return
      */
-    public boolean add(JSONObject json) {
+    public String add(JSONObject json) {
         String rowId = UUID.randomUUID().toString();
         rows.put(rowId, json.toString());
-        return true;
+        return rowId;
     }
     public JSONObject get(String key, String value) {
         for (String k: rows.keySet()) {
@@ -99,6 +99,14 @@ public class TableObject implements Serializable {
             }
         }
         return true;
+    }
+    public void updateReplicaToRow(String rowId, String replica) {
+        for (String k: rows.keySet()) {
+            String row = rows.get(k);
+            JSONObject json = new JSONObject(row);
+            if (json.get("rowId").equals(rowId))
+                json.put("replica", replica);
+        }
     }
     public boolean delete(String where_col, String where_val) {
         List<String> keysToDelete = new LinkedList<>();
