@@ -76,6 +76,7 @@ public class Network {
             final int j = i; // i as non-final variable cannot be referenced from inner class
 
             Construct.network.latencyRun = true;
+            Construct.network.latency = 0;
             Thread t = new Thread(new Runnable() {
                 public void run() {
                     ip[3] = (byte) j;
