@@ -5,6 +5,8 @@
         <title>ADD - Dashboard</title>
 
         <script type='text/javascript'>
+            var nodes_data = {};
+
             var queryRoot = function() {
                 var xhr = new XMLHttpRequest();
                 xhr.open('GET', 'http://localhost:1985/', true);
@@ -40,10 +42,48 @@
                         document.getElementById('_this_version').lastChild.innerHTML = data.this.version;
                         document.getElementById('_this_uptime').lastChild.innerHTML = data.this.uptime;
 
-                        document.getElementById('_available_nodes').innerHTML = JSON.stringify(data.availableNodes, null, 4);
+                        // document.getElementById('_available_nodes').innerHTML = JSON.stringify(data.availableNodes, null, 4);
 
                         document.getElementById('discoveryLatencyValue').innerHTML = data.discoveryLatency+"ms";
                         document.getElementById('replicationLatencyValue').innerHTML = data.replicationLatency+"ms";
+
+
+                        var nodes_keys_before = {};
+                        for (var key in nodes_data) {
+                            if (!nodes_data.hasOwnProperty(key)) continue;
+                            nodes_keys_before[key] = key;
+                        }
+
+                        var nodes_keys_new = {};
+                        for (var key in data.availableNodes) {
+                            if (!data.availableNodes.hasOwnProperty(key)) continue;
+                            nodes_keys_new[key] = key;
+
+                            if (nodes_data[key]) {
+                                //already exists, update this item
+                            } else {
+                                //new item
+                                nodes_data[key] = data.availableNodes[key];
+                                var new_node = document.createElement("div");
+                                new_node.id = "node_"+key;
+                                new_node.className = "nodes_item_container";
+                                new_node.innerHTML = "<div class='nodes_item__id'>"+data.availableNodes[key].id+"</div> \
+                                                      <div class='nodes_item__os'>"+data.availableNodes[key].os.name+"</div> \
+                                                      <div>"+data.availableNodes[key].ip+"</div>";
+                                new_node.title = JSON.stringify(data.availableNodes[key]);
+                                document.getElementById("_available_nodes").append(new_node);
+                            }
+                        }
+
+
+                        for (var key in nodes_keys_before) {
+                            if (!nodes_keys_before.hasOwnProperty(key)) continue;
+
+                                if (nodes_keys_new[key]==undefined) {
+                                    delete nodes_data[key]
+                                    document.getElementById("node_"+key).remove();
+                                }
+                            }
                     }
 
                     setTimeout(()=>queryRoot(), 2000);
@@ -140,10 +180,26 @@
                     float: left;
                     width: 70%;
                 }
-                    #_nodes #_available_nodes {
-                        max-height: 700px;
-                        overflow-y: scroll;
-                    }
+                    /*#_nodes #_available_nodes {*/
+                        /*max-height: 700px;*/
+                        /*overflow-y: scroll;*/
+                    /*}*/
+                        .nodes_item_container {
+                            width: 250px;
+                            border: 1px solid #222;
+                            padding: 5px;
+                            overflow: hidden;
+                            margin: 0 5px 5px 0;
+                            float: left;
+                        }
+                            .nodes_item__id {
+                                font-size: 12px;
+                                color: #777;
+                                margin-bottom: 7px;
+                            }
+                            .nodes_item__os {
+                                font-weight: bold;
+                            }
         </style>
     </head>
     <body>
@@ -203,7 +259,7 @@
                     </div>
                     <div id="_nodes">
                         <h1>Nodes</h1>
-                        <pre id="_available_nodes"></pre>
+                        <div id="_available_nodes"></div>
                     </div>
                     </div>
                     <br clear="all" />
