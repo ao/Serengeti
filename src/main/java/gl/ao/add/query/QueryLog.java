@@ -64,7 +64,7 @@ public class QueryLog {
                     String table = jsonObject.getString("table");
 
                     JSONObject jsonStringTmp = jsonObject;
-                    jsonStringTmp.put("replica", Construct.server.server_constants.id); //tell the copy about where the original data was inserted
+                    jsonStringTmp.put("__replica", Construct.server.server_constants.id); //tell the copy about where the original data was inserted
 
                     Construct.network.communicateQueryLogSingleNode(replicateToID, replicateToIP, jsonStringTmp.toString());
                     Construct.storage.updateReplicaByRowId(db, table, originalPieceId, originalRowId, replicateToID);
@@ -94,27 +94,31 @@ public class QueryLog {
         JSONObject jsonObject;
         try {
             jsonObject = new JSONObject(jsonString);
-            String type = jsonObject.getString("type");
+            if (jsonObject.has("type")) {
+                String type = jsonObject.getString("type");
 
-            String db = jsonObject.has("db") ? jsonObject.getString("db") : null;
-            String table = jsonObject.has("table") ? jsonObject.getString("table") : null;
+                String db = jsonObject.has("db") ? jsonObject.getString("db") : null;
+                String table = jsonObject.has("table") ? jsonObject.getString("table") : null;
 
-            switch (type) {
-                case "createDatabase":
-                    Construct.storage.createDatabase(db, true);
-                    break;
-                case "dropDatabase":
-                    Construct.storage.dropDatabase(db, true);
-                    break;
-                case "createTable":
-                    Construct.storage.createTable(db, table, true);
-                    break;
-                case "dropTable":
-                    Construct.storage.dropTable(db, table, true);
-                    break;
-                case "insert":
-                    Construct.storage.insert(db, table, jsonObject, true);
-                    break;
+                switch (type) {
+                    case "createDatabase":
+                        Construct.storage.createDatabase(db, true);
+                        break;
+                    case "dropDatabase":
+                        Construct.storage.dropDatabase(db, true);
+                        break;
+                    case "createTable":
+                        Construct.storage.createTable(db, table, true);
+                        break;
+                    case "dropTable":
+                        Construct.storage.dropTable(db, table, true);
+                        break;
+                    case "insert":
+                        Construct.storage.insert(db, table, jsonObject, true);
+                        break;
+                }
+            } else {
+                System.out.println("Something might have gone wrong trying to performReplicationAction: [missing `type`] "+jsonString);
             }
         } catch (Exception e) {
             e.printStackTrace();
