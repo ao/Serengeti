@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Interactive</title>
+
+        <script type='text/javascript'>
+            var _submitQuery = function() {
+                if (document.getElementById('txtQuery').value.trim()!="") {
+
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('POST', '/post?query', true);
+                    xhr.setRequestHeader('Content-Type', 'application/json');
+                    xhr.onreadystatechange = function () {
+                        if (this.readyState != 4) return;
+                        if (this.status == 200) {
+                            var data = '';
+                            try {
+                                data = JSON.parse(this.responseText);
+                                htmlData = JSON.stringify(data, null, 2);
+                            } catch (ex) {
+                                data = this.responseText;
+                                htmlData = data;
+                            }
+                            var all = document.getElementById('responseContainer').innerHTML;
+                            document.getElementById('responseContainer').innerHTML =
+                                "<div class='history_item'><div class='history_item_timestamp'>" + new Date() + "</div><div class='history_item_query'>" + document.getElementById('txtQuery').value + "</div><pre class='history_item_response'>" + htmlData + "</pre></div>" + all;
+                        }
+                    };
+                    xhr.send(JSON.stringify({
+                        value: document.getElementById('txtQuery').value
+                    }));
+                }
+            };
+            function keyUpQuery(event) {
+                if (event.keyCode == 13) {
+                    var content = this.value;
+                    if(event.shiftKey){
+                        _submitQuery();
+                        event.stopPropagation();
+                    }
+                }
+            }
+            function populate(el) {
+                document.getElementById('txtQuery').value = el.childNodes[1].innerText;
+            }
+        </script>
+        <style>
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+                font-family: sans-serif;
+                font-size: 14px;
+            }
+            h1 {
+                font-size: 32px;
+                margin-bottom: 10px;
+            }
+            h2 {
+                font-size: 22px;
+                margin-bottom: 7px;
+            }
+            .wrapper {
+
+            }
+            .header {
+                padding: 5px;
+            }
+                .header .menu_item {
+                    padding: 2px 5px;
+                    color: black;
+                    font-size: 19px;
+                    position: relative;
+                    top: -9px;
+                    margin: 0 10px;
+                }
+                .header .menu_item_active {
+                    font-weight: bold;
+                }
+            .logo {
+
+            }
+                .logo img {
+                    height:35px;
+                }
+            .framer {
+
+            }
+            .root_response {
+                padding: 10px;
+            }
+
+            .interactive_container {
+
+            }
+                .interactive_container .interactive_presets {
+                    float:left;
+                    width:25%;
+                    padding: 0 10px;
+                }
+                    .interactive_container .populate {
+                        cursor: pointer;
+                        border-bottom: 1px dotted;
+                        padding: 7px 2px;
+                    }
+                .interactive_container .interactive_query {
+                    float:left;
+                    width:35%;
+                    padding: 0 10px;
+                }
+                    .interactive_container .interactive_query #txtQuery {
+                        margin: 0px;
+                        width: 100%;
+                        min-height: 200px;
+                    }
+                    .interactive_container .interactive_query input[type='button'] {
+                        width: 100%;
+                        padding: 10px;
+                        display: block;
+                        font-size: 15px;
+                        border: 1px solid #089444;
+                        border-radius: 2px;
+                        background: #089444;
+                        color: white;
+                        cursor: pointer;
+                    }
+                .interactive_container .interactive_history {
+                    float:left;
+                    width:40%;
+                    padding: 0 10px;
+                }
+                    .interactive_container .interactive_history #responseContainer {
+
+                    }
+                        .interactive_container .interactive_history .history_item {
+                            border-bottom: 1px dotted;
+                            padding-bottom: 5px;
+                            margin-bottom: 5px;
+                        }
+                        .interactive_container .interactive_history .history_item_timestamp {
+                            background: #757575;
+                            color: white;
+                            padding: 4px 4px;
+                        }
+                        .interactive_container .interactive_history .history_item_query {
+                            font-weight: bold;
+                            padding: 2px 5px;
+                        }
+                        .interactive_container .interactive_history .history_item_response {
+                            color: #333;
+                            padding: 5px;
+                        }
+        </style>
+    </head>
+    <body>
+        <div class="wrapper">
+            <div class="header">
+                <!--base64 image of `./artwork/logo.png`-->
+                <a href="/dashboard" class="logo"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOgAAABGCAYAAADGv9jmAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAABo9JREFUeNrsnU9uIlcQxlvIu2yQss0CpKwjzw0YKQfw3AD2VgwnAE4AE2UPOYFzAEvmBqCsI5lI2UbyxvtUkcLxOAP0q/f/va+k1ngxI41f96+/+t5X3d00KK/1w4ef7+mYYSXM6u/vvh/Q8ch/1rwOHVwK3qtLx5QgfaJjiOUwKoaTIV3R0QOgEeubX368pqNb8FrzBbYSUAdgz6j4xvYkoHYBaJxayFF6MaiPBOkjQFWDOqsF1CQAJeUcSDszpJ9raWUGAip71B7YM7MMAuoYgIap1Zufp5VdcDd8sRGkK4BqDOqCIGVQhwDUn3oOpe17bWPYj1bavm15x5eOLvgz8/YE6bbEHd8UFHR6wo9W3b4hmjEuvqk/lhbNRAWUlHL2Tj1f/Zn40qp9FqIZvbcvJZrpRISTL8I7Q2Wtsn0TUG+wHMaW4Sl3UGMq6FiU4uSdUPwp6l9Q7xHN6L19rtFMFEAlSrlT+tPq2zcBtYflMPf2DCoAbQdem7tZDyp6ElREM0pQc4pmggMq6mmyOIvCRwCtfRaiGZ23F1AHAPQdcIq73hjX1MWOBKDqQE06mgkKqEQnmt3IO6hoa5+1RTSj8/YE6X1qO76hFXRqefGhWrZviGZUdRi7TCmaCQbom4F4bY0rGqR3BSqiGb23TyKaCamgq4gKXH37hmhG3bVFjWaCAPqVgXj1na3SQXpXoCKaUYIaK5oJpaAulW+Ba8a6fWNQF9jxNff2AupNMYCS4o0dqeerElQ+SO+qxg2iGbW3DxXNdDzD6Wv3FV7Usc9CNKPz9gJqL0tAm8sD8TYqigjBLagrPN6m9/a+ohlvgLZ4nAxeNFGfhWhG7+1dRzMdzwD59DYYpPfcvgmo2DU3t1/OQPUCqGIgXr0YGAH0DuoW0Yza229toxlfChpqE6fXYJA+WPuGaEZnGWyiGeeASgQSsvXEIH24QjSjB1UVzfhQ0NARCB5Hi9O+YcdX6e0F1OvggDoYiLfxovBI4UFFNGPh7dtEM64VNGb0geGFiD6LIN0imtF5e4J0cWrH1xmgEnnE3JIfQkWj1uHF0chQ9d7+a9GMSwVNQcFWONdp+CxEM3pv/zaacQKoh4F49cWBQfq02jcBFTu+ht7++HhbxwGcqb2OBF40PY8KQHWg9lwo6DixEwAVTaM2dHz8ffsTH3ssR+t6pmNOR//bv/6YXTlQz7sEf0n2on2c6yjFME4Iyt+wFMa1ZjgJzL0rD+p7IF7dVmGQPgqYIwKzDzhVYLJijt7CyaVW0IAD8TZedI1zH6Ql+0xQzrAUKhvAirk59Rc6lgAkvTkh3x9FefZKgNO4duzPCcyP5+BUK6i8WS+HFpIH6Zcvtw/PuCbceyVs/qhsACtm685O2+Lm8jaD4yA97vBuir3lBGDqug0Cc2n6D41b3IgD8TYq2sM1Yu2VOC75BDh1NkADp1ZBcxsEOA5SjHC9qFoy3pndYClUNmBCYFrZKyMFlehikOFiYZBeB2YfcKrAPEYm1nsfpgqa8xgd++ZPuH4ut2QE5RJLobIB80u7st4U1OH3VWLVDUYAL3slwKnz520iE28KKiN9JbyHdioLinrnlQhMRFHmNsAoMvHZ4qY2EK+twyD9y+0DIEWWadNtTHyD2RrQhAfitVX7IP1GwMRNyhzMz3QsXWz+uFTQaVPW83yHQXpS0XVlF9hOWlmAaV5LaWeD24CrC+rZa8p8pWVNg/R7Ucw1ONPZgPdPmCQDaFPu2wlYRcekoiXvWCIysbMB7DN3sf8jnTPqmctAvFpFC30jPSITOzCPkckuhf/QOQUt/fN+JQ7SL0U1EZmY2wBWzOQeNO+cUM9Bk+dIn2mV8l2XtSgm8kxzMHkkr58inOcUtJY34x0HMHIdpD94JYJyB9aMbUDwyMQJoPJp+UFFJ4sH6ecvtw/7zMBElqmreQ5gnlPQGj8tn8vjaPsGkYmNDYgamVgDWsBAvI2K/prwCOCztLIAU9dtjHID83+AJviG+BgqukkQzINXwuaPzgb4eMIkloKm8n2VWJXaIP0cYKptwCTVXVkVoAUOxGuL/feHFLwSnjLR+fNQT5mEVtBSHiezreuIg/QHrwQwdTaAv2NS4i93JQPx+CLYl150HRhMRCYW/jyXyESroIDzywr1ONrBK+E7JnobkOvOrCmgf8qGBOq/6noGE1mmrg4vzq4BzFdASSlmOO9hWzLszOpsQO6RiVZBUf4LkYm+2xjVCOax/hFgAAtt3Uc7hGPUAAAAAElFTkSuQmCC" /></a>
+                <a href="/dashboard" class="menu_item">Dashboard</a>
+                <a href="/interactive" class="menu_item menu_item_active">Interactive</a>
+            </div>
+            <div class="framer">
+                <div class="root_response">
+
+                    <div class="interactive_container">
+                        <div class="interactive_presets">
+                            <h1>Presets</h1>
+                            <div class='populate' onclick='populate(this)'>&#9658; <span>create database db1</span></div>
+                            <div class='populate' onclick='populate(this)'>&#9658; <span>show databases</span></div>
+                            <div class='populate' onclick='populate(this)'>&#9658; <span>create table db1.users</span></div>
+                            <div class='populate' onclick='populate(this)'>&#9658; <span>show db1 tables</span></div>
+                            <div class='populate' onclick='populate(this)'>&#9658; <span>insert into db1.users ('name') values('andrew')</span></div>
+                            <div class='populate' onclick='populate(this)'>&#9658; <span>new uuid test</span></div>
+                        </div>
+                        <div class="interactive_query">
+                            <h1>Query</h1>
+                            <textarea id='txtQuery' onkeyup='keyUpQuery(event)'></textarea>
+                            <input type='button' value='&#9658; Submit query' onclick='_submitQuery()' />
+                        </div>
+                        <div class="interactive_history">
+                            <h1>History</h1>
+                            <div id='responseContainer'></div>
+                        </div>
+                        <br clear="all" />
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </body>
+</html>
