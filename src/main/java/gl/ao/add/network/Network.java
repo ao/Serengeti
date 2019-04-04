@@ -3,7 +3,6 @@ package gl.ao.add.network;
 import gl.ao.add.Construct;
 import gl.ao.add.helpers.Globals;
 import org.json.JSONObject;
-import org.json.JSONString;
 
 import java.io.*;
 import java.net.*;
@@ -16,7 +15,8 @@ public class Network {
     public String myIP = null;
     public InetAddress myINA = null;
 
-    public String coordinator = "";
+    public static long latency = 0;
+    public static boolean latencyRun = false;
 
     int pingInterval = 5 * 1000;
     int networkTimeout = 2500;
@@ -74,6 +74,8 @@ public class Network {
 
         for(int i=1;i<=254;i++) {
             final int j = i; // i as non-final variable cannot be referenced from inner class
+
+            Construct.network.latencyRun = true;
             Thread t = new Thread(new Runnable() {
                 public void run() {
                     ip[3] = (byte) j;
@@ -81,6 +83,8 @@ public class Network {
                     try {
                         InetAddress address = InetAddress.getByAddress(ip);
                         String _ip = address.getHostAddress();
+
+                        long starTime = System.currentTimeMillis();
 
                         URL url = new URL("http://" + _ip + ":"+Globals.port_default);
                         HttpURLConnection con = (HttpURLConnection) url.openConnection();
@@ -113,6 +117,14 @@ public class Network {
                             if (availableNodes.containsKey(_ip)) availableNodes.remove(_ip);
                         }
 
+                        if (Construct.network.latencyRun) {
+                            long elapsedTime = System.currentTimeMillis() - starTime;
+                            if (elapsedTime> Construct.network.latency) {
+                                Construct.network.latency = elapsedTime;
+                            }
+                        }
+
+
                         con.disconnect();
 
                     } catch (SocketTimeoutException ste) {
@@ -138,6 +150,7 @@ public class Network {
                 t.join();
                 threadcompletecount++;
                 if (threadcompletecount==254) {
+                    Construct.network.latencyRun = false;
                     if (availableNodes.size() > 0) {
                         for (String key : availableNodes.keySet()) {
                             JSONObject json = availableNodes.get(key);
@@ -208,45 +221,45 @@ public class Network {
         return null;
     }
 
-    public void coordinateCluster() {
-        /**
-         * 1. Send out a request to 2 other random availableNodes to see if they are part of a cluster yet
-         *     1. If they are not then they are auto assigned
-         *     2. Otherwise they return who they are assigned to, then repeat the process
-         */
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-
-                    if (availableNodes.size()>0) {
-                        //make the lowest IP in the availableNodes the coordinator
-                        Integer coordinator_Int = 0;
-                        for (String key: availableNodes.keySet()) {
-                            JSONObject json = availableNodes.get(key);
-                            String _ip = json.get("ip").toString();
-                            if (coordinator_Int==0) {
-                                Integer new_coordinator = new Integer(_ip.replace(".",""));
-                                if (new_coordinator < coordinator_Int || coordinator_Int==0) {
-                                    coordinator_Int = new_coordinator;
-                                    coordinator = _ip;
-                                }
-                            }
-                        }
-
-                        if (coordinator.equals(myIP)) {
-                            System.out.println("I AM THE COORDINATOR!");
-                        }
-
-                    }
-
-
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-        }).start();
-    }
+//    public void coordinateCluster() {
+//        /**
+//         * 1. Send out a request to 2 other random availableNodes to see if they are part of a cluster yet
+//         *     1. If they are not then they are auto assigned
+//         *     2. Otherwise they return who they are assigned to, then repeat the process
+//         */
+//        new Thread(new Runnable() {
+//            @Override
+//            public void run() {
+//                try {
+//
+//                    if (availableNodes.size()>0) {
+//                        //make the lowest IP in the availableNodes the coordinator
+//                        Integer coordinator_Int = 0;
+//                        for (String key: availableNodes.keySet()) {
+//                            JSONObject json = availableNodes.get(key);
+//                            String _ip = json.get("ip").toString();
+//                            if (coordinator_Int==0) {
+//                                Integer new_coordinator = new Integer(_ip.replace(".",""));
+//                                if (new_coordinator < coordinator_Int || coordinator_Int==0) {
+//                                    coordinator_Int = new_coordinator;
+//                                    coordinator = _ip;
+//                                }
+//                            }
+//                        }
+//
+//                        if (coordinator.equals(myIP)) {
+//                            System.out.println("I AM THE COORDINATOR!");
+//                        }
+//
+//                    }
+//
+//
+//                } catch (Exception e) {
+//                    e.printStackTrace();
+//                }
+//            }
+//        }).start();
+//    }
 
     public void getNetworkIPsOnly() {
         final byte[] ip;
