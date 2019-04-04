@@ -85,7 +85,7 @@ public class Network {
                         InetAddress address = InetAddress.getByAddress(ip);
                         String _ip = address.getHostAddress();
 
-                        long starTime = System.currentTimeMillis();
+                        long startTime = System.currentTimeMillis();
 
                         URL url = new URL("http://" + _ip + ":"+Globals.port_default);
                         HttpURLConnection con = (HttpURLConnection) url.openConnection();
@@ -119,7 +119,7 @@ public class Network {
                         }
 
                         if (Construct.network.latencyRun) {
-                            long elapsedTime = System.currentTimeMillis() - starTime;
+                            long elapsedTime = System.currentTimeMillis() - startTime;
                             if (elapsedTime> Construct.network.latency) {
                                 Construct.network.latency = elapsedTime;
                             }
