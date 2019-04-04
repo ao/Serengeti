@@ -104,8 +104,8 @@ public class TableObject implements Serializable {
         for (String k: rows.keySet()) {
             String row = rows.get(k);
             JSONObject json = new JSONObject(row);
-            if (json.get("rowId").equals(rowId))
-                json.put("replica", replica);
+            if (k.equals(rowId))
+                json.put("__replica", replica);
         }
     }
     public boolean delete(String where_col, String where_val) {
