@@ -2,7 +2,7 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>Dashboard</title>
+        <title>ADD - Dashboard</title>
 
         <script type='text/javascript'>
             var queryRoot = function() {
@@ -42,7 +42,8 @@
 
                         document.getElementById('_available_nodes').innerHTML = JSON.stringify(data.availableNodes, null, 4);
 
-                        document.getElementById('_topology__inner').innerHTML = data.topology;
+                        document.getElementById('discoveryLatencyValue').innerHTML = data.discoveryLatency+"ms";
+                        document.getElementById('replicationLatencyValue').innerHTML = data.replicationLatency+"ms";
                     }
 
                     setTimeout(()=>queryRoot(), 2000);
@@ -98,6 +99,9 @@
             }
             .stat_box_container {
                 display: block;
+                border-bottom: 1px solid #d8d8d8;
+                padding-bottom: 5px;
+                margin-bottom: 10px;
             }
             .stat_box {
                 width: 25%;
@@ -106,9 +110,10 @@
                 box-shadow: 0px 0px 2px -1px #efefef;
                 float: left;
                 display: inline-block;
+                padding: 0 5px;
             }
                 .stat_box .count {
-                    font-size: 70px;
+                    font-size: 60px;
                     color: #353756;
                 }
                 .stat_box .label {
@@ -133,16 +138,12 @@
                     }
                 #_nodes {
                     float: left;
-                    width: 30%;
+                    width: 70%;
                 }
                     #_nodes #_available_nodes {
                         max-height: 700px;
                         overflow-y: scroll;
                     }
-                #_topology {
-                    float: left;
-                    width: 40%;
-                }
         </style>
     </head>
     <body>
@@ -160,16 +161,16 @@
                         <div class="label">Total Nodes</div>
                     </div>
                     <div class="stat_box">
-                        <div class="count" id="">0</div>
+                        <div class="count" id="discoveryLatencyValue">0</div>
+                        <div class="label">Discovery Latency</div>
+                    </div>
+                    <div class="stat_box">
+                        <div class="count" id="replicationLatencyValue">0</div>
+                        <div class="label">Replication Latency</div>
+                    </div>
+                    <div class="stat_box">
+                        <div class="count" id="">&#128522;</div>
                         <div class="label">Health check</div>
-                    </div>
-                    <div class="stat_box">
-                        <div class="count" id="">0</div>
-                        <div class="label">Latency</div>
-                    </div>
-                    <div class="stat_box">
-                        <div class="count" id="">0</div>
-                        <div class="label">Communications</div>
                     </div>
                     <br clear="all" />
                 </div>
@@ -204,9 +205,6 @@
                         <h1>Nodes</h1>
                         <pre id="_available_nodes"></pre>
                     </div>
-                    <div id="_topology">
-                        <h1>Topology</h1>
-                        <div id="_topology__inner">...</div>
                     </div>
                     <br clear="all" />
                 </div>

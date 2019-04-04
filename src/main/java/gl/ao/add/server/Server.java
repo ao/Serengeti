@@ -91,7 +91,6 @@ public class Server {
             jsonObjThis.put("version", "0.0.1");
             jsonObjThis.put("started", Construct.currentDate);
 
-            jsonObjThis.put("coordinator", Construct.network.coordinator);
             jsonObjThis.put("id", Construct.server.server_constants.id);
 
             DateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
@@ -153,7 +152,8 @@ public class Server {
             jsonObjRoot.put("this", jsonObjThis);
             jsonObjRoot.put("totalNodes", Integer.toString(Construct.network.availableNodes.size()));
             jsonObjRoot.put("availableNodes", Construct.network.availableNodes);
-            jsonObjRoot.put("topology", "");
+            jsonObjRoot.put("discoveryLatency", Construct.network.latency);
+            jsonObjRoot.put("replicationLatency", 0);
 //
             //response
             String response = jsonObjRoot.toString();
