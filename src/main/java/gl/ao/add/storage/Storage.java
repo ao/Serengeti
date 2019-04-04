@@ -155,6 +155,7 @@ public class Storage {
                 QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).put("rowId", rowId).put("pieceId", pieceId).toString());
 
             sro.pieceId = pieceId;
+            sro.rowId = rowId;
             sro.success = true;
 
             for (Object key : json.keySet()) {
@@ -171,6 +172,14 @@ public class Storage {
         return sro;
     }
 
+    /***
+     * Update row item with a replica uuid
+     * @param db
+     * @param table
+     * @param pieceId
+     * @param rowId
+     * @param replica
+     */
     public void updateReplicaByRowId(String db, String table, String pieceId, String rowId, String replica) {
         TableObject to = new TableObject(db, table, pieceId);
         to.loadExisting();

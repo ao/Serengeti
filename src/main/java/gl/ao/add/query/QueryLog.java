@@ -29,19 +29,19 @@ public class QueryLog {
              * Always communicate the following to all nodes
              */
             case "createDatabase":
-                // new JSONObject().put("type", "createDatabase").put("db", db).toString()
+                // {"type":"createDatabase", "db":db}
                 Construct.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "dropDatabase":
-                // new JSONObject().put("type", "dropDatabase").put("db", db).toString()
+                // {"type":"dropDatabase", "db":db}
                 Construct.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "createTable":
-                // new JSONObject().put("type", "createTable").put("table", table).put("db", db).toString()
+                // {"type":"createTable", "db":db, "table":table}
                 Construct.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "dropTable":
-                // new JSONObject().put("type", "dropTable").put("table", table).put("db", db).toString()
+                // {"type":"dropTable", "db":db, "table":table}
                 Construct.network.communicateQueryLogAllNodes(jsonString);
                 break;
 
@@ -49,7 +49,7 @@ public class QueryLog {
              * Communicate to at least one other node in order to replicate data
              */
             case "insert":
-                // new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).toString()
+                // {"type":"insert", "db":db, "table":table, "json":json}
                 if (totalAvailableNodes>1) { //replicas available?
                     JSONObject randomNode = Construct.network.getRandomAvailableNode();
 
@@ -72,17 +72,15 @@ public class QueryLog {
 
                 break;
             case "update":
-                // new JSONObject().put("type", "update").put("update_key", update_key).put("update_val", update_val).put("where_col", where_col).put("where_val", where_val).put("db", db).put("table", table).toString()
+                // {"type":"update", "db":db, "table":table, "update_key":update_key, "update_val":update_val, "where_col":where_col, "where_val":where_val}
                 break;
             case "delete":
-                // new JSONObject().put("type", "delete").put("db", db).put("table", table).toString()
+                // {"type":"delete", "db":db, "table":table}
+                break;
+            case "createBlankShardPiece":
+                // {"type":"createBlankShardPiece", "db":db, "table":table}
                 break;
         }
-
-        /*
-        new JSONObject().put("type", "createBlankShardPiece").put("table", table).put("db", db).toString()
-        */
-
     }
 
 
@@ -93,45 +91,35 @@ public class QueryLog {
      */
     public static void performReplicationAction(String jsonString) {
         // First validate we have valid JSON
-
-        boolean validJSON = false;
-        JSONObject jsonObject = null;
-
+        JSONObject jsonObject;
         try {
             jsonObject = new JSONObject(jsonString);
-            validJSON = true;
+            String type = jsonObject.getString("type");
+
+            String db = jsonObject.has("db") ? jsonObject.getString("db") : null;
+            String table = jsonObject.has("table") ? jsonObject.getString("table") : null;
+
+            switch (type) {
+                case "createDatabase":
+                    Construct.storage.createDatabase(db, true);
+                    break;
+                case "dropDatabase":
+                    Construct.storage.dropDatabase(db, true);
+                    break;
+                case "createTable":
+                    Construct.storage.createTable(db, table, true);
+                    break;
+                case "dropTable":
+                    Construct.storage.dropTable(db, table, true);
+                    break;
+                case "insert":
+                    Construct.storage.insert(db, table, jsonObject, true);
+                    break;
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
 
-        if (validJSON) {
-            String type = jsonObject.getString("type");
-
-            boolean isReplicationAction = true;
-
-            switch (type) {
-                case "createDatabase":
-                    Construct.storage.createDatabase(jsonObject.get("db").toString(), isReplicationAction);
-                    break;
-                case "dropDatabase":
-                    Construct.storage.dropDatabase(jsonObject.get("db").toString(), isReplicationAction);
-                    break;
-                case "createTable":
-                    Construct.storage.createTable(jsonObject.get("db").toString(), jsonObject.get("table").toString(), isReplicationAction);
-                    break;
-                case "dropTable":
-                    Construct.storage.dropTable(jsonObject.get("db").toString(), jsonObject.get("table").toString(), isReplicationAction);
-                    break;
-                case "insert":
-                    Construct.storage.insert(jsonObject.getString("db"), jsonObject.getString("table"), jsonObject, isReplicationAction);
-                    break;
-            }
-        }
-
-    }
-
-    public void append() {
-        //
     }
 
 }

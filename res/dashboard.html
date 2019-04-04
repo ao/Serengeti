@@ -40,7 +40,7 @@
                         document.getElementById('_this_version').lastChild.innerHTML = data.this.version;
                         document.getElementById('_this_uptime').lastChild.innerHTML = data.this.uptime;
 
-                        document.getElementById('_cluster').innerHTML = JSON.stringify(data.availableNodes, null, 4);
+                        document.getElementById('_available_nodes').innerHTML = JSON.stringify(data.availableNodes, null, 4);
 
                         document.getElementById('_topology__inner').innerHTML = data.topology;
                     }
@@ -120,7 +120,7 @@
                     float: left;
                     width: 30%;
                 }
-                    #_nodes #_cluster {
+                    #_nodes #_available_nodes {
                         max-height: 700px;
                         overflow-y: scroll;
                     }
@@ -184,8 +184,8 @@
                         <div id="_this_uptime"><u>Uptime:</u> <span></span></div>
                     </div>
                     <div id="_nodes">
-                        <h1>Cluster</h1>
-                        <pre id="_cluster"></pre>
+                        <h1>Nodes</h1>
+                        <pre id="_available_nodes"></pre>
                     </div>
                     <div id="_topology">
                         <h1>Topology</h1>
