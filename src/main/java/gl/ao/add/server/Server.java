@@ -109,9 +109,12 @@ public class Server {
             JSONObject jsonObjectThisDisk = new JSONObject();
             try {
                 File f = new File("/");
-                jsonObjectThisDisk.put("free", f.getFreeSpace()/1024/1024/1024+"G ("+f.getFreeSpace()+"bytes)");
-                jsonObjectThisDisk.put("usable", f.getUsableSpace()/1024/1024/1024+"G ("+f.getUsableSpace()+"bytes)");
-                jsonObjectThisDisk.put("total", f.getTotalSpace()/1024/1024/1024+"G ("+f.getTotalSpace()+"bytes)");
+                jsonObjectThisDisk.put("free", f.getFreeSpace());
+                jsonObjectThisDisk.put("free_human", f.getFreeSpace()/1024/1024/1024+"G");
+                jsonObjectThisDisk.put("usable", f.getUsableSpace());
+                jsonObjectThisDisk.put("usable_human", f.getUsableSpace()/1024/1024/1024+"G");
+                jsonObjectThisDisk.put("total", f.getTotalSpace());
+                jsonObjectThisDisk.put("total_human", f.getTotalSpace()/1024/1024/1024+"G");
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -128,8 +131,10 @@ public class Server {
             try {
                 long memorySize = ((com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getTotalPhysicalMemorySize();
                 long freeMemorySize = ((com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getFreePhysicalMemorySize();
-                jsonObjectThisMemory.put("total", memorySize/1024/1024/1024+"G ("+memorySize+"bytes)");
-                jsonObjectThisMemory.put("free", freeMemorySize/1024/1024/1024+"G ("+freeMemorySize+"bytes)");
+                jsonObjectThisMemory.put("total", memorySize);
+                jsonObjectThisMemory.put("total_human", memorySize/1024/1024/1024+"G");
+                jsonObjectThisMemory.put("free", freeMemorySize);
+                jsonObjectThisMemory.put("free_human", freeMemorySize/1024/1024/1024+"G");
             } catch (Exception e) {
                 e.printStackTrace();
             }

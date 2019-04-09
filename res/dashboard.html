@@ -27,11 +27,11 @@
 
 
                         //this
-                        document.getElementById('_this_disk_usable').lastChild.innerHTML = data.this.disk.usable;
-                        document.getElementById('_this_disk_total').lastChild.innerHTML = data.this.disk.total;
-                        document.getElementById('_this_disk_free').lastChild.innerHTML = data.this.disk.free;
-                        document.getElementById('_this_memory_total').lastChild.innerHTML = data.this.memory.total;
-                        document.getElementById('_this_memory_free').lastChild.innerHTML = data.this.memory.free;
+                        document.getElementById('_this_disk_usable').lastChild.innerHTML = data.this.disk.usable_human + " ("+data.this.disk.usable+"bytes)";
+                        document.getElementById('_this_disk_total').lastChild.innerHTML = data.this.disk.total_human + " ("+data.this.disk.total+"bytes)";
+                        document.getElementById('_this_disk_free').lastChild.innerHTML = data.this.disk.free_human + " ("+data.this.disk.free+"bytes)";
+                        document.getElementById('_this_memory_total').lastChild.innerHTML = data.this.memory.total_human + " ("+data.this.memory.total+"bytes)";
+                        document.getElementById('_this_memory_free').lastChild.innerHTML = data.this.memory.free_human + " ("+data.this.memory.free+"bytes)";
                         document.getElementById('_this_os_name').lastChild.innerHTML = data.this.os.name;
                         document.getElementById('_this_os_arch').lastChild.innerHTML = data.this.os.arch;
                         document.getElementById('_this_os_version').lastChild.innerHTML = data.this.os.version;
@@ -72,22 +72,13 @@
                                 new_node.id = "node_"+key;
                                 new_node.className = "nodes_item_container";
 
-                                var disk_usage_percent = 0;
-                                var matches_disk_total = data.availableNodes[key].disk.total.match(/\((.*?)\)/);
-                                var matches_disk_free = data.availableNodes[key].disk.free.match(/\((.*?)\)/);
-                                if (matches_disk_total && matches_disk_free) {
-                                    disk_usage_percent = 100-Math.round((parseInt(matches_disk_free[1].replace("bytes", ""))/parseInt(matches_disk_total[1].replace("bytes", "")))*100);
-                                }
-                                var memory_usage_percent = 0;
-                                var matches_memory_total = data.availableNodes[key].memory.total.match(/\((.*?)\)/);
-                                var matches_memory_free = data.availableNodes[key].memory.free.match(/\((.*?)\)/);
-                                if (matches_memory_total && matches_memory_free) {
-                                    memory_usage_percent = 100-Math.round((parseInt(matches_memory_free[1].replace("bytes", ""))/parseInt(matches_memory_total[1].replace("bytes", "")))*100);
-                                }
+                                var disk_usage_percent = 100-Math.round((parseInt(data.availableNodes[key].disk.free)/parseInt(data.availableNodes[key].disk.total))*100);
+                                var memory_usage_percent = 100-Math.round((parseInt(data.availableNodes[key].memory.free)/parseInt(data.availableNodes[key].memory.total))*100);;
+
                                 var cpu_load = data.availableNodes[key].cpu.load;
 
 
-                                networkCapacityValue += Math.round(parseInt(matches_disk_free[1].replace("bytes", ""))/1024/1024/1024);
+                                networkCapacityValue += Math.round(parseInt(data.availableNodes[key].disk.free)/1024/1024/1024);
                                 document.getElementById("networkCapacityValue").innerHTML = networkCapacityValue+"GB";
 
 
@@ -108,7 +99,7 @@
                                                          </div> \
                                                       </div> \
                                                       <div><u>Address:</u> "+data.availableNodes[key].ip+"</div> \
-                                                      <div><u>Uptime:</u> &nbsp;&nbsp;"+data.availableNodes[key].uptime+"</div>";
+                                                      <div><u>Uptime:</u> &nbsp;&nbsp;~ "+data.availableNodes[key].uptime+"</div>";
                                 new_node.title = JSON.stringify(data.availableNodes[key]);
                                 document.getElementById("_available_nodes").append(new_node);
                             // }
