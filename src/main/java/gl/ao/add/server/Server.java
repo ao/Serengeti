@@ -66,6 +66,7 @@ public class Server {
             server.createContext("/", new RootHandler());
             server.createContext("/interactive", new InteractiveHandler());
             server.createContext("/dashboard", new DashboardHandler());
+            server.createContext("/meta", new MetaHandler());
             server.createContext("/get", new GenericGetHandler());
             server.createContext("/post", new GenericPostHandler());
             server.createContext("/put", new GenericPutHandler());
@@ -162,7 +163,7 @@ public class Server {
             jsonObjRoot.put("availableNodes", Construct.network.availableNodes);
             jsonObjRoot.put("discoveryLatency", Construct.network.latency);
             jsonObjRoot.put("replicationLatency", 0);
-//
+
             //response
             String response = jsonObjRoot.toString();
             t.sendResponseHeaders(200, response.length());
@@ -184,6 +185,19 @@ public class Server {
     static class DashboardHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
             String response = Dashboard.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"), t.getRequestURI().getPath());
+            t.sendResponseHeaders(200, response.length());
+            OutputStream os = t.getResponseBody();
+            os.write(response.getBytes());
+            os.close();
+        }
+    }
+    static class MetaHandler implements HttpHandler {
+        public void handle(HttpExchange t) throws IOException {
+            JSONObject jsonObject = new JSONObject();
+
+            jsonObject.put("meta", Construct.storage.getDatabasesTablesMeta());
+
+            String response = jsonObject.toString();
             t.sendResponseHeaders(200, response.length());
             OutputStream os = t.getResponseBody();
             os.write(response.getBytes());
