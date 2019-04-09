@@ -244,7 +244,7 @@ public class Network {
                 JSONObject json = availableNodes.get(key);
 
                 if (!json.get("ip").toString().equals(myIP))
-                    communicateQueryLogSingleNode("", json.get("ip").toString(), json.toString());
+                    communicateQueryLogSingleNode("", json.get("ip").toString(), jsonString);
 
             }
         }
