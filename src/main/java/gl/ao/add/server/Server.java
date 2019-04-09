@@ -118,7 +118,10 @@ public class Server {
             jsonObjThis.put("disk", jsonObjectThisDisk);
 
             //processors
-            jsonObjThis.put("processors", Runtime.getRuntime().availableProcessors());
+            JSONObject jsonObjectThisCPU = new JSONObject();
+            jsonObjectThisCPU.put("processors", Runtime.getRuntime().availableProcessors());
+            jsonObjectThisCPU.put("load", Globals.getProcessCpuLoad());
+            jsonObjThis.put("cpu", jsonObjectThisCPU);
 
             //memory
             JSONObject jsonObjectThisMemory = new JSONObject();
