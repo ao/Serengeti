@@ -7,6 +7,11 @@
         <script type='text/javascript'>
             var nodes_data = {};
 
+            var emojis = {
+                "healthy": "&#128522;",
+                "unhealthy": "&#128528;"
+            };
+
             var queryRoot = function() {
                 var xhr = new XMLHttpRequest();
                 xhr.open('GET', 'http://localhost:1985/', true);
@@ -55,6 +60,8 @@
 
                         var nodes_keys_new = {};
 
+                        var healthy = true;
+
                         for (var key in data.availableNodes) {
                             if (!data.availableNodes.hasOwnProperty(key)) continue;
                             nodes_keys_new[key] = key;
@@ -72,6 +79,8 @@
                             var cpu_load_colour = "bg_green";
                             if (cpu_load>=70 && cpu_load<95) cpu_load_colour = "bg_orange";
                             else if (cpu_load>95) cpu_load_colour = "bg_red";
+
+                            if (disk_usage_percent>95 || memory_usage_percent>95 || cpu_load>95) healthy = false;
 
 
                             networkCapacityValue += Math.round(parseInt(data.availableNodes[key].disk.free)/1024/1024/1024);
@@ -124,11 +133,14 @@
                         for (var key in nodes_keys_before) {
                             if (!nodes_keys_before.hasOwnProperty(key)) continue;
 
-                                if (nodes_keys_new[key]==undefined) {
-                                    delete nodes_data[key]
-                                    document.getElementById("node_"+key).remove();
-                                }
+                            if (nodes_keys_new[key]==undefined) {
+                                delete nodes_data[key]
+                                document.getElementById("node_"+key).remove();
                             }
+                        }
+
+                        document.getElementById("dvHealthCheck").innerHTML = healthy ? emojis.healthy : emojis.unhealthy;
+
                     }
 
                     setTimeout(()=>queryRoot(), 1000);
@@ -315,7 +327,7 @@
                         <div class="label">Network Storage Capacity</div>
                     </div>
                     <div class="stat_box">
-                        <div class="count" id="">&#128522;</div>
+                        <div class="count" id="dvHealthCheck"></div>
                         <div class="label">Health check</div>
                     </div>
                     <br clear="all" />
