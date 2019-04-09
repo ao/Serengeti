@@ -59,6 +59,25 @@ public class Storage {
         return ddbs;
     }
 
+    public Map getDatabasesTablesMeta() {
+        File dir = new File(Construct.data_path);
+        File[] files = dir.listFiles(new FilenameFilter() {
+            @Override
+            public boolean accept(File dir, String name) {
+                return name.endsWith(Globals.meta_extention);
+            }
+        });
+
+        Map<String, List> ddbs = new HashMap<>();
+
+        for (File ddb : files) {
+            String dbName = ddb.getName().replace(Globals.meta_extention, "");
+            List tables = getTables(dbName);
+            ddbs.put(dbName, tables);
+        }
+        return ddbs;
+    }
+
     /***
      * Get a Piece ID
      * @param db
