@@ -107,7 +107,8 @@
                                                             <div class='nodes_item__graphs__item_label'>CPU</div> \
                                                          </div> \
                                                       </div> \
-                                                      <div>"+data.availableNodes[key].ip+"</div>";
+                                                      <div><u>Address:</u> "+data.availableNodes[key].ip+"</div> \
+                                                      <div><u>Uptime:</u> &nbsp;&nbsp;"+data.availableNodes[key].uptime+"</div>";
                                 new_node.title = JSON.stringify(data.availableNodes[key]);
                                 document.getElementById("_available_nodes").append(new_node);
                             // }
