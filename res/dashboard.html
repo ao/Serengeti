@@ -38,14 +38,13 @@
                         document.getElementById('_this_ip').lastChild.innerHTML = data.this.ip;
                         document.getElementById('_this_started').lastChild.innerHTML = data.this.started;
                         document.getElementById('_this_id').lastChild.innerHTML = data.this.id;
-                        document.getElementById('_this_processors').lastChild.innerHTML = data.this.processors;
+                        document.getElementById('_this_processors').lastChild.innerHTML = data.this.cpu.processors;
                         document.getElementById('_this_version').lastChild.innerHTML = data.this.version;
                         document.getElementById('_this_uptime').lastChild.innerHTML = data.this.uptime;
 
-                        // document.getElementById('_available_nodes').innerHTML = JSON.stringify(data.availableNodes, null, 4);
-
                         document.getElementById('discoveryLatencyValue').innerHTML = data.discoveryLatency+"ms";
-                        document.getElementById('replicationLatencyValue').innerHTML = data.replicationLatency+"ms";
+
+                        var networkCapacityValue = 0;
 
 
                         var nodes_keys_before = {};
@@ -55,24 +54,63 @@
                         }
 
                         var nodes_keys_new = {};
+
+                        //hack.. replace innerHTML, remove and fix using below comments..
+                        document.getElementById("_available_nodes").innerHTML = "";
+
                         for (var key in data.availableNodes) {
                             if (!data.availableNodes.hasOwnProperty(key)) continue;
                             nodes_keys_new[key] = key;
 
-                            if (nodes_data[key]) {
-                                //already exists, update this item
-                            } else {
+                            //hack.. - uncomment and fix!
+                            // if (nodes_data[key]) {
+                            //     //already exists, update this item
+                            // } else {
                                 //new item
                                 nodes_data[key] = data.availableNodes[key];
                                 var new_node = document.createElement("div");
                                 new_node.id = "node_"+key;
                                 new_node.className = "nodes_item_container";
+
+                                var disk_usage_percent = 0;
+                                var matches_disk_total = data.availableNodes[key].disk.total.match(/\((.*?)\)/);
+                                var matches_disk_free = data.availableNodes[key].disk.free.match(/\((.*?)\)/);
+                                if (matches_disk_total && matches_disk_free) {
+                                    disk_usage_percent = 100-Math.round((parseInt(matches_disk_free[1].replace("bytes", ""))/parseInt(matches_disk_total[1].replace("bytes", "")))*100);
+                                }
+                                var memory_usage_percent = 0;
+                                var matches_memory_total = data.availableNodes[key].memory.total.match(/\((.*?)\)/);
+                                var matches_memory_free = data.availableNodes[key].memory.free.match(/\((.*?)\)/);
+                                if (matches_memory_total && matches_memory_free) {
+                                    memory_usage_percent = 100-Math.round((parseInt(matches_memory_free[1].replace("bytes", ""))/parseInt(matches_memory_total[1].replace("bytes", "")))*100);
+                                }
+                                var cpu_load = data.availableNodes[key].cpu.load;
+
+
+                                networkCapacityValue += Math.round(parseInt(matches_disk_total[1].replace("bytes", ""))/1024/1024/1024);
+                                document.getElementById("networkCapacityValue").innerHTML = networkCapacityValue+"GB";
+
+
                                 new_node.innerHTML = "<div class='nodes_item__id'>"+data.availableNodes[key].id+"</div> \
                                                       <div class='nodes_item__os'>"+data.availableNodes[key].os.name+"</div> \
+                                                      <div class='nodes_item__graphs_container'> \
+                                                         <div class='nodes_item__graphs__disk'> \
+                                                            <div class='nodes_item__graphs__disk__value' style='height:"+disk_usage_percent+"%'>"+disk_usage_percent+"%</div> \
+                                                            <div class='nodes_item__graphs__item_label'>Disk</div> \
+                                                         </div> \
+                                                         <div class='nodes_item__graphs__memory'> \
+                                                            <div class='nodes_item__graphs__memory__value' style='height:"+memory_usage_percent+"%'>"+memory_usage_percent+"%</div> \
+                                                            <div class='nodes_item__graphs__item_label'>Memory</div> \
+                                                         </div> \
+                                                         <div class='nodes_item__graphs__cpu'> \
+                                                            <div class='nodes_item__graphs__cpu__value' style='height:"+cpu_load+"%'>"+cpu_load+"%</div> \
+                                                            <div class='nodes_item__graphs__item_label'>CPU</div> \
+                                                         </div> \
+                                                      </div> \
                                                       <div>"+data.availableNodes[key].ip+"</div>";
                                 new_node.title = JSON.stringify(data.availableNodes[key]);
                                 document.getElementById("_available_nodes").append(new_node);
-                            }
+                            // }
                         }
 
 
@@ -86,7 +124,7 @@
                             }
                     }
 
-                    setTimeout(()=>queryRoot(), 2000);
+                    setTimeout(()=>queryRoot(), 1000);
                 };
                 xhr.send();
             };
@@ -200,6 +238,30 @@
                             .nodes_item__os {
                                 font-weight: bold;
                             }
+                            .nodes_item__graphs_container {
+                                border-spacing: 10px;
+                                padding-bottom: 10px;
+                            }
+                                .nodes_item__graphs__disk, .nodes_item__graphs__memory, .nodes_item__graphs__cpu {
+                                    width: 70px;
+                                    height: 100px;
+                                    border: 1px solid gray;
+                                    display: table-cell;
+                                    vertical-align: bottom;
+                                    position: relative;
+                                }
+                                    .nodes_item__graphs__disk__value, .nodes_item__graphs__memory__value, .nodes_item__graphs__cpu__value {
+                                        background: orange;
+                                        text-align: center;
+                                        color: black;
+                                        font-size: 12px;
+                                    }
+                                .nodes_item__graphs__item_label {
+                                    position: absolute;
+                                    bottom: -16px;
+                                    color: #666;
+                                    font-size: 12px;
+                                }
         </style>
     </head>
     <body>
@@ -221,8 +283,8 @@
                         <div class="label">Discovery Latency</div>
                     </div>
                     <div class="stat_box">
-                        <div class="count" id="replicationLatencyValue">0</div>
-                        <div class="label">Replication Latency</div>
+                        <div class="count" id="networkCapacityValue">0</div>
+                        <div class="label">Network Capacity</div>
                     </div>
                     <div class="stat_box">
                         <div class="count" id="">&#128522;</div>
