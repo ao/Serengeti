@@ -404,9 +404,19 @@ public class Storage {
     public boolean dropTable(String db, String table, boolean isReplicationAction) {
         Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
         DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+
+        List<String> removeMe = new LinkedList<>();
+
         if (dbo.tables.size()>0) {
             for (String t: dbo.tables.keySet()) {
                 if (t.equals(table)) {
+                    // We do this to avoid a ConcurrentModificationException..
+                    removeMe.add(t);
+                }
+            }
+
+            if (removeMe.size()>0) {
+                for (String t: removeMe) {
                     dbo.tables.remove(t);
                     deleteTablePathIfExists(db, table);
 
