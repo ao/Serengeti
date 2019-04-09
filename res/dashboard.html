@@ -73,9 +73,17 @@
                                 new_node.className = "nodes_item_container";
 
                                 var disk_usage_percent = 100-Math.round((parseInt(data.availableNodes[key].disk.free)/parseInt(data.availableNodes[key].disk.total))*100);
+                                    var disk_usage_colour = "bg_green";
+                                    if (disk_usage_percent>=70 && disk_usage_percent<95) disk_usage_colour = "bg_orange";
+                                    else if (disk_usage_percent>95) disk_usage_colour = "bg_red";
                                 var memory_usage_percent = 100-Math.round((parseInt(data.availableNodes[key].memory.free)/parseInt(data.availableNodes[key].memory.total))*100);;
-
+                                    var memory_usage_colour = "bg_green";
+                                    if (memory_usage_percent>=70 && memory_usage_percent<95) memory_usage_colour = "bg_orange";
+                                    else if (memory_usage_percent>95) memory_usage_colour = "bg_red";
                                 var cpu_load = data.availableNodes[key].cpu.load;
+                                    var cpu_load_colour = "bg_green";
+                                    if (cpu_load>=70 && cpu_load<95) cpu_load_colour = "bg_orange";
+                                    else if (cpu_load>95) cpu_load_colour = "bg_red";
 
 
                                 networkCapacityValue += Math.round(parseInt(data.availableNodes[key].disk.free)/1024/1024/1024);
@@ -86,15 +94,15 @@
                                                       <div class='nodes_item__os'>"+data.availableNodes[key].os.name+"</div> \
                                                       <div class='nodes_item__graphs_container'> \
                                                          <div class='nodes_item__graphs__disk'> \
-                                                            <div class='nodes_item__graphs__disk__value' style='height:"+disk_usage_percent+"%'>"+disk_usage_percent+"%</div> \
+                                                            <div class='nodes_item__graphs__disk__value "+disk_usage_colour+"' style='height:"+disk_usage_percent+"%'>"+disk_usage_percent+"%</div> \
                                                             <div class='nodes_item__graphs__item_label'>Disk</div> \
                                                          </div> \
                                                          <div class='nodes_item__graphs__memory'> \
-                                                            <div class='nodes_item__graphs__memory__value' style='height:"+memory_usage_percent+"%'>"+memory_usage_percent+"%</div> \
+                                                            <div class='nodes_item__graphs__memory__value "+memory_usage_colour+"' style='height:"+memory_usage_percent+"%'>"+memory_usage_percent+"%</div> \
                                                             <div class='nodes_item__graphs__item_label'>Memory</div> \
                                                          </div> \
                                                          <div class='nodes_item__graphs__cpu'> \
-                                                            <div class='nodes_item__graphs__cpu__value' style='height:"+cpu_load+"%'>"+cpu_load+"%</div> \
+                                                            <div class='nodes_item__graphs__cpu__value "+cpu_load_colour+"' style='height:"+cpu_load+"%'>"+cpu_load+"%</div> \
                                                             <div class='nodes_item__graphs__item_label'>CPU</div> \
                                                          </div> \
                                                       </div> \
@@ -243,11 +251,20 @@
                                     position: relative;
                                 }
                                     .nodes_item__graphs__disk__value, .nodes_item__graphs__memory__value, .nodes_item__graphs__cpu__value {
-                                        background: orange;
+                                        background: yellow;
                                         text-align: center;
-                                        color: black;
+                                        color: #fff;
                                         font-size: 12px;
                                     }
+                                        .bg_red {
+                                            background: red;
+                                        }
+                                        .bg_orange {
+                                            background: orange;
+                                        }
+                                        .bg_green {
+                                            background: green;
+                                        }
                                 .nodes_item__graphs__item_label {
                                     position: absolute;
                                     bottom: -16px;
