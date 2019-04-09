@@ -55,62 +55,69 @@
 
                         var nodes_keys_new = {};
 
-                        //hack.. replace innerHTML, remove and fix using below comments..
-                        document.getElementById("_available_nodes").innerHTML = "";
-
                         for (var key in data.availableNodes) {
                             if (!data.availableNodes.hasOwnProperty(key)) continue;
                             nodes_keys_new[key] = key;
 
-                            //hack.. - uncomment and fix!
-                            // if (nodes_data[key]) {
-                            //     //already exists, update this item
-                            // } else {
+
+                            var disk_usage_percent = 100-Math.round((parseInt(data.availableNodes[key].disk.free)/parseInt(data.availableNodes[key].disk.total))*100);
+                            var disk_usage_colour = "bg_green";
+                            if (disk_usage_percent>=70 && disk_usage_percent<95) disk_usage_colour = "bg_orange";
+                            else if (disk_usage_percent>95) disk_usage_colour = "bg_red";
+                            var memory_usage_percent = 100-Math.round((parseInt(data.availableNodes[key].memory.free)/parseInt(data.availableNodes[key].memory.total))*100);;
+                            var memory_usage_colour = "bg_green";
+                            if (memory_usage_percent>=70 && memory_usage_percent<95) memory_usage_colour = "bg_orange";
+                            else if (memory_usage_percent>95) memory_usage_colour = "bg_red";
+                            var cpu_load = data.availableNodes[key].cpu.load;
+                            var cpu_load_colour = "bg_green";
+                            if (cpu_load>=70 && cpu_load<95) cpu_load_colour = "bg_orange";
+                            else if (cpu_load>95) cpu_load_colour = "bg_red";
+
+
+                            networkCapacityValue += Math.round(parseInt(data.availableNodes[key].disk.free)/1024/1024/1024);
+                            document.getElementById("networkCapacityValue").innerHTML = networkCapacityValue+"GB";
+
+
+                            var _html = "<div class='nodes_item__id'>#"+data.availableNodes[key].id+"</div> \
+                                          <div class='nodes_item__os'>"+data.availableNodes[key].os.name+"</div> \
+                                          <div class='nodes_item__graphs_container'> \
+                                             <div class='nodes_item__graphs__disk'> \
+                                                <div class='nodes_item__graphs__disk__value "+disk_usage_colour+"' style='height:"+disk_usage_percent+"%'>"+disk_usage_percent+"%</div> \
+                                                <div class='nodes_item__graphs__item_label'>Disk</div> \
+                                             </div> \
+                                             <div class='nodes_item__graphs__memory'> \
+                                                <div class='nodes_item__graphs__memory__value "+memory_usage_colour+"' style='height:"+memory_usage_percent+"%'>"+memory_usage_percent+"%</div> \
+                                                <div class='nodes_item__graphs__item_label'>Memory</div> \
+                                             </div> \
+                                             <div class='nodes_item__graphs__cpu'> \
+                                                <div class='nodes_item__graphs__cpu__value "+cpu_load_colour+"' style='height:"+cpu_load+"%'>"+cpu_load+"%</div> \
+                                                <div class='nodes_item__graphs__item_label'>CPU</div> \
+                                             </div> \
+                                          </div> \
+                                          <div class='nodes_item__info_container'> \
+                                              <div><u>Address:</u> "+data.availableNodes[key].ip+"</div> \
+                                              <div><u>Uptime:</u> &nbsp;&nbsp;~ "+data.availableNodes[key].uptime+"</div> \
+                                          </div>";
+                            var _title = JSON.stringify(data.availableNodes[key]);
+
+
+                            if (nodes_data[key]) {
+                                //already exists, update this item
+                                var existing_node = document.getElementById("node_"+key);
+                                existing_node.innerHTML = _html;
+                                existing_node.title = _title;
+                            } else {
                                 //new item
                                 nodes_data[key] = data.availableNodes[key];
                                 var new_node = document.createElement("div");
                                 new_node.id = "node_"+key;
                                 new_node.className = "nodes_item_container";
 
-                                var disk_usage_percent = 100-Math.round((parseInt(data.availableNodes[key].disk.free)/parseInt(data.availableNodes[key].disk.total))*100);
-                                    var disk_usage_colour = "bg_green";
-                                    if (disk_usage_percent>=70 && disk_usage_percent<95) disk_usage_colour = "bg_orange";
-                                    else if (disk_usage_percent>95) disk_usage_colour = "bg_red";
-                                var memory_usage_percent = 100-Math.round((parseInt(data.availableNodes[key].memory.free)/parseInt(data.availableNodes[key].memory.total))*100);;
-                                    var memory_usage_colour = "bg_green";
-                                    if (memory_usage_percent>=70 && memory_usage_percent<95) memory_usage_colour = "bg_orange";
-                                    else if (memory_usage_percent>95) memory_usage_colour = "bg_red";
-                                var cpu_load = data.availableNodes[key].cpu.load;
-                                    var cpu_load_colour = "bg_green";
-                                    if (cpu_load>=70 && cpu_load<95) cpu_load_colour = "bg_orange";
-                                    else if (cpu_load>95) cpu_load_colour = "bg_red";
+                                new_node.innerHTML = _html;
+                                new_node.title = _title;
 
-
-                                networkCapacityValue += Math.round(parseInt(data.availableNodes[key].disk.free)/1024/1024/1024);
-                                document.getElementById("networkCapacityValue").innerHTML = networkCapacityValue+"GB";
-
-
-                                new_node.innerHTML = "<div class='nodes_item__id'>#"+data.availableNodes[key].id+"</div> \
-                                                      <div class='nodes_item__os'>"+data.availableNodes[key].os.name+"</div> \
-                                                      <div class='nodes_item__graphs_container'> \
-                                                         <div class='nodes_item__graphs__disk'> \
-                                                            <div class='nodes_item__graphs__disk__value "+disk_usage_colour+"' style='height:"+disk_usage_percent+"%'>"+disk_usage_percent+"%</div> \
-                                                            <div class='nodes_item__graphs__item_label'>Disk</div> \
-                                                         </div> \
-                                                         <div class='nodes_item__graphs__memory'> \
-                                                            <div class='nodes_item__graphs__memory__value "+memory_usage_colour+"' style='height:"+memory_usage_percent+"%'>"+memory_usage_percent+"%</div> \
-                                                            <div class='nodes_item__graphs__item_label'>Memory</div> \
-                                                         </div> \
-                                                         <div class='nodes_item__graphs__cpu'> \
-                                                            <div class='nodes_item__graphs__cpu__value "+cpu_load_colour+"' style='height:"+cpu_load+"%'>"+cpu_load+"%</div> \
-                                                            <div class='nodes_item__graphs__item_label'>CPU</div> \
-                                                         </div> \
-                                                      </div> \
-                                                      <div><u>Address:</u> "+data.availableNodes[key].ip+"</div> \
-                                                      <div><u>Uptime:</u> &nbsp;&nbsp;~ "+data.availableNodes[key].uptime+"</div>";
-                                new_node.title = JSON.stringify(data.availableNodes[key]);
                                 document.getElementById("_available_nodes").append(new_node);
-                            // }
+                            }
                         }
 
 
@@ -140,6 +147,7 @@
                 padding: 0;
                 font-family: sans-serif;
                 font-size: 14px;
+                transition: all 0.3s ease-in-out;
             }
             h1 {
                 font-size: 32px;
@@ -225,18 +233,26 @@
                         .nodes_item_container {
                             width: 250px;
                             border: 1px solid #222;
-                            padding: 5px;
+                            border-radius: 3px;
                             overflow: hidden;
                             margin: 0 5px 5px 0;
                             float: left;
+                            background: #fff;
                         }
+                            .nodes_item_container:hover {
+                                transform: scale(1.1);
+                                z-index: 9;
+                            }
                             .nodes_item__id {
                                 font-size: 12px;
                                 color: #777;
                                 margin-bottom: 7px;
+                                border-bottom: 1px solid #555;
+                                padding: 5px;
                             }
                             .nodes_item__os {
                                 font-weight: bold;
+                                padding-left: 5px;
                             }
                             .nodes_item__graphs_container {
                                 border-spacing: 10px;
@@ -271,6 +287,9 @@
                                     color: #666;
                                     font-size: 12px;
                                 }
+                            .nodes_item__info_container {
+                                padding: 5px;
+                            }
         </style>
     </head>
     <body>
