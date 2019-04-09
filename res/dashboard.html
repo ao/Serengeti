@@ -87,7 +87,7 @@
                                 var cpu_load = data.availableNodes[key].cpu.load;
 
 
-                                networkCapacityValue += Math.round(parseInt(matches_disk_total[1].replace("bytes", ""))/1024/1024/1024);
+                                networkCapacityValue += Math.round(parseInt(matches_disk_free[1].replace("bytes", ""))/1024/1024/1024);
                                 document.getElementById("networkCapacityValue").innerHTML = networkCapacityValue+"GB";
 
 
@@ -285,7 +285,7 @@
                     </div>
                     <div class="stat_box">
                         <div class="count" id="networkCapacityValue">0</div>
-                        <div class="label">Network Capacity</div>
+                        <div class="label">Network Storage Capacity</div>
                     </div>
                     <div class="stat_box">
                         <div class="count" id="">&#128522;</div>
