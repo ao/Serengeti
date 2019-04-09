@@ -2,6 +2,7 @@ package gl.ao.add.network;
 
 import gl.ao.add.Construct;
 import gl.ao.add.helpers.Globals;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.*;
@@ -22,6 +23,9 @@ public class Network {
     int networkTimeout = 2500;
     int successStatus = 200;
 
+    private boolean hasPerformedNetworkSync = false;
+    public static boolean online = false;
+
 
     public void initiate() {
         try {
@@ -34,6 +38,69 @@ public class Network {
         }
 
         findNodes();
+    }
+
+    /***
+     * Request all Database and Table meta-data from the network;
+     * in order to make sure the correct data structure is present before allowing node to contribute to network
+     */
+    public void requestNetworkMetas() {
+        if (hasPerformedNetworkSync==false) {
+            hasPerformedNetworkSync = true;
+
+            for (Map.Entry<String, JSONObject> node: this.availableNodes.entrySet()) {
+                if (!Construct.server.server_constants.id.equals(node.getKey())) {
+                    JSONObject jsonObject = node.getValue();
+
+                    try {
+                        HttpURLConnection con = (HttpURLConnection) new URL("http://" + jsonObject.getString("ip") + ":" + Globals.port_default + "/meta").openConnection();
+                        con.setRequestMethod("GET");
+                        con.getDoOutput();
+                        con.setConnectTimeout(networkTimeout);
+                        con.setReadTimeout(networkTimeout);
+                        con.setRequestProperty("Content-Type", "application/json");
+
+                        if (con.getResponseCode() == successStatus) {
+                            BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+                            String inputLine;
+                            StringBuffer content = new StringBuffer();
+                            while ((inputLine = in.readLine()) != null) {
+                                content.append(inputLine);
+                            }
+
+                            JSONObject jsonMeta = new JSONObject(content.toString()).getJSONObject("meta");
+
+                            Iterator<String> keys = jsonMeta.keys();
+                            while(keys.hasNext()) {
+                                String db = keys.next();
+                                if (jsonMeta.get(db) instanceof JSONArray) {
+                                    JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
+
+                                    if (!Construct.storage.databaseExists(db)) {
+                                        System.out.println("Startup: Creating database '"+db+"'");
+                                        Construct.storage.createDatabase(db, true);
+                                    }
+
+                                    for (int i = 0; i < jsonArr.length(); i++) {
+                                        String table = jsonArr.getString(i);
+                                        if (!Construct.storage.tableExists(db, table)) {
+                                            System.out.println("Startup: Creating table '"+table+"'");
+                                            Construct.storage.createTable(db, table, true);
+                                        }
+                                    }
+                                }
+                            }
+
+                            in.close();
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+
+                }
+            }
+            online = true;
+        }
     }
 
     public void findNodes() {
@@ -161,6 +228,8 @@ public class Network {
                                 availableNodes.remove(json.get("id"));
                            }
                         }
+
+                        requestNetworkMetas();
                     }
                 }
             }
