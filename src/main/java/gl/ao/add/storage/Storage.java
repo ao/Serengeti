@@ -59,6 +59,10 @@ public class Storage {
         return ddbs;
     }
 
+    /***
+     * Scan meta information and return a list of Databases and Tables included
+     * @return
+     */
     public Map getDatabasesTablesMeta() {
         File dir = new File(Construct.data_path);
         File[] files = dir.listFiles(new FilenameFilter() {
@@ -327,10 +331,10 @@ public class Storage {
     public boolean dropDatabase(String db, boolean isReplicationAction) {
         try {
             Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
-            Path data = Paths.get(Globals.pieces_path + db);
             boolean deleted = Files.deleteIfExists(file);
 
-            Files.deleteIfExists(data);
+            File _db_dir = new File(Globals.pieces_path + db);
+            if (_db_dir.exists()) Globals.deleteDirectory(_db_dir);
 
             loadMetaDatabasesToMemory();
 
@@ -459,7 +463,7 @@ public class Storage {
                 _tables.add(t);
             }
             return _tables;
-        } else return null;
+        } else return new ArrayList();
     }
 
     /***
