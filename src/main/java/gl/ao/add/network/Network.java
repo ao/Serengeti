@@ -48,10 +48,11 @@ public class Network {
         if (hasPerformedNetworkSync==false) {
             hasPerformedNetworkSync = true;
 
+            final Map<String, JSONObject> _availableNodes = this.availableNodes;
             new Thread(new Runnable() {
                 @Override
                 public void run() {
-                    for (Map.Entry<String, JSONObject> node: availableNodes.entrySet()) {
+                    for (Map.Entry<String, JSONObject> node: _availableNodes.entrySet()) {
                         if (!Construct.server.server_constants.id.equals(node.getKey())) {
                             JSONObject jsonObject = node.getValue();
 
