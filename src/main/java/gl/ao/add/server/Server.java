@@ -272,8 +272,6 @@ public class Server {
                     br.close();
                     isr.close();
 
-//                    System.out.println(buf.toString());
-
                     QueryLog.performReplicationAction(buf.toString());
                 }
 
