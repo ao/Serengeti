@@ -327,7 +327,11 @@ public class Storage {
     public boolean dropDatabase(String db, boolean isReplicationAction) {
         try {
             Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
+            Path data = Paths.get(Globals.pieces_path + db);
             boolean deleted = Files.deleteIfExists(file);
+
+            Files.deleteIfExists(data);
+
             loadMetaDatabasesToMemory();
 
             if (!isReplicationAction)
