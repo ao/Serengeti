@@ -48,58 +48,63 @@ public class Network {
         if (hasPerformedNetworkSync==false) {
             hasPerformedNetworkSync = true;
 
-            for (Map.Entry<String, JSONObject> node: this.availableNodes.entrySet()) {
-                if (!Construct.server.server_constants.id.equals(node.getKey())) {
-                    JSONObject jsonObject = node.getValue();
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    for (Map.Entry<String, JSONObject> node: availableNodes.entrySet()) {
+                        if (!Construct.server.server_constants.id.equals(node.getKey())) {
+                            JSONObject jsonObject = node.getValue();
 
-                    try {
-                        HttpURLConnection con = (HttpURLConnection) new URL("http://" + jsonObject.getString("ip") + ":" + Globals.port_default + "/meta").openConnection();
-                        con.setRequestMethod("GET");
-                        con.getDoOutput();
-                        con.setConnectTimeout(networkTimeout);
-                        con.setReadTimeout(networkTimeout);
-                        con.setRequestProperty("Content-Type", "application/json");
+                            try {
+                                HttpURLConnection con = (HttpURLConnection) new URL("http://" + jsonObject.getString("ip") + ":" + Globals.port_default + "/meta").openConnection();
+                                con.setRequestMethod("GET");
+                                con.getDoOutput();
+                                con.setConnectTimeout(networkTimeout);
+                                con.setReadTimeout(networkTimeout);
+                                con.setRequestProperty("Content-Type", "application/json");
 
-                        if (con.getResponseCode() == successStatus) {
-                            BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-                            String inputLine;
-                            StringBuffer content = new StringBuffer();
-                            while ((inputLine = in.readLine()) != null) {
-                                content.append(inputLine);
-                            }
-
-                            JSONObject jsonMeta = new JSONObject(content.toString()).getJSONObject("meta");
-
-                            Iterator<String> keys = jsonMeta.keys();
-                            while(keys.hasNext()) {
-                                String db = keys.next();
-                                if (jsonMeta.get(db) instanceof JSONArray) {
-                                    JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
-
-                                    if (!Construct.storage.databaseExists(db)) {
-                                        System.out.println("Startup: Creating database '"+db+"'");
-                                        Construct.storage.createDatabase(db, true);
+                                if (con.getResponseCode() == successStatus) {
+                                    BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+                                    String inputLine;
+                                    StringBuffer content = new StringBuffer();
+                                    while ((inputLine = in.readLine()) != null) {
+                                        content.append(inputLine);
                                     }
 
-                                    for (int i = 0; i < jsonArr.length(); i++) {
-                                        String table = jsonArr.getString(i);
-                                        if (!Construct.storage.tableExists(db, table)) {
-                                            System.out.println("Startup: Creating table '"+table+"'");
-                                            Construct.storage.createTable(db, table, true);
+                                    JSONObject jsonMeta = new JSONObject(content.toString()).getJSONObject("meta");
+
+                                    Iterator<String> keys = jsonMeta.keys();
+                                    while(keys.hasNext()) {
+                                        String db = keys.next();
+                                        if (jsonMeta.get(db) instanceof JSONArray) {
+                                            JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
+
+                                            if (!Construct.storage.databaseExists(db)) {
+                                                System.out.println("Startup: Creating database '"+db+"'");
+                                                Construct.storage.createDatabase(db, true);
+                                            }
+
+                                            for (int i = 0; i < jsonArr.length(); i++) {
+                                                String table = jsonArr.getString(i);
+                                                if (!Construct.storage.tableExists(db, table)) {
+                                                    System.out.println("Startup: Creating table '"+table+"'");
+                                                    Construct.storage.createTable(db, table, true);
+                                                }
+                                            }
                                         }
                                     }
+
+                                    in.close();
                                 }
+                            } catch (Exception e) {
+                                e.printStackTrace();
                             }
 
-                            in.close();
                         }
-                    } catch (Exception e) {
-                        e.printStackTrace();
                     }
-
+                    Construct.network.online = true;
                 }
-            }
-            online = true;
+            }).start();
         }
     }
 
