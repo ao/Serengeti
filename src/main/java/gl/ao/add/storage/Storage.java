@@ -4,13 +4,12 @@ import gl.ao.add.Construct;
 import gl.ao.add.query.QueryLog;
 import gl.ao.add.schema.DatabaseObject;
 import gl.ao.add.helpers.Globals;
-import gl.ao.add.schema.TableObject;
+import gl.ao.add.schema.TableReplicaObject;
+import gl.ao.add.schema.TableStorageObject;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.FilenameFilter;
-import java.io.ObjectOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -83,24 +82,6 @@ public class Storage {
     }
 
     /***
-     * Get a Piece ID
-     * @param db
-     * @param table
-     * @return String
-     */
-    public String getPieceId(String db, String table) {
-        Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
-        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
-        if (tableExists(db, table)) {
-            Map<String, Integer> t = dbo.tables.get(table);
-            for (String key : t.keySet()) {
-                if (t.get(key) == 0) return key;
-            }
-        }
-        return null;
-    }
-
-    /***
      * Select
      * @param db
      * @param table
@@ -115,19 +96,33 @@ public class Storage {
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
                 List<String> list = new ArrayList<>();
-                Map<String, Integer> t = dbo.tables.get(table);
 
-                for (String key : t.keySet()) {
-                    TableObject to = new TableObject(db, table, key);
-                    JSONObject got = to.get(col, val);
-                    if (got!=null) {
+                TableStorageObject tso = new TableStorageObject(db, table);
+                List jsonList = tso.select(col, val);
+                if (jsonList.size()==0) {
+                    return list;
+                } else if (jsonList.size()==1) {
+                    JSONObject _json = new JSONObject(jsonList.get(0).toString());
+                    if (_json!=null) {
                         if (selectWhat.equals("*")) {
-                            list.add(got.toString());
+                            list.add(_json.toString());
                         } else {
-                            list.add(got.get(selectWhat).toString());
+                            list.add(_json.getString(selectWhat));
+                        }
+                    }
+                } else {
+                    for (int i=0; i<jsonList.size(); i++) {
+                        JSONObject __json = new JSONObject(jsonList.get(i).toString());
+                        if (__json!=null) {
+                            if (selectWhat.equals("*")) {
+                                list.add(__json.toString());
+                            } else {
+                                list.add(__json.getString(selectWhat));
+                            }
                         }
                     }
                 }
+
                 return list;
             }
         } catch (Exception e) {
@@ -154,38 +149,24 @@ public class Storage {
 
             createTablePathIfNotExists(db, table);
 
-            String pieceId = getPieceId(db, table);
-            if (new TableObject().isPieceFull(db, table, pieceId)) {
-                Path file = Paths.get(Construct.data_path + db + Globals.meta_extention);
-                DatabaseObject dbo = new DatabaseObject().loadExisting(file);
-                String oldPiece = pieceId;
-                pieceId = createBlankShardPiece(db, table);
-                dbo.tables = dbo.updateTableNewPieceId(db, table, oldPiece, pieceId);
-                try {
-                    byte[] data = dbo.returnDBObytes();
-                    Files.write(file, data);
-                    loadMetaDatabasesToMemory();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
+            TableStorageObject tso = new TableStorageObject(db, table);
+            String row_id = tso.insert(json);
+            tso.saveToDisk();
 
-            TableObject to = new TableObject(db, table, pieceId);
-            String rowId = to.add(json);
-            to.saveToDisk();
+            TableReplicaObject tro = new TableReplicaObject(db, table);
+            JSONObject _nodes = new JSONObject();
+            _nodes.put("primary", Construct.server.server_constants.id);
+            JSONObject _secondary = (JSONObject) Construct.network.getRandomAvailableNode();
+            _nodes.put("secondary", _secondary==null ? "" : _secondary.get("id") );
+            tro.insert(row_id, _nodes);
+            tro.saveToDisk();
 
-            if (!isReplicationAction)
-                QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).put("rowId", rowId).put("pieceId", pieceId).toString());
 
-            sro.pieceId = pieceId;
-            sro.rowId = rowId;
+//            if (!isReplicationAction)
+//                QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).put("rowId", rowId).put("pieceId", pieceId).toString());
+
+            sro.rowId = row_id;
             sro.success = true;
-
-            for (Object key : json.keySet()) {
-                String k = (String) key;
-                String v = (String) json.get(k);
-                sro.index.put(k, v);
-            }
 
             return sro;
         } catch (Exception e) {
@@ -193,21 +174,6 @@ public class Storage {
         }
 
         return sro;
-    }
-
-    /***
-     * Update row item with a replica uuid
-     * @param db
-     * @param table
-     * @param pieceId
-     * @param rowId
-     * @param replica
-     */
-    public void updateReplicaByRowId(String db, String table, String pieceId, String rowId, String replica) {
-        TableObject to = new TableObject(db, table, pieceId);
-        to.loadExisting();
-        to.updateReplicaToRow(rowId, replica);
-        to.saveToDisk();
     }
 
     /***
@@ -228,18 +194,13 @@ public class Storage {
             Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
-                Map<String, Integer> pieces = dbo.tables.get(table);
 
-                for (String pieceId : pieces.keySet()) {
-                    TableObject to = new TableObject(db, table, pieceId);
-                    to.update(update_key, update_val, where_col, where_val);
-                    to.saveToDisk();
-                }
+                TableStorageObject tso = new TableStorageObject(db, table);
+                boolean updated = tso.update(update_key, update_val, where_col, where_val);
 
-                if (!isReplicationAction)
-                    QueryLog.localAppend(new JSONObject().put("type", "update").put("update_key", update_key).put("update_val", update_val).put("where_col", where_col).put("where_val", where_val).put("db", db).put("table", table).toString());
+                if (updated) tso.saveToDisk();
 
-                return true;
+                return updated;
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -263,18 +224,17 @@ public class Storage {
             Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
-                Map<String, Integer> pieces = dbo.tables.get(table);
 
-                for (String pieceId : pieces.keySet()) {
-                    TableObject to = new TableObject(db, table, pieceId);
-                    to.delete(where_col, where_val);
-                    to.saveToDisk();
-                }
+                TableStorageObject tso = new TableStorageObject(db, table);
+                boolean deleted = tso.delete(where_col, where_val);
 
-                if (!isReplicationAction)
-                    QueryLog.localAppend(new JSONObject().put("type", "delete").put("db", db).put("table", table).toString());
+                if (deleted) tso.saveToDisk();
 
-                return true;
+                return deleted;
+
+//                if (!isReplicationAction)
+//                    QueryLog.localAppend(new JSONObject().put("type", "delete").put("db", db).put("table", table).toString());
+
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -304,10 +264,14 @@ public class Storage {
     public boolean createDatabase(String db, boolean isReplicationAction) {
         try {
             DatabaseObject dbo = new DatabaseObject();
-            dbo.createNew(db, Construct.me, null);
+            dbo.createNew(db, null);
             byte data[] = dbo.returnDBObytes();
             Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
             Files.write(file, data);
+
+            //create directory path if not exists
+            Construct.storage.createDatabasePathIfNotExists(db);
+
             loadMetaDatabasesToMemory();
 
             if (!isReplicationAction)
@@ -363,12 +327,11 @@ public class Storage {
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
 
             Construct.storage.createTablePathIfNotExists(db, table);
-            String newPieceId = Construct.storage.createBlankShardPiece(db, table);
 
             if (tableExists(db, table)) {
                 return false;
             } else {
-                dbo.createTable(table, newPieceId);
+                dbo.createTable(table);
 
                 byte[] data = dbo.returnDBObytes();
                 Files.write(file, data);
@@ -395,7 +358,7 @@ public class Storage {
         Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
         DatabaseObject dbo = new DatabaseObject().loadExisting(file);
         if (dbo.tables != null && dbo.tables.size()>0) {
-            return dbo.tables.containsKey(table);
+            return dbo.tables.contains(table);
         }
         return false;
     }
@@ -416,7 +379,8 @@ public class Storage {
         List<String> removeMe = new LinkedList<>();
 
         if (dbo.tables.size()>0) {
-            for (String t: dbo.tables.keySet()) {
+            for (int i=0; i<dbo.tables.size(); i++) {
+                String t = dbo.tables.get(0).toString();
                 if (t.equals(table)) {
                     // We do this to avoid a ConcurrentModificationException..
                     removeMe.add(t);
@@ -455,15 +419,9 @@ public class Storage {
     public List getTables(String db) {
         Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
         DatabaseObject dbo = new DatabaseObject().loadExisting(file);
-        if (dbo.tables == null) {
-            return null;
-        } else if (dbo.tables.size()>0) {
-            List<String> _tables = new ArrayList<>();
-            for (String t: dbo.tables.keySet()) {
-                _tables.add(t);
-            }
-            return _tables;
-        } else return new ArrayList();
+        if (dbo.tables == null) return null;
+        else if (dbo.tables.size()>0) return dbo.tables;
+        else return new ArrayList();
     }
 
     /***
@@ -484,8 +442,38 @@ public class Storage {
             File _table_dir = new File(Globals.data_path + db + "/" + table + "/");
             if (!_table_dir.exists()) {
                 _table_dir.mkdir();
+
+                TableStorageObject tso = new TableStorageObject();
+                Path _tso_file = Paths.get(Globals.data_path + db + "/" + table + "/"+ Globals.storage_filename);
+                byte[] _tso_data = tso.returnDBObytes();
+                Files.write(_tso_file, _tso_data);
+
+                TableReplicaObject tro = new TableReplicaObject();
+                Path _tro_file = Paths.get(Globals.data_path + db + "/" + table + "/"+ Globals.replica_filename);
+                byte[] _tro_data = tro.returnDBObytes();
+                Files.write(_tro_file, _tro_data);
+
                 return true;
             }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+    /***
+     * Create Database Path if not exists
+     * @param db
+     * @return boolean
+     */
+    public boolean createDatabasePathIfNotExists(String db) {
+        try {
+            // make sure `data` directory exists
+            File _data_dir = new File(Globals.data_path);
+            if (!_data_dir.exists()) _data_dir.mkdir();
+            // make sure `database` directory exists
+            File _db_dir = new File(Globals.data_path + db + "/");
+            if (!_db_dir.exists()) _db_dir.mkdir();
+            return true;
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -510,39 +498,6 @@ public class Storage {
             e.printStackTrace();
         }
         return false;
-    }
-
-    /***
-     * Create Blank Shard Piece
-     * @param db
-     * @param table
-     * @return String
-     */
-    public String createBlankShardPiece(String db, String table) {
-        return createBlankShardPiece(db, table, false);
-    }
-    public String createBlankShardPiece(String db, String table, boolean isReplicationAction) {
-        File _table_dir = new File(Globals.pieces_path + db + "/" + table + "/");
-        if (_table_dir.exists()) {
-
-            String newPieceId = UUID.randomUUID().toString();
-            try {
-                FileOutputStream fos = new FileOutputStream(Globals.pieces_path + db + "/" + table + "/" + newPieceId + Globals.piece_extention);
-                ObjectOutputStream oos = new ObjectOutputStream(fos);
-                oos.writeObject(new TableObject());
-
-                if (!isReplicationAction)
-                    QueryLog.localAppend(new JSONObject().put("type", "createBlankShardPiece").put("table", table).put("db", db).toString());
-
-                return newPieceId;
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        } else {
-            createTablePathIfNotExists(db, table);
-            return createBlankShardPiece(db, table);
-        }
-        return null;
     }
 
 }
