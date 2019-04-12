@@ -258,7 +258,7 @@ public class Network {
     public void communicateQueryLogSingleNode(String id, String ip, String jsonString) {
         if (!ip.equals(myIP)) {
             try {
-                System.out.println(ip);
+                System.out.println("Communicating to "+ip+": "+jsonString);
                 URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
                 HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
                 con2.setRequestMethod("POST");
@@ -284,6 +284,8 @@ public class Network {
                 }
             }
 
+            if (an.size()==0) return null; // this can happen when there was only 1 node in the list and it was ourselves!
+
             List<JSONObject> list = new ArrayList<JSONObject>();
             for (String key: an.keySet()) {
                 list.add(an.get(key));
@@ -296,46 +298,6 @@ public class Network {
 
         return null;
     }
-
-//    public void coordinateCluster() {
-//        /**
-//         * 1. Send out a request to 2 other random availableNodes to see if they are part of a cluster yet
-//         *     1. If they are not then they are auto assigned
-//         *     2. Otherwise they return who they are assigned to, then repeat the process
-//         */
-//        new Thread(new Runnable() {
-//            @Override
-//            public void run() {
-//                try {
-//
-//                    if (availableNodes.size()>0) {
-//                        //make the lowest IP in the availableNodes the coordinator
-//                        Integer coordinator_Int = 0;
-//                        for (String key: availableNodes.keySet()) {
-//                            JSONObject json = availableNodes.get(key);
-//                            String _ip = json.get("ip").toString();
-//                            if (coordinator_Int==0) {
-//                                Integer new_coordinator = new Integer(_ip.replace(".",""));
-//                                if (new_coordinator < coordinator_Int || coordinator_Int==0) {
-//                                    coordinator_Int = new_coordinator;
-//                                    coordinator = _ip;
-//                                }
-//                            }
-//                        }
-//
-//                        if (coordinator.equals(myIP)) {
-//                            System.out.println("I AM THE COORDINATOR!");
-//                        }
-//
-//                    }
-//
-//
-//                } catch (Exception e) {
-//                    e.printStackTrace();
-//                }
-//            }
-//        }).start();
-//    }
 
     public void getNetworkIPsOnly() {
         final byte[] ip;

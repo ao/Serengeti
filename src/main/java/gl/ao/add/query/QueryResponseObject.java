@@ -25,7 +25,7 @@ public class QueryResponseObject {
         json.put("query", this.query);
         json.put("error", this.error);
         json.put("executed", this.executed);
-        json.put("explain", this.explain);
+//        json.put("explain", this.explain);
         json.put("runtime", this.runtime);
         json.put("list", new JSONArray(this.list));
 
