@@ -19,7 +19,7 @@ public class TableIndex {
 
     public TableIndex loadExisting() {
         try {
-            Path path = Paths.get(Globals.pieces_path + databaseName + "/" + tableName + "/" + indexId + Globals.index_extension);
+            Path path = Paths.get(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.index_filename);
             TableIndex tableMeta = (TableIndex) Globals.convertFromBytes(Files.readAllBytes(path));
             return tableMeta;
         } catch (Exception e) {
@@ -30,7 +30,7 @@ public class TableIndex {
 
     public boolean saveToDisk() {
         try {
-            FileOutputStream fos = new FileOutputStream(Globals.pieces_path + databaseName + "/" + tableName + "/" + indexId + Globals.index_extension);
+            FileOutputStream fos = new FileOutputStream(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.index_filename);
             ObjectOutputStream oos = new ObjectOutputStream(fos);
             oos.writeObject(this);
             return true;

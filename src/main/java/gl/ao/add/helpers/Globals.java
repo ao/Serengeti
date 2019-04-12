@@ -24,10 +24,16 @@ import java.util.*;
 public class Globals {
 
     public static String meta_extention = ".ddbm";
-    public static String piece_extention = ".ddbp";
-    public static String index_extension = ".ddbi";
-    public static String pieces_path = Construct.data_path + "pieces/";
+//    public static String piece_extention = ".ddbp";
+//    public static String pieces_path = Globals.data_path + "pieces/";
+    public static String data_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/data/" : "./data/";
+    public static String res_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/res/" : "./res/";
+
     public static int piece_size = 1*1024*1024;
+
+    public static String replica_filename = "replica.file";
+    public static String storage_filename = "storage.file";
+    public static String index_filename = "index.file";
 
     public static int port_default = 1985;
     public static int port_communication = 19851;
