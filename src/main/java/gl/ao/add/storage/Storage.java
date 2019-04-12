@@ -88,7 +88,7 @@ public class Storage {
      * @param selectWhat
      * @param col
      * @param val
-     * @return List<String>
+     * @return
      */
     public List<String> select(String db, String table, String selectWhat, String col, String val) {
         try {
