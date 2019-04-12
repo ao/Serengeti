@@ -161,6 +161,14 @@ public class Storage {
             tro.insert(row_id, _nodes);
             tro.saveToDisk();
 
+            JSONObject jsonToSend = new JSONObject();
+            jsonToSend.put("type", "TableReplicaObject");
+            jsonToSend.put("db", db);
+            jsonToSend.put("table", table);
+            jsonToSend.put("row_id", row_id);
+            jsonToSend.put("json", _nodes.toString());
+            Construct.network.communicateQueryLogAllNodes(jsonToSend.toString());
+
 
 //            if (!isReplicationAction)
 //                QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).put("rowId", rowId).put("pieceId", pieceId).toString());

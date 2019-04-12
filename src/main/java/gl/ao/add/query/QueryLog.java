@@ -1,6 +1,7 @@
 package gl.ao.add.query;
 
 import gl.ao.add.Construct;
+import gl.ao.add.schema.TableReplicaObject;
 import org.json.JSONObject;
 import org.json.JSONString;
 
@@ -115,6 +116,16 @@ public class QueryLog {
                         break;
                     case "insert":
                         Construct.storage.insert(db, table, jsonObject, true);
+                        break;
+
+                    case "TableReplicaObject":
+                        TableReplicaObject tro = new TableReplicaObject(db, table);
+                        JSONObject _nodes = new JSONObject();
+                        _nodes.put("primary", jsonObject.getString("primary") );
+                        String _secondary = jsonObject.getString("secondary");
+                        _nodes.put("secondary", _secondary );
+                        tro.insert(jsonObject.getString("row_id"), _nodes);
+                        tro.saveToDisk();
                         break;
                 }
             } else {
