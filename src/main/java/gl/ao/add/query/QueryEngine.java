@@ -247,7 +247,7 @@ public class QueryEngine {
 
                     String selectWhat = select.get(0).replace("select ", "");
 
-                    Construct.storage.select(databaseName, tableName, selectWhat, "", "");
+                    qro.list = Construct.storage.select(databaseName, tableName, selectWhat, "", "");
                     qro.executed = true;
                 } else {
                     qro.error = "Invalid syntax: <db>.<table>";
