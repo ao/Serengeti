@@ -73,11 +73,10 @@ public class Globals {
         return new Object();
     }
 
-
     /***
      * JSONObject to Map
      * @param json
-     * @return Map<String, Object>
+     * @return
      * @throws JSONException
      */
     public static Map<String, Object> jsonToMap(JSONObject json) throws JSONException {
@@ -92,7 +91,7 @@ public class Globals {
     /***
      * JSONObject to Map
      * @param object
-     * @return Map<String, Object>
+     * @return
      * @throws JSONException
      */
     public static Map<String, Object> toMap(JSONObject object) throws JSONException {
@@ -118,7 +117,7 @@ public class Globals {
     /***
      * JSONArray to List
      * @param array
-     * @return List<Object>
+     * @return
      * @throws JSONException
      */
     public static List<Object> toList(JSONArray array) throws JSONException {
@@ -193,11 +192,9 @@ public class Globals {
         }
     }
 
-
     /***
      * Get Process CPU Load
      * @return
-     * @throws Exception
      */
     public static double getProcessCpuLoad() {
 
