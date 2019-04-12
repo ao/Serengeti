@@ -27,13 +27,13 @@ import org.json.JSONObject;
 public class Server {
 
     public ServerConstants server_constants = null;
-    private String server_constants_file_location = Construct.data_path + "server.constants";
+    private String server_constants_file_location = Globals.data_path + "server.constants";
     private Path server_constants_file = null;
 
     public void init() {
 
         try {
-            File root_directory = new File(Construct.data_path);
+            File root_directory = new File(Globals.data_path);
             if (! root_directory.exists()) root_directory.mkdir();
 
             File pieces_directory = new File(Globals.pieces_path);

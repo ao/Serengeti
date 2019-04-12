@@ -9,8 +9,6 @@ import java.util.Date;
 
 public class Construct {
 
-    public static String data_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/data/" : "./data/";
-    public static String res_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/res/" : "./res/";
     public Construct instance = null;
     public static Storage storage = null;
     public static Server server = new Server();
