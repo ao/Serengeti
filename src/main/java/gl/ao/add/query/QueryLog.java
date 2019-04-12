@@ -67,7 +67,7 @@ public class QueryLog {
                     jsonStringTmp.put("__replica", Construct.server.server_constants.id); //tell the copy about where the original data was inserted
 
                     Construct.network.communicateQueryLogSingleNode(replicateToID, replicateToIP, jsonStringTmp.toString());
-                    Construct.storage.updateReplicaByRowId(db, table, originalPieceId, originalRowId, replicateToID);
+//                    Construct.storage.updateReplicaByRowId(db, table, originalPieceId, originalRowId, replicateToID);
                 }
 
                 break;
