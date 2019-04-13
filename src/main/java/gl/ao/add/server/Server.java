@@ -77,8 +77,9 @@ public class Server {
             e.printStackTrace();
         }
         try {
-            System.out.println("HTTP server started at http://" + Globals.getHost4Address() + ":1985/");
+            System.out.println("\nHTTP server started at http://" + Globals.getHost4Address() + ":1985/");
             System.out.println("Dashboard available at http://" + Globals.getHost4Address() + ":1985/dashboard");
+            System.out.println("\nNode is 'online' and ready to contribute (took "+(System.currentTimeMillis()-Construct.startTime)+"ms to startup)");
         } catch (SocketException se) {
             System.out.println("Could not start HTTP server started, IP lookup failed");
         }

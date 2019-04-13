@@ -112,7 +112,7 @@ public class Network {
                     }
                     Construct.network.online = true;
                     System.out.println("Startup: Completed with "+changesFound+" changes found");
-                    System.out.println("\nNode is 'online' and ready to contribute");
+                    Construct.server.serve();
                 }
             }).start();
         }
