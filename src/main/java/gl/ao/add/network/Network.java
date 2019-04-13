@@ -2,6 +2,7 @@ package gl.ao.add.network;
 
 import gl.ao.add.Construct;
 import gl.ao.add.helpers.Globals;
+import gl.ao.add.schema.TableReplicaObject;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -49,9 +50,13 @@ public class Network {
             hasPerformedNetworkSync = true;
 
             final Map<String, JSONObject> _availableNodes = this.availableNodes;
+
+            System.out.println("\nStartup: Checking to see if local data is stale..");
+
             new Thread(new Runnable() {
                 @Override
                 public void run() {
+                    int changesFound = 0;
                     for (Map.Entry<String, JSONObject> node: _availableNodes.entrySet()) {
                         if (!Construct.server.server_constants.id.equals(node.getKey())) {
                             JSONObject jsonObject = node.getValue();
@@ -81,15 +86,17 @@ public class Network {
                                             JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
 
                                             if (!Construct.storage.databaseExists(db)) {
-                                                System.out.println("Startup: Creating database '"+db+"'");
+                                                System.out.println("Startup: Creating missing database '"+db+"'");
                                                 Construct.storage.createDatabase(db, true);
+                                                changesFound++;
                                             }
 
                                             for (int i = 0; i < jsonArr.length(); i++) {
                                                 String table = jsonArr.getString(i);
                                                 if (!Construct.storage.tableExists(db, table)) {
-                                                    System.out.println("Startup: Creating table '"+table+"'");
+                                                    System.out.println("Startup: Creating missing table '"+table+"' for database '"+db+"'");
                                                     Construct.storage.createTable(db, table, true);
+                                                    changesFound++;
                                                 }
                                             }
                                         }
@@ -104,6 +111,8 @@ public class Network {
                         }
                     }
                     Construct.network.online = true;
+                    System.out.println("Startup: Completed with "+changesFound+" changes found");
+                    System.out.println("\nNode is 'online' and ready to contribute");
                 }
             }).start();
         }

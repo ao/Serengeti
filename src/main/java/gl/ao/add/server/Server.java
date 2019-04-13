@@ -76,7 +76,12 @@ public class Server {
         } catch (Exception e) {
             e.printStackTrace();
         }
-        System.out.println("Ready");
+        try {
+            System.out.println("HTTP server started at http://" + Globals.getHost4Address() + ":1985/");
+            System.out.println("Dashboard available at http://" + Globals.getHost4Address() + ":1985/dashboard");
+        } catch (SocketException se) {
+            System.out.println("Could not start HTTP server started, IP lookup failed");
+        }
     }
 
     static InetAddress getMyIP() throws IOException {
