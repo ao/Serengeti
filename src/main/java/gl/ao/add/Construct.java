@@ -14,10 +14,11 @@ public class Construct {
     public static Storage storage = null;
     public static Server server = new Server();
     public static Date currentDate = new Date();
-    public static String me = null;
     public static Network network = new Network();
     public static Indexer indexer = new Indexer();
     public Interactive interactive = new Interactive();
+
+    public static long startTime;
 
     /***
      * Main application entry point
@@ -31,10 +32,11 @@ public class Construct {
      * Initialisation object
      */
     private void init() {
+        this.startTime = System.currentTimeMillis();
+        System.out.println("Starting ADD..");
         this.instance = this;
         this.server.init();
         storage = new Storage();
-        this.server.serve();
         this.network.initiate();
     }
 
