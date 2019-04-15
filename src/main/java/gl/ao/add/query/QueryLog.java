@@ -120,7 +120,7 @@ public class QueryLog {
 
                     case "TableReplicaObject":
                         TableReplicaObject tro = new TableReplicaObject(db, table);
-                        JSONObject _json = (JSONObject) jsonObject.get("json");
+                        JSONObject _json = new JSONObject( jsonObject.getString("json") );
                         JSONObject _nodes = new JSONObject();
                         _nodes.put("primary", _json.getString("primary") );
                         String _secondary = _json.getString("secondary");
