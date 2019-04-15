@@ -33,6 +33,10 @@ public class TableStorageObject implements Serializable {
         rows.put(uuid, json.toString());
         return uuid;
     }
+    public String insert(String row_id, JSONObject json) {
+        rows.put(row_id, json.toString());
+        return row_id;
+    }
     public boolean update(String update_key, String update_val, String where_col, String where_val) {
         List<String> results = select(where_col, where_val);
         for (int i=0; i<results.size(); i++) {

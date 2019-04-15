@@ -2,8 +2,8 @@ package gl.ao.add.query;
 
 import gl.ao.add.ADD;
 import gl.ao.add.schema.TableReplicaObject;
+import gl.ao.add.schema.TableStorageObject;
 import org.json.JSONObject;
-import org.json.JSONString;
 
 /***
  * Send operations (queries) to the log once they have successfully run
@@ -126,6 +126,11 @@ public class QueryLog {
                         _nodes.put("secondary", _secondary );
                         tro.insert(jsonObject.getString("row_id"), _nodes);
                         tro.saveToDisk();
+                        break;
+                    case "ReplicateInsertObject":
+                        TableStorageObject tso = new TableStorageObject(db, table);
+                        tso.insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
+                        tso.saveToDisk();
                         break;
                 }
             } else {
