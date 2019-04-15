@@ -121,11 +121,10 @@ public class QueryLog {
                     case "TableReplicaObject":
                         TableReplicaObject tro = new TableReplicaObject(db, table);
                         JSONObject _json = new JSONObject( jsonObject.getString("json") );
-                        JSONObject _nodes = new JSONObject();
-                        _nodes.put("primary", _json.getString("primary") );
-                        String _secondary = _json.getString("secondary");
-                        _nodes.put("secondary", _secondary );
-                        tro.insert(jsonObject.getString("row_id"), _nodes);
+                        tro.insert(jsonObject.getString("row_id"), new JSONObject() {{
+                            put("primary", _json.getString("primary") );
+                            put("secondary", _json.getString("secondary") );
+                        }});
                         tro.saveToDisk();
                         break;
                     case "ReplicateInsertObject":
