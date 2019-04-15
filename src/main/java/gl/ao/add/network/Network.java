@@ -288,6 +288,26 @@ public class Network {
 
         return json;
     }
+    public JSONArray getRandomAvailableNodes(int amount) {
+        Map<String, JSONObject> an = new HashMap<String, JSONObject>();
+        an.putAll(this.availableNodes);
+
+        if (an.size()>=2) {
+            JSONArray nodes = new JSONArray();
+            List<JSONObject> list = new ArrayList<JSONObject>();
+            for (String key: an.keySet()) {
+                list.add(an.get(key));
+            }
+            Collections.shuffle(list);
+
+            nodes.put(list.get(0));
+            nodes.put(list.get(1));
+
+            return nodes;
+        }
+
+        return null;
+    }
     public JSONObject getRandomAvailableNode() {
         Map<String, JSONObject> an = new HashMap<String, JSONObject>();
         an.putAll(this.availableNodes);
