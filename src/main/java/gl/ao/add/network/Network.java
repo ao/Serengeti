@@ -2,7 +2,6 @@ package gl.ao.add.network;
 
 import gl.ao.add.ADD;
 import gl.ao.add.helpers.Globals;
-import gl.ao.add.schema.TableReplicaObject;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -104,6 +103,9 @@ public class Network {
 
                                     in.close();
                                 }
+
+
+
                             } catch (Exception e) {
                                 e.printStackTrace();
                             }
@@ -265,7 +267,7 @@ public class Network {
         }
     }
     public void communicateQueryLogSingleNode(String id, String ip, String jsonString) {
-        if (!ip.equals(myIP)) {
+//        if (!ip.equals(myIP)) {
             try {
                 System.out.println("Communicating to "+ip+": "+jsonString);
                 URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
@@ -276,9 +278,16 @@ public class Network {
                 con2.getOutputStream().write(jsonString.getBytes("UTF-8"));
                 con2.getInputStream();
             } catch (ConnectException ce) {} catch (Exception e) {}
-        }
+//        }
     }
 
+    public JSONObject getSelfNode() {
+        JSONObject json = new JSONObject();
+        json.put("id", ADD.server.server_constants.id);
+        json.put("ip", myIP);
+
+        return json;
+    }
     public JSONObject getRandomAvailableNode() {
         Map<String, JSONObject> an = new HashMap<String, JSONObject>();
         an.putAll(this.availableNodes);

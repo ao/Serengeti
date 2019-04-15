@@ -149,10 +149,12 @@ public class Storage {
 
             createTablePathIfNotExists(db, table);
 
+            // insert data to local node
             TableStorageObject tso = new TableStorageObject(db, table);
             String row_id = tso.insert(json);
             tso.saveToDisk();
 
+            // decide where to replicate the data
             TableReplicaObject tro = new TableReplicaObject(db, table);
             JSONObject _nodes = new JSONObject();
             _nodes.put("primary", ADD.server.server_constants.id);
@@ -161,6 +163,18 @@ public class Storage {
             tro.insert(row_id, _nodes);
             tro.saveToDisk();
 
+            // replicate the data
+            if (_secondary!=null) {
+                JSONObject _jsonInsertReplicate = new JSONObject();
+                _jsonInsertReplicate.put("db", db);
+                _jsonInsertReplicate.put("table", table);
+                _jsonInsertReplicate.put("row_id", row_id);
+                _jsonInsertReplicate.put("json", json);
+                _jsonInsertReplicate.put("type", "ReplicateInsertObject");
+                ADD.network.communicateQueryLogSingleNode(_secondary.getString("id"), _secondary.getString("ip"), _jsonInsertReplicate.toString());
+            }
+
+            // tell all nodes about where the replicated data is stored
             JSONObject jsonToSend = new JSONObject();
             jsonToSend.put("type", "TableReplicaObject");
             jsonToSend.put("db", db);
@@ -169,9 +183,6 @@ public class Storage {
             jsonToSend.put("json", _nodes.toString());
             ADD.network.communicateQueryLogAllNodes(jsonToSend.toString());
 
-
-//            if (!isReplicationAction)
-//                QueryLog.localAppend(new JSONObject().put("type", "insert").put("db", db).put("table", table).put("json", json).put("rowId", rowId).put("pieceId", pieceId).toString());
 
             sro.rowId = row_id;
             sro.success = true;
