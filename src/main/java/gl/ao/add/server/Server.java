@@ -15,7 +15,7 @@ import java.util.concurrent.Executors;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import gl.ao.add.Construct;
+import gl.ao.add.ADD;
 import gl.ao.add.ui.Dashboard;
 import gl.ao.add.ui.Interactive;
 import gl.ao.add.helpers.Globals;
@@ -79,7 +79,7 @@ public class Server {
         try {
             System.out.println("\nHTTP server started at http://" + Globals.getHost4Address() + ":1985/");
             System.out.println("Dashboard available at http://" + Globals.getHost4Address() + ":1985/dashboard");
-            System.out.println("\nNode is 'online' and ready to contribute (took "+(System.currentTimeMillis()-Construct.startTime)+"ms to startup)");
+            System.out.println("\nNode is 'online' and ready to contribute (took "+(System.currentTimeMillis()- ADD.startTime)+"ms to startup)");
         } catch (SocketException se) {
             System.out.println("Could not start HTTP server started, IP lookup failed");
         }
@@ -96,13 +96,13 @@ public class Server {
             JSONObject jsonObjThis = new JSONObject();
 
             jsonObjThis.put("version", "0.0.1");
-            jsonObjThis.put("started", Construct.currentDate);
+            jsonObjThis.put("started", ADD.currentDate);
 
-            jsonObjThis.put("id", Construct.server.server_constants.id);
+            jsonObjThis.put("id", ADD.server.server_constants.id);
 
             DateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
             dateFormat.setTimeZone(java.util.TimeZone.getTimeZone("GMT"));
-            String formattedDate=dateFormat. format( new Date().getTime() - Construct.currentDate.getTime() );
+            String formattedDate=dateFormat. format( new Date().getTime() - ADD.currentDate.getTime() );
             jsonObjThis.put("uptime", formattedDate);
 
             jsonObjThis.put("ip", Globals.getHost4Address());
@@ -165,9 +165,9 @@ public class Server {
             JSONObject jsonObjRoot = new JSONObject();
             jsonObjRoot.put("_", "Autonomous Distributed Database");
             jsonObjRoot.put("this", jsonObjThis);
-            jsonObjRoot.put("totalNodes", Integer.toString(Construct.network.availableNodes.size()));
-            jsonObjRoot.put("availableNodes", Construct.network.availableNodes);
-            jsonObjRoot.put("discoveryLatency", Construct.network.latency);
+            jsonObjRoot.put("totalNodes", Integer.toString(ADD.network.availableNodes.size()));
+            jsonObjRoot.put("availableNodes", ADD.network.availableNodes);
+            jsonObjRoot.put("discoveryLatency", ADD.network.latency);
             jsonObjRoot.put("replicationLatency", 0);
 
             //response
@@ -201,7 +201,7 @@ public class Server {
         public void handle(HttpExchange t) throws IOException {
             JSONObject jsonObject = new JSONObject();
 
-            jsonObject.put("meta", Construct.storage.getDatabasesTablesMeta());
+            jsonObject.put("meta", ADD.storage.getDatabasesTablesMeta());
 
             String response = jsonObject.toString();
             t.sendResponseHeaders(200, response.length());

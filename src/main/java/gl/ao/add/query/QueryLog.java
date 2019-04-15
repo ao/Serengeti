@@ -1,6 +1,6 @@
 package gl.ao.add.query;
 
-import gl.ao.add.Construct;
+import gl.ao.add.ADD;
 import gl.ao.add.schema.TableReplicaObject;
 import org.json.JSONObject;
 import org.json.JSONString;
@@ -22,7 +22,7 @@ public class QueryLog {
 
         String type = jsonObject.getString("type");
 
-        int totalAvailableNodes = Construct.network.availableNodes.size();
+        int totalAvailableNodes = ADD.network.availableNodes.size();
 
         switch (type) {
 
@@ -31,19 +31,19 @@ public class QueryLog {
              */
             case "createDatabase":
                 // {"type":"createDatabase", "db":db}
-                Construct.network.communicateQueryLogAllNodes(jsonString);
+                ADD.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "dropDatabase":
                 // {"type":"dropDatabase", "db":db}
-                Construct.network.communicateQueryLogAllNodes(jsonString);
+                ADD.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "createTable":
                 // {"type":"createTable", "db":db, "table":table}
-                Construct.network.communicateQueryLogAllNodes(jsonString);
+                ADD.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "dropTable":
                 // {"type":"dropTable", "db":db, "table":table}
-                Construct.network.communicateQueryLogAllNodes(jsonString);
+                ADD.network.communicateQueryLogAllNodes(jsonString);
                 break;
 
             /**
@@ -52,7 +52,7 @@ public class QueryLog {
             case "insert":
                 // {"type":"insert", "db":db, "table":table, "json":json}
                 if (totalAvailableNodes>1) { //replicas available?
-                    JSONObject randomNode = Construct.network.getRandomAvailableNode();
+                    JSONObject randomNode = ADD.network.getRandomAvailableNode();
 
                     String originalRowId = jsonObject.getString("rowId");
                     String originalPieceId = jsonObject.getString("pieceId");
@@ -65,10 +65,10 @@ public class QueryLog {
                     String table = jsonObject.getString("table");
 
                     JSONObject jsonStringTmp = jsonObject;
-                    jsonStringTmp.put("__replica", Construct.server.server_constants.id); //tell the copy about where the original data was inserted
+                    jsonStringTmp.put("__replica", ADD.server.server_constants.id); //tell the copy about where the original data was inserted
 
-                    Construct.network.communicateQueryLogSingleNode(replicateToID, replicateToIP, jsonStringTmp.toString());
-//                    Construct.storage.updateReplicaByRowId(db, table, originalPieceId, originalRowId, replicateToID);
+                    ADD.network.communicateQueryLogSingleNode(replicateToID, replicateToIP, jsonStringTmp.toString());
+//                    ADD.storage.updateReplicaByRowId(db, table, originalPieceId, originalRowId, replicateToID);
                 }
 
                 break;
@@ -103,19 +103,19 @@ public class QueryLog {
 
                 switch (type) {
                     case "createDatabase":
-                        Construct.storage.createDatabase(db, true);
+                        ADD.storage.createDatabase(db, true);
                         break;
                     case "dropDatabase":
-                        Construct.storage.dropDatabase(db, true);
+                        ADD.storage.dropDatabase(db, true);
                         break;
                     case "createTable":
-                        Construct.storage.createTable(db, table, true);
+                        ADD.storage.createTable(db, table, true);
                         break;
                     case "dropTable":
-                        Construct.storage.dropTable(db, table, true);
+                        ADD.storage.dropTable(db, table, true);
                         break;
                     case "insert":
-                        Construct.storage.insert(db, table, jsonObject, true);
+                        ADD.storage.insert(db, table, jsonObject, true);
                         break;
 
                     case "TableReplicaObject":

@@ -1,6 +1,6 @@
 package gl.ao.add.storage;
 
-import gl.ao.add.Construct;
+import gl.ao.add.ADD;
 import gl.ao.add.query.QueryLog;
 import gl.ao.add.schema.DatabaseObject;
 import gl.ao.add.helpers.Globals;
@@ -155,9 +155,9 @@ public class Storage {
 
             TableReplicaObject tro = new TableReplicaObject(db, table);
             JSONObject _nodes = new JSONObject();
-            _nodes.put("primary", Construct.server.server_constants.id);
-            JSONObject _secondary = (JSONObject) Construct.network.getRandomAvailableNode();
-            _nodes.put("secondary", _secondary==null ? "" : _secondary.get("id") );
+            _nodes.put("primary", ADD.server.server_constants.id);
+            JSONObject _secondary = (JSONObject) ADD.network.getRandomAvailableNode();
+            _nodes.put("secondary", _secondary==null ? "" : _secondary.getString("id") );
             tro.insert(row_id, _nodes);
             tro.saveToDisk();
 
@@ -167,7 +167,7 @@ public class Storage {
             jsonToSend.put("table", table);
             jsonToSend.put("row_id", row_id);
             jsonToSend.put("json", _nodes.toString());
-            Construct.network.communicateQueryLogAllNodes(jsonToSend.toString());
+            ADD.network.communicateQueryLogAllNodes(jsonToSend.toString());
 
 
 //            if (!isReplicationAction)
@@ -278,7 +278,7 @@ public class Storage {
             Files.write(file, data);
 
             //create directory path if not exists
-            Construct.storage.createDatabasePathIfNotExists(db);
+            ADD.storage.createDatabasePathIfNotExists(db);
 
             loadMetaDatabasesToMemory();
 
@@ -334,7 +334,7 @@ public class Storage {
             Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
 
-            Construct.storage.createTablePathIfNotExists(db, table);
+            ADD.storage.createTablePathIfNotExists(db, table);
 
             if (tableExists(db, table)) {
                 return false;

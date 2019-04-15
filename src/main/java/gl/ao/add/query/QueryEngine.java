@@ -1,6 +1,6 @@
 package gl.ao.add.query;
 
-import gl.ao.add.Construct;
+import gl.ao.add.ADD;
 import gl.ao.add.storage.StorageResponseObject;
 import org.json.JSONObject;
 
@@ -63,14 +63,14 @@ public class QueryEngine {
         if (query.equals("show databases")) {
         // `show databases`
 
-            qro.list = Construct.storage.getDatabases();
+            qro.list = ADD.storage.getDatabases();
             qro.executed = true;
 
         } else if (query.startsWith("show ") && query.endsWith(" tables")) {
         // `show testdb tables`
 
             String databaseName = query.replace("show ", "").split(" ")[0];
-            qro.list = Construct.storage.getTables(databaseName);
+            qro.list = ADD.storage.getTables(databaseName);
             qro.executed = true;
 
         } else if (query.startsWith("create database ")) {
@@ -78,10 +78,10 @@ public class QueryEngine {
 
             String databaseName = query.replace("create database ", "");
 
-            if (Construct.storage.databaseExists(databaseName)) {
+            if (ADD.storage.databaseExists(databaseName)) {
                 qro.error = "Database '" + databaseName + "' already exists";
             } else {
-                Construct.storage.createDatabase(databaseName);
+                ADD.storage.createDatabase(databaseName);
                 qro.executed = true;
             }
 
@@ -89,8 +89,8 @@ public class QueryEngine {
         // `drop database testdb`
 
             String databaseName = query.replace("drop database ", "");
-            if (Construct.storage.databaseExists(databaseName)) {
-                Construct.storage.dropDatabase(databaseName);
+            if (ADD.storage.databaseExists(databaseName)) {
+                ADD.storage.dropDatabase(databaseName);
                 qro.executed = true;
             } else {
                 qro.error = "Database " + databaseName + " does not exist";
@@ -106,10 +106,10 @@ public class QueryEngine {
                     String databaseName = dbAndTableList.get(0);
                     String tableName = dbAndTableList.get(1);
 
-                    if (Construct.storage.tableExists(databaseName, tableName)) {
+                    if (ADD.storage.tableExists(databaseName, tableName)) {
                         qro.error = "Table '" + tableName + "' already exists";
                     } else {
-                        Construct.storage.createTable(databaseName, tableName);
+                        ADD.storage.createTable(databaseName, tableName);
                         qro.executed = true;
                     }
                 } else {
@@ -126,8 +126,8 @@ public class QueryEngine {
             String databaseName = dbAndTable.get(0);
             String tableName = dbAndTable.get(1);
 
-            if (Construct.storage.tableExists(databaseName, tableName)) {
-                Construct.storage.dropTable(databaseName, tableName);
+            if (ADD.storage.tableExists(databaseName, tableName)) {
+                ADD.storage.dropTable(databaseName, tableName);
                 qro.executed = true;
             } else {
                 qro.error = "Table "+ tableName + " does not exist";
@@ -158,8 +158,8 @@ public class QueryEngine {
                             String v = values.get(i).replaceAll("^\'|\'$", "").trim();
                             json.put(k, v);
                         }
-                        StorageResponseObject sro = Construct.storage.insert(databaseName, tableName, json);
-//                        Construct.indexer.addToQueue(sro);
+                        StorageResponseObject sro = ADD.storage.insert(databaseName, tableName, json);
+//                        ADD.indexer.addToQueue(sro);
                         qro.executed = sro.success;
                     }
 
@@ -203,7 +203,7 @@ public class QueryEngine {
                         String w1 = w.get(0).replaceAll("^\'|\'$", "").trim();
                         String w2 = w.get(1).replaceAll("^\'|\'$", "").trim();
 
-                        Construct.storage.update(databaseName, tableName, kv1, kv2, w1, w2);
+                        ADD.storage.update(databaseName, tableName, kv1, kv2, w1, w2);
                         qro.executed = true;
                     } else {
                         qro.error = "Invalid syntax: Invalid parameter match";
@@ -227,7 +227,7 @@ public class QueryEngine {
                 String w1 = w.get(0).replaceAll("^\'|\'$", "").trim();
                 String w2 = w.get(1).replaceAll("^\'|\'$", "").trim();
 
-                Construct.storage.delete(databaseName, tableName, w1, w2);
+                ADD.storage.delete(databaseName, tableName, w1, w2);
                 qro.executed = true;
             } else {
                 qro.error = "Invalid syntax: Invalid parameter match";
@@ -247,7 +247,7 @@ public class QueryEngine {
 
                     String selectWhat = select.get(0).replace("select ", "");
 
-                    qro.list = Construct.storage.select(databaseName, tableName, selectWhat, "", "");
+                    qro.list = ADD.storage.select(databaseName, tableName, selectWhat, "", "");
                     qro.executed = true;
                 } else {
                     qro.error = "Invalid syntax: <db>.<table>";
@@ -271,7 +271,7 @@ public class QueryEngine {
                         String w1 = w.get(0).replaceAll("^\'|\'$", "").trim();
                         String w2 = w.get(1).replaceAll("^\'|\'$", "").trim();
 
-                        qro.list = Construct.storage.select(databaseName, tableName, selectWhat, w1, w2);
+                        qro.list = ADD.storage.select(databaseName, tableName, selectWhat, w1, w2);
                         qro.executed = true;
                     } else {
                         qro.error = "Invalid syntax: invalid size";
