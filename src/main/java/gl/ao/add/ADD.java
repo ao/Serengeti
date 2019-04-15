@@ -8,9 +8,9 @@ import gl.ao.add.ui.Interactive;
 
 import java.util.Date;
 
-public class Construct {
+public class ADD {
 
-    public Construct instance = null;
+    public ADD instance = null;
     public static Storage storage = null;
     public static Server server = new Server();
     public static Date currentDate = new Date();
@@ -25,7 +25,7 @@ public class Construct {
      * @param args
      */
     public static void main(String[] args) {
-        new Construct().init();
+        new ADD().init();
     }
 
     /***

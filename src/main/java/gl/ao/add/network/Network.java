@@ -1,6 +1,6 @@
 package gl.ao.add.network;
 
-import gl.ao.add.Construct;
+import gl.ao.add.ADD;
 import gl.ao.add.helpers.Globals;
 import gl.ao.add.schema.TableReplicaObject;
 import org.json.JSONArray;
@@ -58,7 +58,7 @@ public class Network {
                 public void run() {
                     int changesFound = 0;
                     for (Map.Entry<String, JSONObject> node: _availableNodes.entrySet()) {
-                        if (!Construct.server.server_constants.id.equals(node.getKey())) {
+                        if (!ADD.server.server_constants.id.equals(node.getKey())) {
                             JSONObject jsonObject = node.getValue();
 
                             try {
@@ -85,17 +85,17 @@ public class Network {
                                         if (jsonMeta.get(db) instanceof JSONArray) {
                                             JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
 
-                                            if (!Construct.storage.databaseExists(db)) {
+                                            if (!ADD.storage.databaseExists(db)) {
                                                 System.out.println("Startup: Creating missing database '"+db+"'");
-                                                Construct.storage.createDatabase(db, true);
+                                                ADD.storage.createDatabase(db, true);
                                                 changesFound++;
                                             }
 
                                             for (int i = 0; i < jsonArr.length(); i++) {
                                                 String table = jsonArr.getString(i);
-                                                if (!Construct.storage.tableExists(db, table)) {
+                                                if (!ADD.storage.tableExists(db, table)) {
                                                     System.out.println("Startup: Creating missing table '"+table+"' for database '"+db+"'");
-                                                    Construct.storage.createTable(db, table, true);
+                                                    ADD.storage.createTable(db, table, true);
                                                     changesFound++;
                                                 }
                                             }
@@ -110,9 +110,9 @@ public class Network {
 
                         }
                     }
-                    Construct.network.online = true;
+                    ADD.network.online = true;
                     System.out.println("Startup: Completed with "+changesFound+" changes found");
-                    Construct.server.serve();
+                    ADD.server.serve();
                 }
             }).start();
         }
@@ -157,8 +157,8 @@ public class Network {
         for(int i=1;i<=254;i++) {
             final int j = i; // i as non-final variable cannot be referenced from inner class
 
-            Construct.network.latencyRun = true;
-            Construct.network.latency = 0;
+            ADD.network.latencyRun = true;
+            ADD.network.latency = 0;
             Thread t = new Thread(new Runnable() {
                 public void run() {
                     ip[3] = (byte) j;
@@ -200,10 +200,10 @@ public class Network {
                             if (availableNodes.containsKey(_ip)) availableNodes.remove(_ip);
                         }
 
-                        if (Construct.network.latencyRun) {
+                        if (ADD.network.latencyRun) {
                             long elapsedTime = System.currentTimeMillis() - startTime;
-                            if (elapsedTime> Construct.network.latency) {
-                                Construct.network.latency = elapsedTime;
+                            if (elapsedTime> ADD.network.latency) {
+                                ADD.network.latency = elapsedTime;
                             }
                         }
 
@@ -233,7 +233,7 @@ public class Network {
                 t.join();
                 threadcompletecount++;
                 if (threadcompletecount==254) {
-                    Construct.network.latencyRun = false;
+                    ADD.network.latencyRun = false;
                     if (availableNodes.size() > 0) {
                         for (String key : availableNodes.keySet()) {
                             JSONObject json = availableNodes.get(key);
