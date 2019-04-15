@@ -249,6 +249,7 @@ public class Network {
                         requestNetworkMetas();
                     } else {
                         // No other nodes on network, let's just begin (and take over!)
+                        ADD.network.hasPerformedNetworkSync = true; //we haven't actually done this, but let's say we did anyway to prevent the server from starting again..
                         ADD.network.online = true;
                         System.out.println("Startup: Completed and feeling lonely");
                         ADD.server.serve();
