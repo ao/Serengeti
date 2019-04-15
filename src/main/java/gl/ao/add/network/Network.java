@@ -272,7 +272,7 @@ public class Network {
             }
         }
     }
-    public void communicateQueryLogSingleNode(String id, String ip, String jsonString) {
+    public boolean communicateQueryLogSingleNode(String id, String ip, String jsonString) {
 //        if (!ip.equals(myIP)) {
             try {
                 System.out.println("Communicating to "+ip+": "+jsonString);
@@ -283,7 +283,12 @@ public class Network {
                 con2.setConnectTimeout(networkTimeout);
                 con2.getOutputStream().write(jsonString.getBytes("UTF-8"));
                 con2.getInputStream();
-            } catch (ConnectException ce) {} catch (Exception e) {}
+                return true;
+            } catch (ConnectException ce) {
+                return false;
+            } catch (Exception e) {
+                return false;
+            }
 //        }
     }
 
