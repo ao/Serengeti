@@ -161,6 +161,8 @@ public class QueryEngine {
                         StorageResponseObject sro = ADD.storage.insert(databaseName, tableName, json);
 //                        ADD.indexer.addToQueue(sro);
                         qro.executed = sro.success;
+                        qro.primary = sro.primary;
+                        qro.secondary = sro.secondary;
                     }
 
                 } else {

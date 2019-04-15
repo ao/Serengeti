@@ -10,6 +10,8 @@ public class QueryResponseObject {
     String error = null;
     Boolean executed = false;
     String explain = null;
+    String primary = null;
+    String secondary = null;
     String runtime = null;
     List<String> list = null;
 
@@ -26,6 +28,8 @@ public class QueryResponseObject {
         json.put("error", this.error);
         json.put("executed", this.executed);
 //        json.put("explain", this.explain);
+        json.put("primary", this.primary);
+        json.put("secondary", this.secondary);
         json.put("runtime", this.runtime);
         json.put("list", new JSONArray(this.list));
 

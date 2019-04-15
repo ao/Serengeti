@@ -293,6 +293,20 @@ public class Network {
 
         return json;
     }
+    public JSONObject getPrimarySecondary() {
+        JSONObject json = new JSONObject();
+
+        JSONArray nodes = getRandomAvailableNodes(2);
+        if (nodes.length()<2) {
+            JSONObject myself = getSelfNode();
+            json.put("primary", myself);
+        } else {
+            json.put("primary", nodes.get(0));
+            json.put("secondary", nodes.get(1));
+        }
+
+        return json;
+    }
     public JSONArray getRandomAvailableNodes(int amount) {
         Map<String, JSONObject> an = new HashMap<String, JSONObject>();
         an.putAll(this.availableNodes);
