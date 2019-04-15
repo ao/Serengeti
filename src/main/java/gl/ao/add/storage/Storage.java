@@ -6,6 +6,7 @@ import gl.ao.add.schema.DatabaseObject;
 import gl.ao.add.helpers.Globals;
 import gl.ao.add.schema.TableReplicaObject;
 import gl.ao.add.schema.TableStorageObject;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -149,30 +150,38 @@ public class Storage {
 
             createTablePathIfNotExists(db, table);
 
-            // insert data to local node
-            TableStorageObject tso = new TableStorageObject(db, table);
-            String row_id = tso.insert(json);
-            tso.saveToDisk();
+            // get 2 random nodes to use as primary and secondary
+            JSONArray _randomNodes = ADD.network.getRandomAvailableNodes(2);
+            JSONObject _primary = new JSONObject(_randomNodes.get(0));
+            JSONObject _secondary = new JSONObject(_randomNodes.get(1));
 
-            // decide where to replicate the data
-            TableReplicaObject tro = new TableReplicaObject(db, table);
+
+
+//            // insert data to local node
+//            TableStorageObject tso = new TableStorageObject(db, table);
+//            String row_id = tso.insert(json);
+//            tso.saveToDisk();
+
+//            // decide where to replicate the data
+//            TableReplicaObject tro = new TableReplicaObject(db, table);
+//            _nodes.put("primary", ADD.server.server_constants.id);
+//            JSONObject _secondary = (JSONObject) ADD.network.getRandomAvailableNode();
+//            tro.insert(row_id, _nodes);
+//            tro.saveToDisk();
             JSONObject _nodes = new JSONObject();
-            _nodes.put("primary", ADD.server.server_constants.id);
-            JSONObject _secondary = (JSONObject) ADD.network.getRandomAvailableNode();
+            _nodes.put("primary", _primary==null ? "" : _primary.getString("id") );
             _nodes.put("secondary", _secondary==null ? "" : _secondary.getString("id") );
-            tro.insert(row_id, _nodes);
-            tro.saveToDisk();
+            String row_id = UUID.randomUUID().toString();
 
-            // replicate the data
-            if (_secondary!=null) {
-                JSONObject _jsonInsertReplicate = new JSONObject();
-                _jsonInsertReplicate.put("db", db);
-                _jsonInsertReplicate.put("table", table);
-                _jsonInsertReplicate.put("row_id", row_id);
-                _jsonInsertReplicate.put("json", json);
-                _jsonInsertReplicate.put("type", "ReplicateInsertObject");
-                ADD.network.communicateQueryLogSingleNode(_secondary.getString("id"), _secondary.getString("ip"), _jsonInsertReplicate.toString());
-            }
+            // replicate the data (store it!)
+            JSONObject _jsonInsertReplicate = new JSONObject();
+            _jsonInsertReplicate.put("db", db);
+            _jsonInsertReplicate.put("table", table);
+            _jsonInsertReplicate.put("row_id", row_id);
+            _jsonInsertReplicate.put("json", json);
+            _jsonInsertReplicate.put("type", "ReplicateInsertObject");
+            ADD.network.communicateQueryLogSingleNode(_primary.getString("id"), _primary.getString("ip"), _jsonInsertReplicate.toString());
+            ADD.network.communicateQueryLogSingleNode(_secondary.getString("id"), _secondary.getString("ip"), _jsonInsertReplicate.toString());
 
             // tell all nodes about where the replicated data is stored
             JSONObject jsonToSend = new JSONObject();
