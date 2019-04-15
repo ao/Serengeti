@@ -147,39 +147,43 @@ public class Storage {
 
         try {
             if (!tableExists(db, table)) createTable(db, table);
-
             createTablePathIfNotExists(db, table);
 
             JSONObject _nodes = ADD.network.getPrimarySecondary();
+            String _node_primary_id = _nodes.getJSONObject("primary").getString("id");
+            String _node_primary_ip = _nodes.getJSONObject("primary").getString("id");
+            String _node_secondary_id = _nodes.getJSONObject("secondary").getString("id");
+            String _node_secondary_ip = _nodes.getJSONObject("secondary").getString("id");
+
             String row_id = UUID.randomUUID().toString();
 
             // store the data on `primary` and `secondary` nodes
-            JSONObject _jsonInsertReplicate = new JSONObject();
-            _jsonInsertReplicate.put("db", db);
-            _jsonInsertReplicate.put("table", table);
-            _jsonInsertReplicate.put("row_id", row_id);
-            _jsonInsertReplicate.put("json", json);
-            _jsonInsertReplicate.put("type", "ReplicateInsertObject");
-            ADD.network.communicateQueryLogSingleNode(_nodes.getJSONObject("primary").getString("id"), _nodes.getJSONObject("primary").getString("ip"), _jsonInsertReplicate.toString());
-            ADD.network.communicateQueryLogSingleNode(_nodes.getJSONObject("secondary").getString("id"), _nodes.getJSONObject("secondary").getString("ip"), _jsonInsertReplicate.toString());
+            String _jsonInsertReplicate = new JSONObject() {{
+                put("db", db);
+                put("table", table);
+                put("row_id", row_id);
+                put("json", json);
+                put("type", "ReplicateInsertObject");
+            }}.toString();
+            boolean success_primary_insert = ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonInsertReplicate);
+            boolean success_secondary_insert = ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonInsertReplicate);
 
             // tell all nodes about where the replicated data is stored
-            JSONObject jsonToSend = new JSONObject();
-            jsonToSend.put("type", "TableReplicaObject");
-            jsonToSend.put("db", db);
-            jsonToSend.put("table", table);
-            jsonToSend.put("row_id", row_id);
-            JSONObject __nodes = new JSONObject();
-                __nodes.put("primary", _nodes.getJSONObject("primary").getString("id"));
-                __nodes.put("secondary", _nodes.getJSONObject("secondary").getString("id"));
-            jsonToSend.put("json", __nodes.toString());
-            ADD.network.communicateQueryLogAllNodes(jsonToSend.toString());
-
+            ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
+                put("type", "TableReplicaObject");
+                put("db", db);
+                put("table", table);
+                put("row_id", row_id);
+                put("json", new JSONObject() {{
+                    put("primary", _node_primary_id);
+                    put("secondary", _node_secondary_id);
+                }}.toString());
+            }}.toString());
 
             sro.rowId = row_id;
             sro.success = true;
-            sro.primary = _nodes.getJSONObject("primary").getString("id");
-            sro.secondary = _nodes.getJSONObject("secondary").getString("id");
+            sro.primary = _node_primary_id;
+            sro.secondary = _node_secondary_id;
 
             return sro;
         } catch (Exception e) {
