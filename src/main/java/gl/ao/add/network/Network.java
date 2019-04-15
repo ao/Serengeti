@@ -247,6 +247,11 @@ public class Network {
                         }
 
                         requestNetworkMetas();
+                    } else {
+                        // No other nodes on network, let's just begin (and take over!)
+                        ADD.network.online = true;
+                        System.out.println("Startup: Completed and feeling lonely");
+                        ADD.server.serve();
                     }
                 }
             }
