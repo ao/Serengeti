@@ -169,7 +169,10 @@ public class Storage {
             jsonToSend.put("db", db);
             jsonToSend.put("table", table);
             jsonToSend.put("row_id", row_id);
-            jsonToSend.put("json", _nodes.toString());
+            JSONObject __nodes = new JSONObject();
+                __nodes.put("primary", _nodes.getJSONObject("primary").getString("id"));
+                __nodes.put("secondary", _nodes.getJSONObject("secondary").getString("id"));
+            jsonToSend.put("json", __nodes.toString());
             ADD.network.communicateQueryLogAllNodes(jsonToSend.toString());
 
 
