@@ -98,31 +98,52 @@ public class Storage {
             if (tableExists(db, table)) {
                 List<String> list = new ArrayList<>();
 
-                TableStorageObject tso = new TableStorageObject(db, table);
-                List jsonList = tso.select(col, val);
-                if (jsonList.size()==0) {
-                    return list;
-                } else if (jsonList.size()==1) {
-                    JSONObject _json = new JSONObject(jsonList.get(0).toString());
-                    if (_json!=null) {
-                        if (selectWhat.equals("*")) {
-                            list.add(_json.toString());
-                        } else {
-                            list.add(_json.getString(selectWhat));
-                        }
-                    }
-                } else {
-                    for (int i=0; i<jsonList.size(); i++) {
-                        JSONObject __json = new JSONObject(jsonList.get(i).toString());
-                        if (__json!=null) {
-                            if (selectWhat.equals("*")) {
-                                list.add(__json.toString());
-                            } else {
-                                list.add(__json.getString(selectWhat));
-                            }
+                JSONArray array = ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
+                    put("type", "SelectRespond");
+                    put("selectWhat", selectWhat);
+                    put("db", db);
+                    put("table", table);
+                    put("col", col);
+                    put("val", val);
+                }}.toString());
+
+                for (int i = 0; i < array.length(); i++) {
+                    String arr = array.getString(i);
+                    if (!arr.equals("") && !arr.equals("POST")) {
+                        System.out.println(">>>"+arr);
+                        JSONArray selectList = new JSONArray(arr);
+
+                        for (int j = 0; j < selectList.length(); j++) {
+                            list.add(selectList.get(j).toString());
                         }
                     }
                 }
+
+//                TableStorageObject tso = new TableStorageObject(db, table);
+//                List jsonList = tso.select(col, val);
+//                if (jsonList.size()==0) {
+//                    return list;
+//                } else if (jsonList.size()==1) {
+//                    JSONObject _json = new JSONObject(jsonList.get(0).toString());
+//                    if (_json!=null) {
+//                        if (selectWhat.equals("*")) {
+//                            list.add(_json.toString());
+//                        } else {
+//                            list.add(_json.getString(selectWhat));
+//                        }
+//                    }
+//                } else {
+//                    for (int i=0; i<jsonList.size(); i++) {
+//                        JSONObject __json = new JSONObject(jsonList.get(i).toString());
+//                        if (__json!=null) {
+//                            if (selectWhat.equals("*")) {
+//                                list.add(__json.toString());
+//                            } else {
+//                                list.add(__json.getString(selectWhat));
+//                            }
+//                        }
+//                    }
+//                }
 
                 return list;
             }
@@ -165,8 +186,8 @@ public class Storage {
                 put("json", json);
                 put("type", "ReplicateInsertObject");
             }}.toString();
-            boolean success_primary_insert = ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonInsertReplicate);
-            boolean success_secondary_insert = ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonInsertReplicate);
+            ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonInsertReplicate);
+            ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonInsertReplicate);
 
             // tell all nodes about where the replicated data is stored
             ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
@@ -241,8 +262,8 @@ public class Storage {
                         put("json", _json);
                         put("type", "ReplicateUpdateObject");
                     }}.toString();
-                    boolean success_primary_insert = ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonUpdateReplicate);
-                    boolean success_secondary_insert = ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonUpdateReplicate);
+                    ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonUpdateReplicate);
+                    ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonUpdateReplicate);
 
                     return true;
                 }
@@ -304,8 +325,8 @@ public class Storage {
                         put("json", _json);
                         put("type", "ReplicateDeleteObject");
                     }}.toString();
-                    boolean success_primary_insert = ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonDeleteReplicate);
-                    boolean success_secondary_insert = ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonDeleteReplicate);
+                    ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonDeleteReplicate);
+                    ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonDeleteReplicate);
 
                     // tell all nodes about where the replicated data is stored
                     ADD.network.communicateQueryLogAllNodes(new JSONObject() {{

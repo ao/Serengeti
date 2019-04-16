@@ -3,9 +3,12 @@ package gl.ao.add.query;
 import gl.ao.add.ADD;
 import gl.ao.add.schema.TableReplicaObject;
 import gl.ao.add.schema.TableStorageObject;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 
 /***
  * Send operations (queries) to the log once they have successfully run
@@ -92,9 +95,11 @@ public class QueryLog {
      * and now needs to perform it
      * @param jsonString
      */
-    public static void performReplicationAction(String jsonString) {
+    public static String performReplicationAction(String jsonString) {
         // First validate we have valid JSON
         JSONObject jsonObject;
+        String response = "";
+
         try {
             jsonObject = new JSONObject(jsonString);
             if (jsonObject.has("type")) {
@@ -179,6 +184,42 @@ public class QueryLog {
                         tso.update( jsonObject.getString("row_id") , __json2);
                         tso.saveToDisk();
                         break;
+                    case "SelectRespond":
+                        String col = jsonObject.getString("col");
+                        String val = jsonObject.getString("val");
+                        String selectWhat = jsonObject.getString("selectWhat");
+
+                        List<String> list = new ArrayList<>();
+
+                        tso = new TableStorageObject(db, table);
+                        List jsonList = tso.select(col, val);
+                        if (jsonList.size()==0) {
+//                            return list;
+                        } else if (jsonList.size()==1) {
+                            JSONObject ___json = new JSONObject(jsonList.get(0).toString());
+                            if (___json!=null) {
+                                if (selectWhat.equals("*")) {
+                                    list.add(___json.toString());
+                                } else {
+                                    list.add(___json.getString(selectWhat));
+                                }
+                            }
+                        } else {
+                            for (int i=0; i<jsonList.size(); i++) {
+                                JSONObject __json = new JSONObject(jsonList.get(i).toString());
+                                if (__json!=null) {
+                                    if (selectWhat.equals("*")) {
+                                        list.add(__json.toString());
+                                    } else {
+                                        list.add(__json.getString(selectWhat));
+                                    }
+                                }
+                            }
+                        }
+
+                        response = list.toString();
+
+                        break;
                 }
             } else {
                 System.out.println("Something might have gone wrong trying to performReplicationAction: [missing `type`] "+jsonString);
@@ -186,6 +227,8 @@ public class QueryLog {
         } catch (Exception e) {
             e.printStackTrace();
         }
+
+        return response;
 
     }
 

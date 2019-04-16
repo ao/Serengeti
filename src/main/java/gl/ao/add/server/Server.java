@@ -278,7 +278,7 @@ public class Server {
                     br.close();
                     isr.close();
 
-                    QueryLog.performReplicationAction(buf.toString());
+                    response = QueryLog.performReplicationAction(buf.toString());
                 }
 
                 t.sendResponseHeaders(200, response.length());
