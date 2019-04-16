@@ -59,6 +59,10 @@ public class TableStorageObject implements Serializable {
 
         return false;
     }
+    public boolean delete(String row_id) {
+        rows.remove(row_id);
+        return true;
+    }
     public boolean delete(String where_col, String where_val) {
         List<String> results = select(where_col, where_val);
         for (int i=0; i<results.size(); i++) {

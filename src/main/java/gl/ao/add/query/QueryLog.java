@@ -170,18 +170,19 @@ public class QueryLog {
                         break;
                     case "ReplicateDeleteObject":
                         tso = new TableStorageObject(db, table);
-                        JSONObject __json2 = tso.getJsonFromRowId( jsonObject.getString("row_id") );
-                        Iterator<String> keys2 = __json2.keys();
-
-                        while(keys2.hasNext()) {
-                            String key = keys2.next();
-                            JSONObject ___json2 = jsonObject.getJSONObject("json");
-
-                            if (key.equals( ___json2.getString("where_col") ) && __json2.get(key).equals( ___json2.getString("where_val") )) {
-                                __json2.remove( ___json2.getString("where_col") );
-                            }
-                        }
-                        tso.update( jsonObject.getString("row_id") , __json2);
+                        tso.delete( jsonObject.getString("row_id") );
+//                        JSONObject __json2 = tso.getJsonFromRowId( jsonObject.getString("row_id") );
+//                        Iterator<String> keys2 = __json2.keys();
+//
+//                        while(keys2.hasNext()) {
+//                            String key = keys2.next();
+//                            JSONObject ___json2 = jsonObject.getJSONObject("json");
+//
+//                            if (key.equals( ___json2.getString("where_col") ) && __json2.get(key).equals( ___json2.getString("where_val") )) {
+//                                __json2.remove( ___json2.getString("where_col") );
+//                            }
+//                        }
+//                        tso.update( jsonObject.getString("row_id") , __json2);
                         tso.saveToDisk();
                         break;
                     case "SelectRespond":
