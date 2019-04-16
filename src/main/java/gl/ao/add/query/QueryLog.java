@@ -50,42 +50,6 @@ public class QueryLog {
                 // {"type":"dropTable", "db":db, "table":table}
                 ADD.network.communicateQueryLogAllNodes(jsonString);
                 break;
-
-            /**
-             * Communicate to at least one other node in order to replicate data
-             */
-            case "insert":
-                // {"type":"insert", "db":db, "table":table, "json":json}
-                if (totalAvailableNodes>1) { //replicas available?
-                    JSONObject randomNode = ADD.network.getRandomAvailableNode();
-
-                    String originalRowId = jsonObject.getString("rowId");
-                    String originalPieceId = jsonObject.getString("pieceId");
-                    jsonObject.remove("rowId"); //make sure this is not sent to the replica
-                    jsonObject.remove("pieceId"); //make sure this is not sent to the replica
-
-                    String replicateToIP = randomNode.getString("ip");
-                    String replicateToID = randomNode.getString("id");
-                    String db = jsonObject.getString("db");
-                    String table = jsonObject.getString("table");
-
-                    JSONObject jsonStringTmp = jsonObject;
-                    jsonStringTmp.put("__replica", ADD.server.server_constants.id); //tell the copy about where the original data was inserted
-
-                    ADD.network.communicateQueryLogSingleNode(replicateToID, replicateToIP, jsonStringTmp.toString());
-//                    ADD.storage.updateReplicaByRowId(db, table, originalPieceId, originalRowId, replicateToID);
-                }
-
-                break;
-            case "update":
-                // {"type":"update", "db":db, "table":table, "update_key":update_key, "update_val":update_val, "where_col":where_col, "where_val":where_val}
-                break;
-            case "delete":
-                // {"type":"delete", "db":db, "table":table}
-                break;
-            case "createBlankShardPiece":
-                // {"type":"createBlankShardPiece", "db":db, "table":table}
-                break;
         }
     }
 
@@ -171,18 +135,6 @@ public class QueryLog {
                     case "ReplicateDeleteObject":
                         tso = new TableStorageObject(db, table);
                         tso.delete( jsonObject.getString("row_id") );
-//                        JSONObject __json2 = tso.getJsonFromRowId( jsonObject.getString("row_id") );
-//                        Iterator<String> keys2 = __json2.keys();
-//
-//                        while(keys2.hasNext()) {
-//                            String key = keys2.next();
-//                            JSONObject ___json2 = jsonObject.getJSONObject("json");
-//
-//                            if (key.equals( ___json2.getString("where_col") ) && __json2.get(key).equals( ___json2.getString("where_val") )) {
-//                                __json2.remove( ___json2.getString("where_col") );
-//                            }
-//                        }
-//                        tso.update( jsonObject.getString("row_id") , __json2);
                         tso.saveToDisk();
                         break;
                     case "SelectRespond":

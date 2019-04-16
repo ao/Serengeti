@@ -96,6 +96,8 @@ public class Network {
                                                     System.out.println("Startup: Creating missing table '"+table+"' for database '"+db+"'");
                                                     ADD.storage.createTable(db, table, true);
                                                     changesFound++;
+
+                                                    // TODO: Build a local replica file so that we can properly participate
                                                 }
                                             }
                                         }
