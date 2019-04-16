@@ -34,6 +34,14 @@ public class TableReplicaObject implements Serializable {
         return true;
     }
 
+    public JSONObject getRowReplica(String row_id) {
+        String row = row_replicas.get(row_id);
+        if (!row.isEmpty()) {
+            return new JSONObject(row);
+        }
+        return null;
+    }
+
     public TableReplicaObject loadExisting() {
         try {
             Path path = Paths.get(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.replica_filename);

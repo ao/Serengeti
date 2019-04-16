@@ -151,9 +151,9 @@ public class Storage {
 
             JSONObject _nodes = ADD.network.getPrimarySecondary();
             String _node_primary_id = _nodes.getJSONObject("primary").getString("id");
-            String _node_primary_ip = _nodes.getJSONObject("primary").getString("id");
+            String _node_primary_ip = _nodes.getJSONObject("primary").getString("ip");
             String _node_secondary_id = _nodes.getJSONObject("secondary").getString("id");
-            String _node_secondary_ip = _nodes.getJSONObject("secondary").getString("id");
+            String _node_secondary_ip = _nodes.getJSONObject("secondary").getString("ip");
 
             String row_id = UUID.randomUUID().toString();
 
@@ -212,12 +212,60 @@ public class Storage {
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
 
-                TableStorageObject tso = new TableStorageObject(db, table);
-                boolean updated = tso.update(update_key, update_val, where_col, where_val);
+//                TableStorageObject tso = new TableStorageObject(db, table);
+//                boolean updated = tso.update(update_key, update_val, where_col, where_val);
 
-                if (updated) tso.saveToDisk();
 
-                return updated;
+
+                List<String> selected = select(db, table, "*", where_col, where_val);
+                for (String _item: selected) {
+                    JSONObject __item = new JSONObject(_item);
+                    String _row_id = __item.getString("__uuid");
+
+
+                    TableReplicaObject tro = new TableReplicaObject(db, table);
+                    // get nodes where replicas are stored
+                    JSONObject _nodes = tro.getRowReplica(_row_id);
+
+                    String _node_primary_id = _nodes.getString("primary");
+                    String _node_primary_ip = ADD.network.getIPFromUUID(_node_primary_id);
+                    String _node_secondary_id = _nodes.getString("secondary");
+                    String _node_secondary_ip = ADD.network.getIPFromUUID(_node_secondary_id);
+
+                    JSONObject _json = new JSONObject() {{
+                        put("update_key", update_key);
+                        put("update_val", update_val);
+                        put("where_col", where_col);
+                        put("where_val", where_val);
+                    }};
+
+                    // update the data on `primary` and `secondary` nodes
+                    String _jsonUpdateReplicate = new JSONObject() {{
+                        put("db", db);
+                        put("table", table);
+                        put("row_id", _row_id);
+                        put("json", _json);
+                        put("type", "ReplicateUpdateObject");
+                    }}.toString();
+                    boolean success_primary_insert = ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonUpdateReplicate);
+                    boolean success_secondary_insert = ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonUpdateReplicate);
+
+
+//                    TableStorageObject tso = new TableStorageObject(db, table);
+//                    JSONObject json = tso.getJsonFromRowId(_row_id);
+//                    if (json.getString(where_col).equals(where_val)) {
+//                        json.remove(where_col);
+//                        json.put(update_key, update_val);
+//                    }
+
+                }
+
+
+
+
+//                if (updated) tso.saveToDisk();
+
+//                return updated;
             }
         } catch (Exception e) {
             e.printStackTrace();

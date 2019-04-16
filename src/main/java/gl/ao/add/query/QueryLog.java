@@ -5,6 +5,8 @@ import gl.ao.add.schema.TableReplicaObject;
 import gl.ao.add.schema.TableStorageObject;
 import org.json.JSONObject;
 
+import java.util.Iterator;
+
 /***
  * Send operations (queries) to the log once they have successfully run
  * This will keep track of everything that has changed and distribute the data over the network
@@ -128,9 +130,26 @@ public class QueryLog {
                         tro.saveToDisk();
                         break;
                     case "ReplicateInsertObject":
-                        TableStorageObject tso = new TableStorageObject(db, table);
-                        tso.insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
-                        tso.saveToDisk();
+                        TableStorageObject tso1 = new TableStorageObject(db, table);
+                        tso1.insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
+                        tso1.saveToDisk();
+                        break;
+                    case "ReplicateUpdateObject":
+                        TableStorageObject tso2 = new TableStorageObject(db, table);
+                        JSONObject __json = tso2.getJsonFromRowId( jsonObject.getString("row_id") );
+                        Iterator<String> keys = __json.keys();
+
+                        while(keys.hasNext()) {
+                            String key = keys.next();
+                            JSONObject ___json = jsonObject.getJSONObject("json");
+
+                            if (key.equals( ___json.getString("where_col") ) && __json.get(key).equals( ___json.getString("where_val") )) {
+                                __json.remove( ___json.getString("where_col") );
+                                __json.put( ___json.getString("update_key"), ___json.getString("update_val") );
+                            }
+                        }
+                        tso2.update( jsonObject.getString("row_id") , __json);
+                        tso2.saveToDisk();
                         break;
                 }
             } else {

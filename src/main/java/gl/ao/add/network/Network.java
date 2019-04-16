@@ -266,8 +266,8 @@ public class Network {
             for (String key : availableNodes.keySet()) {
                 JSONObject json = availableNodes.get(key);
 
-                if (!json.get("ip").toString().equals(myIP))
-                    communicateQueryLogSingleNode("", json.get("ip").toString(), jsonString);
+//                if (!json.get("ip").toString().equals(myIP))
+                communicateQueryLogSingleNode("", json.get("ip").toString(), jsonString);
 
             }
         }
@@ -397,6 +397,16 @@ public class Network {
                 }
             }).start();
         }
+    }
+
+
+    public String getIPFromUUID(String uuid) {
+        try {
+            return availableNodes.get(uuid).getString("ip");
+        } catch (NullPointerException npe) {
+            System.out.println("Network is not ready to handle this request..");
+        }
+        return "";
     }
 
 }
