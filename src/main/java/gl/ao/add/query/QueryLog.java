@@ -103,6 +103,9 @@ public class QueryLog {
                 String db = jsonObject.has("db") ? jsonObject.getString("db") : null;
                 String table = jsonObject.has("table") ? jsonObject.getString("table") : null;
 
+                TableReplicaObject tro;
+                TableStorageObject tso;
+
                 switch (type) {
                     case "createDatabase":
                         ADD.storage.createDatabase(db, true);
@@ -124,8 +127,8 @@ public class QueryLog {
                         ADD.storage.deleteEverything();
                         break;
 
-                    case "TableReplicaObject":
-                        TableReplicaObject tro = new TableReplicaObject(db, table);
+                    case "TableReplicaObjectInsert":
+                        tro = new TableReplicaObject(db, table);
                         JSONObject _json = new JSONObject( jsonObject.getString("json") );
                         tro.insert(jsonObject.getString("row_id"), new JSONObject() {{
                             put("primary", _json.getString("primary") );
@@ -133,27 +136,48 @@ public class QueryLog {
                         }});
                         tro.saveToDisk();
                         break;
+                    case "TableReplicaObjectDelete":
+                        tro = new TableReplicaObject(db, table);
+                        tro.delete(jsonObject.getString("row_id"));
+                        tro.saveToDisk();
+                        break;
                     case "ReplicateInsertObject":
-                        TableStorageObject tso1 = new TableStorageObject(db, table);
-                        tso1.insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
-                        tso1.saveToDisk();
+                        tso = new TableStorageObject(db, table);
+                        tso.insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
+                        tso.saveToDisk();
                         break;
                     case "ReplicateUpdateObject":
-                        TableStorageObject tso2 = new TableStorageObject(db, table);
-                        JSONObject __json = tso2.getJsonFromRowId( jsonObject.getString("row_id") );
-                        Iterator<String> keys = __json.keys();
+                        tso = new TableStorageObject(db, table);
+                        JSONObject __json1 = tso.getJsonFromRowId( jsonObject.getString("row_id") );
+                        Iterator<String> keys1 = __json1.keys();
 
-                        while(keys.hasNext()) {
-                            String key = keys.next();
-                            JSONObject ___json = jsonObject.getJSONObject("json");
+                        while(keys1.hasNext()) {
+                            String key = keys1.next();
+                            JSONObject ___json1 = jsonObject.getJSONObject("json");
 
-                            if (key.equals( ___json.getString("where_col") ) && __json.get(key).equals( ___json.getString("where_val") )) {
-                                __json.remove( ___json.getString("where_col") );
-                                __json.put( ___json.getString("update_key"), ___json.getString("update_val") );
+                            if (key.equals( ___json1.getString("where_col") ) && __json1.get(key).equals( ___json1.getString("where_val") )) {
+                                __json1.remove( ___json1.getString("where_col") );
+                                __json1.put( ___json1.getString("update_key"), ___json1.getString("update_val") );
                             }
                         }
-                        tso2.update( jsonObject.getString("row_id") , __json);
-                        tso2.saveToDisk();
+                        tso.update( jsonObject.getString("row_id") , __json1);
+                        tso.saveToDisk();
+                        break;
+                    case "ReplicateDeleteObject":
+                        tso = new TableStorageObject(db, table);
+                        JSONObject __json2 = tso.getJsonFromRowId( jsonObject.getString("row_id") );
+                        Iterator<String> keys2 = __json2.keys();
+
+                        while(keys2.hasNext()) {
+                            String key = keys2.next();
+                            JSONObject ___json2 = jsonObject.getJSONObject("json");
+
+                            if (key.equals( ___json2.getString("where_col") ) && __json2.get(key).equals( ___json2.getString("where_val") )) {
+                                __json2.remove( ___json2.getString("where_col") );
+                            }
+                        }
+                        tso.update( jsonObject.getString("row_id") , __json2);
+                        tso.saveToDisk();
                         break;
                 }
             } else {
