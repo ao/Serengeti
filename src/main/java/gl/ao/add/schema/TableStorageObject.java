@@ -28,6 +28,10 @@ public class TableStorageObject implements Serializable {
         this.rows = self.rows;
     }
 
+    public JSONObject getJsonFromRowId(String row_id) {
+        return new JSONObject( rows.get(row_id) );
+    }
+
     public String insert(JSONObject json) {
         String uuid = UUID.randomUUID().toString();
         rows.put(uuid, json.toString());
@@ -36,6 +40,10 @@ public class TableStorageObject implements Serializable {
     public String insert(String row_id, JSONObject json) {
         rows.put(row_id, json.toString());
         return row_id;
+    }
+    public boolean update(String row_id, JSONObject json) {
+        rows.replace(row_id, json.toString());
+        return true;
     }
     public boolean update(String update_key, String update_val, String where_col, String where_val) {
         List<String> results = select(where_col, where_val);
