@@ -170,7 +170,7 @@ public class Storage {
 
             // tell all nodes about where the replicated data is stored
             ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
-                put("type", "TableReplicaObject");
+                put("type", "TableReplicaObjectInsert");
                 put("db", db);
                 put("table", table);
                 put("row_id", row_id);
@@ -212,16 +212,10 @@ public class Storage {
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
 
-//                TableStorageObject tso = new TableStorageObject(db, table);
-//                boolean updated = tso.update(update_key, update_val, where_col, where_val);
-
-
-
                 List<String> selected = select(db, table, "*", where_col, where_val);
                 for (String _item: selected) {
                     JSONObject __item = new JSONObject(_item);
                     String _row_id = __item.getString("__uuid");
-
 
                     TableReplicaObject tro = new TableReplicaObject(db, table);
                     // get nodes where replicas are stored
@@ -250,22 +244,8 @@ public class Storage {
                     boolean success_primary_insert = ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonUpdateReplicate);
                     boolean success_secondary_insert = ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonUpdateReplicate);
 
-
-//                    TableStorageObject tso = new TableStorageObject(db, table);
-//                    JSONObject json = tso.getJsonFromRowId(_row_id);
-//                    if (json.getString(where_col).equals(where_val)) {
-//                        json.remove(where_col);
-//                        json.put(update_key, update_val);
-//                    }
-
+                    return true;
                 }
-
-
-
-
-//                if (updated) tso.saveToDisk();
-
-//                return updated;
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -290,15 +270,54 @@ public class Storage {
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
 
-                TableStorageObject tso = new TableStorageObject(db, table);
-                boolean deleted = tso.delete(where_col, where_val);
+//                TableStorageObject tso = new TableStorageObject(db, table);
+//                boolean deleted = tso.delete(where_col, where_val);
+//
+//                if (deleted) tso.saveToDisk();
+//
+//                return deleted;
 
-                if (deleted) tso.saveToDisk();
+                List<String> selected = select(db, table, "*", where_col, where_val);
+                for (String _item: selected) {
+                    JSONObject __item = new JSONObject(_item);
+                    String _row_id = __item.getString("__uuid");
 
-                return deleted;
+                    TableReplicaObject tro = new TableReplicaObject(db, table);
+                    // get nodes where replicas are stored
+                    JSONObject _nodes = tro.getRowReplica(_row_id);
 
-//                if (!isReplicationAction)
-//                    QueryLog.localAppend(new JSONObject().put("type", "delete").put("db", db).put("table", table).toString());
+                    String _node_primary_id = _nodes.getString("primary");
+                    String _node_primary_ip = ADD.network.getIPFromUUID(_node_primary_id);
+                    String _node_secondary_id = _nodes.getString("secondary");
+                    String _node_secondary_ip = ADD.network.getIPFromUUID(_node_secondary_id);
+
+                    JSONObject _json = new JSONObject() {{
+                        put("where_col", where_col);
+                        put("where_val", where_val);
+                    }};
+
+                    // update the data on `primary` and `secondary` nodes
+                    String _jsonDeleteReplicate = new JSONObject() {{
+                        put("db", db);
+                        put("table", table);
+                        put("row_id", _row_id);
+                        put("json", _json);
+                        put("type", "ReplicateDeleteObject");
+                    }}.toString();
+                    boolean success_primary_insert = ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonDeleteReplicate);
+                    boolean success_secondary_insert = ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonDeleteReplicate);
+
+                    // tell all nodes about where the replicated data is stored
+                    ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
+                        put("type", "TableReplicaObjectDelete");
+                        put("db", db);
+                        put("table", table);
+                        put("row_id", _row_id);
+                    }}.toString());
+
+                    return true;
+                }
+
 
             }
         } catch (Exception e) {

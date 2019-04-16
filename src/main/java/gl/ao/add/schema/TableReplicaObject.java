@@ -33,6 +33,10 @@ public class TableReplicaObject implements Serializable {
         row_replicas.put(row_id, json.toString());
         return true;
     }
+    public boolean delete(String row_id) {
+        row_replicas.remove(row_id);
+        return true;
+    }
 
     public JSONObject getRowReplica(String row_id) {
         String row = row_replicas.get(row_id);
