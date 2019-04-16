@@ -120,6 +120,10 @@ public class QueryLog {
                         ADD.storage.insert(db, table, jsonObject, true);
                         break;
 
+                    case "DeleteEverything":
+                        ADD.storage.deleteEverything();
+                        break;
+
                     case "TableReplicaObject":
                         TableReplicaObject tro = new TableReplicaObject(db, table);
                         JSONObject _json = new JSONObject( jsonObject.getString("json") );

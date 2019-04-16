@@ -60,7 +60,14 @@ public class QueryEngine {
             query = "insert into db1.users (col1test, col2test) values('"+uuid1test+"', '"+uuid2test+"')";
         }
 
-        if (query.equals("show databases")) {
+        if (query.equals("delete everything")) {
+            ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
+                put("type", "DeleteEverything");
+            }}.toString());
+            qro.executed = true;
+        }
+
+        else if (query.equals("show databases")) {
         // `show databases`
 
             qro.list = ADD.storage.getDatabases();
