@@ -269,13 +269,6 @@ public class Storage {
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
 
-//                TableStorageObject tso = new TableStorageObject(db, table);
-//                boolean deleted = tso.delete(where_col, where_val);
-//
-//                if (deleted) tso.saveToDisk();
-//
-//                return deleted;
-
                 List<String> selected = select(db, table, "*", where_col, where_val);
                 for (String _item: selected) {
                     JSONObject __item = new JSONObject(_item);
