@@ -261,19 +261,22 @@ public class Network {
         }
     }
 
-    public void communicateQueryLogAllNodes(String jsonString) {
+    public JSONArray communicateQueryLogAllNodes(String jsonString) {
+        JSONArray response = new JSONArray();
         if (availableNodes.size()>0) {
             for (String key : availableNodes.keySet()) {
                 JSONObject json = availableNodes.get(key);
 
 //                if (!json.get("ip").toString().equals(myIP))
-                communicateQueryLogSingleNode("", json.get("ip").toString(), jsonString);
+                response.put( communicateQueryLogSingleNode("", json.get("ip").toString(), jsonString) );
 
             }
         }
+        return response;
     }
-    public boolean communicateQueryLogSingleNode(String id, String ip, String jsonString) {
+    public String communicateQueryLogSingleNode(String id, String ip, String jsonString) {
 //        if (!ip.equals(myIP)) {
+        String response = "";
             try {
                 System.out.println("Communicating to "+ip+": "+jsonString);
                 URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
@@ -282,12 +285,19 @@ public class Network {
                 con2.setDoOutput(true);
                 con2.setConnectTimeout(networkTimeout);
                 con2.getOutputStream().write(jsonString.getBytes("UTF-8"));
-                con2.getInputStream();
-                return true;
+
+                BufferedReader br = new BufferedReader(new InputStreamReader(con2.getInputStream()));
+                for (String line = br.readLine(); line != null; line = br.readLine()) {
+                    response += line;
+                }
+                System.out.println(response);
+                return response;
             } catch (ConnectException ce) {
-                return false;
+                ce.printStackTrace();
+                return "";
             } catch (Exception e) {
-                return false;
+                e.printStackTrace();
+                return "";
             }
 //        }
     }
