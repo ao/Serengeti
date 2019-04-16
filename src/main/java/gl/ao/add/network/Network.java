@@ -263,43 +263,42 @@ public class Network {
 
     public JSONArray communicateQueryLogAllNodes(String jsonString) {
         JSONArray response = new JSONArray();
-        if (availableNodes.size()>0) {
-            for (String key : availableNodes.keySet()) {
-                JSONObject json = availableNodes.get(key);
-
-//                if (!json.get("ip").toString().equals(myIP))
-                response.put( communicateQueryLogSingleNode("", json.get("ip").toString(), jsonString) );
-
+        try {
+            if (availableNodes.size() > 0) {
+                for (String key : availableNodes.keySet()) {
+                    JSONObject json = availableNodes.get(key);
+                    response.put(communicateQueryLogSingleNode("", json.get("ip").toString(), jsonString));
+                }
             }
+        } catch (ConcurrentModificationException cme) {
+            cme.printStackTrace();
         }
         return response;
     }
     public String communicateQueryLogSingleNode(String id, String ip, String jsonString) {
-//        if (!ip.equals(myIP)) {
         String response = "";
-            try {
-                System.out.println("Communicating to "+ip+": "+jsonString);
-                URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
-                HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
-                con2.setRequestMethod("POST");
-                con2.setDoOutput(true);
-                con2.setConnectTimeout(networkTimeout);
-                con2.getOutputStream().write(jsonString.getBytes("UTF-8"));
+        try {
+            System.out.println("Communicating to "+ip+": "+jsonString);
+            URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
+            HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
+            con2.setRequestMethod("POST");
+            con2.setDoOutput(true);
+            con2.setConnectTimeout(networkTimeout);
+            con2.getOutputStream().write(jsonString.getBytes("UTF-8"));
 
-                BufferedReader br = new BufferedReader(new InputStreamReader(con2.getInputStream()));
-                for (String line = br.readLine(); line != null; line = br.readLine()) {
-                    response += line;
-                }
-                System.out.println(response);
-                return response;
-            } catch (ConnectException ce) {
-                ce.printStackTrace();
-                return "";
-            } catch (Exception e) {
-                e.printStackTrace();
-                return "";
+            BufferedReader br = new BufferedReader(new InputStreamReader(con2.getInputStream()));
+            for (String line = br.readLine(); line != null; line = br.readLine()) {
+                response += line;
             }
-//        }
+            System.out.println(response);
+            return response;
+        } catch (ConnectException ce) {
+            ce.printStackTrace();
+            return "";
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "";
+        }
     }
 
     public JSONObject getSelfNode() {

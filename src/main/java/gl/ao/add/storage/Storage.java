@@ -97,6 +97,7 @@ public class Storage {
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
                 List<String> list = new ArrayList<>();
+                Set uuids = new HashSet();
 
                 JSONArray array = ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
                     put("type", "SelectRespond");
@@ -110,40 +111,17 @@ public class Storage {
                 for (int i = 0; i < array.length(); i++) {
                     String arr = array.getString(i);
                     if (!arr.equals("") && !arr.equals("POST")) {
-                        System.out.println(">>>"+arr);
                         JSONArray selectList = new JSONArray(arr);
 
                         for (int j = 0; j < selectList.length(); j++) {
-                            list.add(selectList.get(j).toString());
+                            JSONObject row = (JSONObject) selectList.get(j);
+                            if ( !uuids.contains( row.getString("__uuid") ) ) {
+                                uuids.add( row.getString("__uuid") ); // make sure it's always unique
+                                list.add( row.toString() );
+                            }
                         }
                     }
                 }
-
-//                TableStorageObject tso = new TableStorageObject(db, table);
-//                List jsonList = tso.select(col, val);
-//                if (jsonList.size()==0) {
-//                    return list;
-//                } else if (jsonList.size()==1) {
-//                    JSONObject _json = new JSONObject(jsonList.get(0).toString());
-//                    if (_json!=null) {
-//                        if (selectWhat.equals("*")) {
-//                            list.add(_json.toString());
-//                        } else {
-//                            list.add(_json.getString(selectWhat));
-//                        }
-//                    }
-//                } else {
-//                    for (int i=0; i<jsonList.size(); i++) {
-//                        JSONObject __json = new JSONObject(jsonList.get(i).toString());
-//                        if (__json!=null) {
-//                            if (selectWhat.equals("*")) {
-//                                list.add(__json.toString());
-//                            } else {
-//                                list.add(__json.getString(selectWhat));
-//                            }
-//                        }
-//                    }
-//                }
 
                 return list;
             }
