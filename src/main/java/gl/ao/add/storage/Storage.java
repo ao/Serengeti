@@ -565,4 +565,16 @@ public class Storage {
         return false;
     }
 
+    /***
+     * Delete all data objects in one fell swoop
+     */
+    public void deleteEverything() {
+        List<String> dbs = getDatabases();
+        for (String db: dbs) {
+            try {
+                dropDatabase(db);
+            } catch (Exception e) {}
+        }
+    }
+
 }
