@@ -1,6 +1,5 @@
 package gl.ao.add;
 
-import gl.ao.add.index.Indexer;
 import gl.ao.add.network.Network;
 import gl.ao.add.server.Server;
 import gl.ao.add.storage.Storage;
@@ -15,7 +14,6 @@ public class ADD {
     public static Server server = new Server();
     public static Date currentDate = new Date();
     public static Network network = new Network();
-    public static Indexer indexer = new Indexer();
     public Interactive interactive = new Interactive();
 
     public static long startTime;
