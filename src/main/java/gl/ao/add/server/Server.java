@@ -59,15 +59,13 @@ public class Server {
         try {
 
             final Executor multi = Executors.newFixedThreadPool(10);
-            final HttpServer server = HttpServer.create(new InetSocketAddress(Globals.port_default), 5);
+            final HttpServer server = HttpServer.create(
+                            new InetSocketAddress(Globals.port_default), 5);
             server.createContext("/", new RootHandler());
-            server.createContext("/interactive", new InteractiveHandler());
             server.createContext("/dashboard", new DashboardHandler());
+            server.createContext("/interactive", new InteractiveHandler());
             server.createContext("/meta", new MetaHandler());
-            server.createContext("/get", new GenericGetHandler());
             server.createContext("/post", new GenericPostHandler());
-            server.createContext("/put", new GenericPutHandler());
-            server.createContext("/delete", new GenericDeleteHandler());
             server.setExecutor(multi);
             server.start();
         } catch (Exception e) {
@@ -220,21 +218,6 @@ public class Server {
         }
     }
 
-    static class GenericGetHandler implements HttpHandler {
-        public void handle(HttpExchange t) throws IOException {
-            String expected = "GET";
-            if (t.getRequestMethod().equals(expected)) {
-                String response = "GET";
-                t.sendResponseHeaders(200, response.length());
-                OutputStream os = t.getResponseBody();
-                os.write(response.getBytes());
-                os.close();
-            } else {
-                Server.GenericMethodHandlerFailure(expected, 400, t);
-            }
-        }
-    }
-
     static class GenericPostHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
             String expected = "POST";
@@ -278,34 +261,6 @@ public class Server {
                     response = QueryLog.performReplicationAction(buf.toString());
                 }
 
-                t.sendResponseHeaders(200, response.length());
-                OutputStream os = t.getResponseBody();
-                os.write(response.getBytes());
-                os.close();
-            } else {
-                Server.GenericMethodHandlerFailure(expected, 400, t);
-            }
-        }
-    }
-    static class GenericPutHandler implements HttpHandler {
-        public void handle(HttpExchange t) throws IOException {
-            String expected = "PUT";
-            if (t.getRequestMethod().equals(expected)) {
-                String response = "PUT";
-                t.sendResponseHeaders(200, response.length());
-                OutputStream os = t.getResponseBody();
-                os.write(response.getBytes());
-                os.close();
-            } else {
-                Server.GenericMethodHandlerFailure(expected, 400, t);
-            }
-        }
-    }
-    static class GenericDeleteHandler implements HttpHandler {
-        public void handle(HttpExchange t) throws IOException {
-            String expected = "DELETE";
-            if (t.getRequestMethod().equals(expected)) {
-                String response = "DELETE";
                 t.sendResponseHeaders(200, response.length());
                 OutputStream os = t.getResponseBody();
                 os.write(response.getBytes());
