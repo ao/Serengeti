@@ -13,8 +13,8 @@ import java.util.*;
 
 public class TableStorageObject implements Serializable {
 
-    String databaseName = "";
-    String tableName = "";
+    private String databaseName = "";
+    private String tableName = "";
 
     static final long serialVersionUID = 1L;
 
