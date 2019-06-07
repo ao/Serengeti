@@ -102,15 +102,15 @@ public class QueryLog {
                             put("primary", _json.getString("primary") );
                             put("secondary", _json.getString("secondary") );
                         }});
-                        ADD.storage.tableReplicaObjects.get(db+"#"+table).saveToDisk();
+//                        ADD.storage.tableReplicaObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "TableReplicaObjectDelete":
                         ADD.storage.tableReplicaObjects.get(db+"#"+table).delete(jsonObject.getString("row_id"));
-                        ADD.storage.tableReplicaObjects.get(db+"#"+table).saveToDisk();
+//                        ADD.storage.tableReplicaObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateInsertObject":
                         ADD.storage.tableStorageObjects.get(db+"#"+table).insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
-                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
+//                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateUpdateObject":
                         JSONObject __json1 = ADD.storage.tableStorageObjects.get(db+"#"+table).getJsonFromRowId( jsonObject.getString("row_id") );
@@ -126,11 +126,11 @@ public class QueryLog {
                             }
                         }
                         ADD.storage.tableStorageObjects.get(db+"#"+table).update( jsonObject.getString("row_id") , __json1);
-                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
+//                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateDeleteObject":
                         ADD.storage.tableStorageObjects.get(db+"#"+table).delete( jsonObject.getString("row_id") );
-                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
+//                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "SelectRespond":
                         String col = jsonObject.getString("col");
