@@ -27,7 +27,7 @@ public class Network {
     public static boolean online = false;
 
 
-    public void initiate() {
+    public void init() {
         try {
             myIP = Globals.getHost4Address();
             myINA = InetAddress.getByName(myIP);
@@ -249,7 +249,7 @@ public class Network {
                         }
 
                         requestNetworkMetas();
-                    } else {
+                    } else if (ADD.network.online==false) {
                         // No other nodes on network, let's just begin (and take over!)
                         ADD.network.hasPerformedNetworkSync = true; //we haven't actually done this, but let's say we did anyway to prevent the server from starting again..
                         ADD.network.online = true;
@@ -283,7 +283,7 @@ public class Network {
 
         String response = "";
         try {
-            System.out.println("Communicating to " + ip + ": " + jsonString);
+//            System.out.println("Communicating to " + ip + ": " + jsonString);
             URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
             HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
             con2.setRequestMethod("POST");
@@ -295,10 +295,13 @@ public class Network {
             for (String line = br.readLine(); line != null; line = br.readLine()) {
                 response += line;
             }
-            System.out.println(response);
+//            System.out.println(response);
             return response;
         } catch (SocketException se) {
-            System.out.println("Socket exception: "+se.getMessage());
+            //System.out.println("Socket Exception (communicateQueryLogSingleNode): " + se.getMessage());
+            return "";
+        } catch (IOException ioe) {
+            System.out.println("IOException: " + ioe.getMessage());
             return "";
         } catch (Exception e) {
             e.printStackTrace();
