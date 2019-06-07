@@ -6,6 +6,7 @@ import org.json.JSONObject;
 import java.io.FileOutputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.io.StreamCorruptedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -51,6 +52,8 @@ public class TableReplicaObject implements Serializable {
             Path path = Paths.get(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.replica_filename);
             TableReplicaObject tableMeta = (TableReplicaObject) Globals.convertFromBytes(Files.readAllBytes(path));
             return tableMeta;
+        } catch (StreamCorruptedException sce) {
+            System.out.println("Stream Corrupted Exception (TableReplicaObject): "+sce.getMessage()+" - Could not 'loadExisting'");
         } catch (Exception e) {
             e.printStackTrace();
         }
