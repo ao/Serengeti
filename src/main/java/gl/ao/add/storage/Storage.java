@@ -18,17 +18,24 @@ import java.util.*;
 
 public class Storage {
 
-    Map<String, DatabaseObject> databases = new HashMap<>();
+    public static Map<String, DatabaseObject> databases = new HashMap<>();
+    public static Map<String, TableStorageObject> tableStorageObjects = new HashMap<>();
+    public static Map<String, TableReplicaObject> tableReplicaObjects = new HashMap<>();
 
     public Storage() {
         loadMetaDatabasesToMemory();
+        loadAllStorageObjectsToMemory();
+        loadAllReplicaObjectsToMemory();
     }
 
     /***
      * Load Meta Databases to Memory
      */
     public void loadMetaDatabasesToMemory() {
-        List<String> dbs = getDatabases();
+        List<String> dbs = getDatabases(true);
+
+        // clear the in-memory list of databases
+        databases = new HashMap<>();
 
         for (int i=0; i<dbs.size(); i++) {
             String databaseName = dbs.get(i);
@@ -39,10 +46,50 @@ public class Storage {
     }
 
     /***
-     * Get a List of existing Databases
+     * Load All Storage Objects to Memory
+     * Requires the `databases` variable to be populated
+     */
+    public void loadAllStorageObjectsToMemory() {
+        for (String key: databases.keySet()) {
+            String dbName = databases.get(key).name;
+            List tables = getTables(dbName);
+            for (Object table: tables) {
+                String tableName = table.toString();
+                TableStorageObject tso = new TableStorageObject(dbName, tableName);
+                tableStorageObjects.put(dbName+"#"+tableName, tso);
+            }
+        }
+    }
+    /***
+     * Load All Replica Objects to Memory
+     * Requires the `databases` variable to be populated
+     */
+    public void loadAllReplicaObjectsToMemory() {
+        for (String key: databases.keySet()) {
+            String dbName = databases.get(key).name;
+            List tables = getTables(dbName);
+            for (Object table: tables) {
+                String tableName = table.toString();
+                TableReplicaObject tro = new TableReplicaObject(dbName, tableName);
+                tableReplicaObjects.put(dbName+"#"+tableName, tro);
+            }
+        }
+    }
+
+    /***
+     * Get a List of existing Databases (use in-memory)
      * @return List
      */
     public List getDatabases() {
+        return getDatabases(false);
+    }
+
+    /***
+     * Get Databases
+     * @param getFromFileSystem
+     * @return
+     */
+    public List getDatabases(boolean getFromFileSystem) {
         File dir = new File(Globals.data_path);
         File[] files = dir.listFiles(new FilenameFilter() {
             @Override
@@ -93,8 +140,11 @@ public class Storage {
      */
     public List<String> select(String db, String table, String selectWhat, String col, String val) {
         try {
-            Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+
+//            Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
+//            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+            DatabaseObject dbo = databases.get(db);
+
             if (tableExists(db, table)) {
                 List<String> list = new ArrayList<>();
                 Set uuids = new HashSet();
@@ -207,8 +257,6 @@ public class Storage {
     }
     public boolean update(String db, String table, String update_key, String update_val, String where_col, String where_val, boolean isReplicationAction) {
         try {
-            Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             if (tableExists(db, table)) {
 
                 List<String> selected = select(db, table, "*", where_col, where_val);
@@ -265,8 +313,7 @@ public class Storage {
     }
     public boolean delete(String db, String table, String where_col, String where_val, boolean isReplicationAction) {
         try {
-            Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+
             if (tableExists(db, table)) {
 
                 List<String> selected = select(db, table, "*", where_col, where_val);
@@ -400,7 +447,8 @@ public class Storage {
     public boolean createTable(String db, String table, boolean isReplicationAction) {
         try {
             Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+//            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+            DatabaseObject dbo = databases.get(db);
 
             ADD.storage.createTablePathIfNotExists(db, table);
 
@@ -431,8 +479,9 @@ public class Storage {
      * @return boolean
      */
     public boolean tableExists(String db, String table) {
-        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+//        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
+//        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+        DatabaseObject dbo = databases.get(db);
         if (dbo.tables != null && dbo.tables.size()>0) {
             return dbo.tables.contains(table);
         }
@@ -450,7 +499,8 @@ public class Storage {
     }
     public boolean dropTable(String db, String table, boolean isReplicationAction) {
         Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+//        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+        DatabaseObject dbo = databases.get(db);
 
         List<String> removeMe = new LinkedList<>();
 
@@ -493,8 +543,9 @@ public class Storage {
      * @return List
      */
     public List getTables(String db) {
-        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+//        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
+//        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+        DatabaseObject dbo = databases.get(db);
         if (dbo.tables == null) return null;
         else if (dbo.tables.size()>0) return dbo.tables;
         else return new ArrayList();

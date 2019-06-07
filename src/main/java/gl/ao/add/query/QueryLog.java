@@ -97,27 +97,23 @@ public class QueryLog {
                         break;
 
                     case "TableReplicaObjectInsert":
-                        tro = new TableReplicaObject(db, table);
                         JSONObject _json = new JSONObject( jsonObject.getString("json") );
-                        tro.insert(jsonObject.getString("row_id"), new JSONObject() {{
+                        ADD.storage.tableReplicaObjects.get(db+"#"+table).insert(jsonObject.getString("row_id"), new JSONObject() {{
                             put("primary", _json.getString("primary") );
                             put("secondary", _json.getString("secondary") );
                         }});
-                        tro.saveToDisk();
+                        ADD.storage.tableReplicaObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "TableReplicaObjectDelete":
-                        tro = new TableReplicaObject(db, table);
-                        tro.delete(jsonObject.getString("row_id"));
-                        tro.saveToDisk();
+                        ADD.storage.tableReplicaObjects.get(db+"#"+table).delete(jsonObject.getString("row_id"));
+                        ADD.storage.tableReplicaObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateInsertObject":
-                        tso = new TableStorageObject(db, table);
-                        tso.insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
-                        tso.saveToDisk();
+                        ADD.storage.tableStorageObjects.get(db+"#"+table).insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
+                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateUpdateObject":
-                        tso = new TableStorageObject(db, table);
-                        JSONObject __json1 = tso.getJsonFromRowId( jsonObject.getString("row_id") );
+                        JSONObject __json1 = ADD.storage.tableStorageObjects.get(db+"#"+table).getJsonFromRowId( jsonObject.getString("row_id") );
                         Iterator<String> keys1 = __json1.keys();
 
                         while(keys1.hasNext()) {
@@ -129,13 +125,12 @@ public class QueryLog {
                                 __json1.put( ___json1.getString("update_key"), ___json1.getString("update_val") );
                             }
                         }
-                        tso.update( jsonObject.getString("row_id") , __json1);
-                        tso.saveToDisk();
+                        ADD.storage.tableStorageObjects.get(db+"#"+table).update( jsonObject.getString("row_id") , __json1);
+                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateDeleteObject":
-                        tso = new TableStorageObject(db, table);
-                        tso.delete( jsonObject.getString("row_id") );
-                        tso.saveToDisk();
+                        ADD.storage.tableStorageObjects.get(db+"#"+table).delete( jsonObject.getString("row_id") );
+                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "SelectRespond":
                         String col = jsonObject.getString("col");
@@ -144,10 +139,9 @@ public class QueryLog {
 
                         List<String> list = new ArrayList<>();
 
-                        tso = new TableStorageObject(db, table);
-                        List jsonList = tso.select(col, val);
+                        List jsonList = ADD.storage.tableStorageObjects.get(db+"#"+table).select(col, val);
                         if (jsonList.size()==0) {
-//                            return list;
+                            // return list;
                         } else if (jsonList.size()==1) {
                             JSONObject ___json = new JSONObject(jsonList.get(0).toString());
                             if (___json!=null) {
