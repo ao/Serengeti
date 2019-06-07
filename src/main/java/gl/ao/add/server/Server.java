@@ -61,7 +61,7 @@ public class Server {
             final Executor fixedThreadPool = Executors.newFixedThreadPool(10);
             final Executor cachedThreadPool = Executors.newCachedThreadPool();
             final HttpServer server = HttpServer.create(
-                            new InetSocketAddress(Globals.port_default), 5);
+                    new InetSocketAddress(Globals.port_default), 5);
             server.createContext("/", new RootHandler());
             server.createContext("/dashboard", new DashboardHandler());
             server.createContext("/interactive", new InteractiveHandler());
@@ -69,6 +69,9 @@ public class Server {
             server.createContext("/post", new GenericPostHandler());
             server.setExecutor(cachedThreadPool);
             server.start();
+        } catch (BindException be) {
+            System.out.println("Bind Exception: "+be.getMessage());
+            System.exit(-1);
         } catch (Exception e) {
             e.printStackTrace();
         }
