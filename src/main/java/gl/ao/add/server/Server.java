@@ -58,7 +58,8 @@ public class Server {
     public void serve() {
         try {
 
-            final Executor multi = Executors.newFixedThreadPool(10);
+            final Executor fixedThreadPool = Executors.newFixedThreadPool(10);
+            final Executor cachedThreadPool = Executors.newCachedThreadPool();
             final HttpServer server = HttpServer.create(
                             new InetSocketAddress(Globals.port_default), 5);
             server.createContext("/", new RootHandler());
@@ -66,7 +67,7 @@ public class Server {
             server.createContext("/interactive", new InteractiveHandler());
             server.createContext("/meta", new MetaHandler());
             server.createContext("/post", new GenericPostHandler());
-            server.setExecutor(multi);
+            server.setExecutor(cachedThreadPool);
             server.start();
         } catch (Exception e) {
             e.printStackTrace();
