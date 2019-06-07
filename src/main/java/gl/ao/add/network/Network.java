@@ -278,6 +278,9 @@ public class Network {
         return response;
     }
     public String communicateQueryLogSingleNode(String id, String ip, String jsonString) {
+        // sometimes we don't have a secondary node to send data to..
+        if (id.equals("") || ip.equals("")) return "";
+
         String response = "";
         try {
             System.out.println("Communicating to "+ip+": "+jsonString);
@@ -314,9 +317,13 @@ public class Network {
         JSONObject json = new JSONObject();
 
         JSONArray nodes = getRandomAvailableNodes(2);
-        if (nodes.length()<2) {
+        if (nodes == null || nodes.length()<2) {
             JSONObject myself = getSelfNode();
             json.put("primary", myself);
+            json.put("secondary", new JSONObject() {{
+                put("id", "");
+                put("ip", "");
+            }});
         } else {
             json.put("primary", nodes.get(0));
             json.put("secondary", nodes.get(1));
