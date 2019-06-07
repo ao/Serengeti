@@ -102,11 +102,6 @@ public class Server {
 
             jsonObjThis.put("ip", Globals.getHost4Address());
 
-            // BUG REPORTED: https://stackoverflow.com/questions/33289695/inetaddress-getlocalhost-slow-to-run-30-seconds
-            // So will leave this out, as we don't really ever use the `hostname`
-            //InetAddress IP = getMyIP();
-            //jsonObjThis.put("hostname", IP.getHostName());
-
             //disk
             JSONObject jsonObjectThisDisk = new JSONObject();
             try {
