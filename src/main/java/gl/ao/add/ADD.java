@@ -66,9 +66,9 @@ public class ADD {
 
                             for (Object table : tables) {
                                 ADD.storage.tableStorageObjects.get(dbName + "#" + table).saveToDisk();
-                                System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' storage to disk");
+                                System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' storage to disk ("+ADD.storage.tableStorageObjects.get(dbName + "#" + table).rows.size()+" rows)");
                                 ADD.storage.tableReplicaObjects.get(dbName + "#" + table).saveToDisk();
-                                System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' replica to disk");
+                                System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' replica to disk ("+ADD.storage.tableReplicaObjects.get(dbName + "#" + table).row_replicas.size()+" rows)");
                             }
                         }
 

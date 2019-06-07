@@ -19,7 +19,7 @@ public class TableReplicaObject implements Serializable {
 
     static final long serialVersionUID = 1L;
 
-    Map<String, String> row_replicas = new HashMap<>();
+    public Map<String, String> row_replicas = new HashMap<>();
 
     public TableReplicaObject() {}
     public TableReplicaObject(String database, String table) {
