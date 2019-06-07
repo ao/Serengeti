@@ -283,7 +283,7 @@ public class Network {
 
         String response = "";
         try {
-            System.out.println("Communicating to "+ip+": "+jsonString);
+            System.out.println("Communicating to " + ip + ": " + jsonString);
             URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
             HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
             con2.setRequestMethod("POST");
@@ -297,8 +297,8 @@ public class Network {
             }
             System.out.println(response);
             return response;
-        } catch (ConnectException ce) {
-            ce.printStackTrace();
+        } catch (SocketException se) {
+            System.out.println("Socket exception: "+se.getMessage());
             return "";
         } catch (Exception e) {
             e.printStackTrace();
