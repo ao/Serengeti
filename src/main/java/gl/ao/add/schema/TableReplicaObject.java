@@ -51,6 +51,7 @@ public class TableReplicaObject implements Serializable {
         try {
             Path path = Paths.get(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.replica_filename);
             TableReplicaObject tableMeta = (TableReplicaObject) Globals.convertFromBytes(Files.readAllBytes(path));
+            System.out.println("Loaded replica table \t\t: '"+databaseName+"#"+tableMeta.tableName+"' ("+tableMeta.row_replicas.size()+" rows)");
             return tableMeta;
         } catch (StreamCorruptedException sce) {
             System.out.println("Stream Corrupted Exception (TableReplicaObject): "+sce.getMessage()+" - Could not 'loadExisting'");
