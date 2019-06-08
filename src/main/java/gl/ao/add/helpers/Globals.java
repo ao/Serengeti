@@ -1,5 +1,6 @@
 package gl.ao.add.helpers;
 
+import gl.ao.add.ADD;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -72,6 +73,7 @@ public class Globals {
             return obj;
         } catch (EOFException eof) {
             eof.printStackTrace();
+//            System.out.println( new String(bytes) );
             System.exit((-1));
         } catch (Exception e) {
             e.printStackTrace();
@@ -223,6 +225,18 @@ public class Globals {
         }
 
         return Double.NaN;
+    }
+
+    /***
+     * Create database and table if required
+     * @param db
+     * @param table
+     */
+    static public void createDatabaseAndTableIfNotExists(String db, String table) {
+        if (!ADD.storage.databaseExists(db))
+            ADD.storage.createDatabase(db, true);
+        if (!ADD.storage.tableExists(db, table))
+            ADD.storage.createTable(db, table, true);
     }
 
 }

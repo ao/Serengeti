@@ -3,10 +3,7 @@ package gl.ao.add.schema;
 import gl.ao.add.helpers.Globals;
 import org.json.JSONObject;
 
-import java.io.FileOutputStream;
-import java.io.ObjectOutputStream;
-import java.io.Serializable;
-import java.io.StreamCorruptedException;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -66,13 +63,22 @@ public class TableReplicaObject implements Serializable {
     }
 
     public boolean saveToDisk() {
+        ObjectOutputStream oos = null;
         try {
             FileOutputStream fos = new FileOutputStream(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.replica_filename);
-            ObjectOutputStream oos = new ObjectOutputStream(fos);
+            oos = new ObjectOutputStream(fos);
             oos.writeObject(this);
             return true;
         } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (oos != null) {
+                try {
+                    oos.close();
+                } catch (IOException ex) {
+                    ex.printStackTrace();
+                }
+            }
         }
         return false;
     }

@@ -311,7 +311,7 @@ public class Network {
             //System.out.println("Socket Exception (communicateQueryLogSingleNode): " + se.getMessage());
             return "";
         } catch (IOException ioe) {
-            System.out.println("IOException: " + ioe.getMessage());
+            System.out.println("IOException: " + ioe.getMessage()+ " > Tried: Communicating to " + ip + ": " + jsonString );
             return "";
         } catch (Exception e) {
             e.printStackTrace();

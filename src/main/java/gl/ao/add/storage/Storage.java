@@ -460,6 +460,8 @@ public class Storage {
                 byte[] data = dbo.returnDBObytes();
                 Files.write(file, data);
                 loadMetaDatabasesToMemory();
+                loadAllStorageObjectsToMemory();
+                loadAllReplicaObjectsToMemory();
 
                 if (!isReplicationAction)
                     QueryLog.localAppend(new JSONObject().put("type", "createTable").put("table", table).put("db", db).toString());
@@ -481,9 +483,11 @@ public class Storage {
     public boolean tableExists(String db, String table) {
 //        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
 //        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
-        DatabaseObject dbo = databases.get(db);
-        if (dbo.tables != null && dbo.tables.size()>0) {
-            return dbo.tables.contains(table);
+        if (databases.containsKey(db)) {
+            DatabaseObject dbo = databases.get(db);
+            if (dbo.tables != null && dbo.tables.size() > 0) {
+                return dbo.tables.contains(table);
+            }
         }
         return false;
     }
@@ -532,6 +536,8 @@ public class Storage {
             }
         }
         loadMetaDatabasesToMemory();
+        loadAllStorageObjectsToMemory();
+        loadAllReplicaObjectsToMemory();
         return true;
     }
 
