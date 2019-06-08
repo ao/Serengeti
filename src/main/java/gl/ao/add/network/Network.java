@@ -122,6 +122,10 @@ public class Network {
         }
     }
 
+    /***
+     * Find all nodes on the network
+     * Use a separate thread
+     */
     public void findNodes() {
         new Thread(new Runnable() {
             @Override
@@ -141,6 +145,10 @@ public class Network {
         }).start();
     }
 
+    /***
+     * Scan the whole network using the current master NIC
+     * Search on port 1985
+     */
     public void getNetworkIPsPorts() {
         /**
          * Create a list(Map) of these available availableNodes
