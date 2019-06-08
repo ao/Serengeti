@@ -221,6 +221,8 @@ public class Network {
                         //System.out.println(tryingIp+" : "+ce.getMessage());
                     } catch (NoRouteToHostException e) {
                         //java.net.NoRouteToHostException: No route to host (Host unreachable)
+                    } catch (IOException ioe) {
+                        //java.net.SocketException: Connection reset by peer (connect failed)
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
@@ -253,7 +255,7 @@ public class Network {
                         // No other nodes on network, let's just begin (and take over!)
                         ADD.network.hasPerformedNetworkSync = true; //we haven't actually done this, but let's say we did anyway to prevent the server from starting again..
                         ADD.network.online = true;
-                        System.out.println("Startup: Completed and feeling lonely");
+                        System.out.println("\nStartup: Completed and feeling lonely (no other nodes found..)");
                         ADD.server.serve();
                     }
                 }

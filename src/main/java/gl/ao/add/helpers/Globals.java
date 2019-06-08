@@ -65,7 +65,14 @@ public class Globals {
         try {
             ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
             ObjectInput in = new ObjectInputStream(bis);
-            return in.readObject();
+            Object obj = in.readObject();
+            System.out.print("Loading persisted object \t: ");
+            System.out.print(obj);
+            System.out.println();
+            return obj;
+        } catch (EOFException eof) {
+            eof.printStackTrace();
+            System.exit((-1));
         } catch (Exception e) {
             e.printStackTrace();
         }

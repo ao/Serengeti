@@ -98,6 +98,7 @@ public class TableStorageObject implements Serializable {
         try {
             Path path = Paths.get(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.storage_filename);
             TableStorageObject tableMeta = (TableStorageObject) Globals.convertFromBytes(Files.readAllBytes(path));
+            System.out.println("Loaded storage table\t\t: '"+databaseName+"#"+tableMeta.tableName+"' ("+tableMeta.rows.size()+" rows)");
             return tableMeta;
         } catch (StreamCorruptedException sce) {
             System.out.println("Stream Corrupted Exception (TableStorageObject): "+sce.getMessage()+" - Could not 'loadExisting'");

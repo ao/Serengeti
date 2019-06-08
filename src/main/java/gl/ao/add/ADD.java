@@ -34,7 +34,7 @@ public class ADD {
      */
     private void init() {
         this.startTime = System.currentTimeMillis();
-        System.out.println("Starting ADD..");
+        System.out.println("Starting ADD..\n");
         this.instance = this;
         this.server.init();
         storage = new Storage();
