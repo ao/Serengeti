@@ -43,7 +43,7 @@ public class StorageScheduler {
             try {
 
                 if (ADD.storage.databases.size()==0) {
-                    System.out.println("No databases found, nothing to persist..");
+                    System.out.println(" * No databases found, nothing to persist..");
                 } else {
                     // Make sure to save current in-memory objects to disk before terminating the server
                     for (String key : ADD.storage.databases.keySet()) {
