@@ -1,6 +1,7 @@
 package gl.ao.add.query;
 
 import gl.ao.add.ADD;
+import gl.ao.add.helpers.Globals;
 import gl.ao.add.schema.TableReplicaObject;
 import gl.ao.add.schema.TableStorageObject;
 import org.json.JSONArray;
@@ -97,22 +98,23 @@ public class QueryLog {
                         break;
 
                     case "TableReplicaObjectInsert":
+                        Globals.createDatabaseAndTableIfNotExists(db, table);
                         JSONObject _json = new JSONObject( jsonObject.getString("json") );
                         ADD.storage.tableReplicaObjects.get(db+"#"+table).insert(jsonObject.getString("row_id"), new JSONObject() {{
                             put("primary", _json.getString("primary") );
                             put("secondary", _json.getString("secondary") );
                         }});
-//                        ADD.storage.tableReplicaObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "TableReplicaObjectDelete":
+                        Globals.createDatabaseAndTableIfNotExists(db, table);
                         ADD.storage.tableReplicaObjects.get(db+"#"+table).delete(jsonObject.getString("row_id"));
-//                        ADD.storage.tableReplicaObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateInsertObject":
+                        Globals.createDatabaseAndTableIfNotExists(db, table);
                         ADD.storage.tableStorageObjects.get(db+"#"+table).insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
-//                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateUpdateObject":
+                        Globals.createDatabaseAndTableIfNotExists(db, table);
                         JSONObject __json1 = ADD.storage.tableStorageObjects.get(db+"#"+table).getJsonFromRowId( jsonObject.getString("row_id") );
                         Iterator<String> keys1 = __json1.keys();
 
@@ -126,13 +128,14 @@ public class QueryLog {
                             }
                         }
                         ADD.storage.tableStorageObjects.get(db+"#"+table).update( jsonObject.getString("row_id") , __json1);
-//                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "ReplicateDeleteObject":
+                        Globals.createDatabaseAndTableIfNotExists(db, table);
                         ADD.storage.tableStorageObjects.get(db+"#"+table).delete( jsonObject.getString("row_id") );
-//                        ADD.storage.tableStorageObjects.get(db+"#"+table).saveToDisk();
                         break;
                     case "SelectRespond":
+                        Globals.createDatabaseAndTableIfNotExists(db, table);
+
                         String col = jsonObject.getString("col");
                         String val = jsonObject.getString("val");
                         String selectWhat = jsonObject.getString("selectWhat");
