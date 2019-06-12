@@ -4,6 +4,7 @@ import gl.ao.add.helpers.ShutdownHandler;
 import gl.ao.add.network.Network;
 import gl.ao.add.server.Server;
 import gl.ao.add.storage.Storage;
+import gl.ao.add.storage.StorageReshuffle;
 import gl.ao.add.storage.StorageScheduler;
 import gl.ao.add.ui.Interactive;
 
@@ -17,6 +18,7 @@ public class ADD {
     public static Date currentDate = new Date();
     public static Network network = new Network();
     public static StorageScheduler storageScheduler = new StorageScheduler();
+    public static StorageReshuffle storageReshuffle = new StorageReshuffle();
     public Interactive interactive = new Interactive();
 
     public static long startTime;
@@ -40,6 +42,7 @@ public class ADD {
         storage = new Storage();
         this.network.init();
 
+        storageReshuffle.init();
         storageScheduler.init();
         new ShutdownHandler();
     }

@@ -208,8 +208,6 @@ public class Network {
                             else availableNodes.put(nodeId, nodeJSON);
 
                             in.close();
-                        } else {
-                            if (availableNodes.containsKey(_ip)) availableNodes.remove(_ip);
                         }
 
                         if (ADD.network.latencyRun) {
@@ -255,15 +253,15 @@ public class Network {
 
                             if (_last_checked < currentTime) {
                                 availableNodes.remove(json.get("id"));
-                           }
+                                ADD.storageReshuffle.queueLostNode(json);
+                            }
                         }
 
                         requestNetworkMetas();
                     } else if (ADD.network.online==false) {
-                        // No other nodes on network, let's just begin (and take over!)
-                        ADD.network.hasPerformedNetworkSync = true; //we haven't actually done this, but let's say we did anyway to prevent the server from starting again..
                         ADD.network.online = true;
-                        System.out.println("\nStartup: Completed and feeling lonely (no other nodes found..)");
+                        System.out.println("\nStartup: Completed");
+                        System.out.println(" - No other nodes found on the network, waiting..");
                         ADD.server.serve();
                     }
                 }
@@ -273,13 +271,30 @@ public class Network {
         }
     }
 
+    public boolean nodeIsOnline(String ip) {
+        try {
+            URL url = new URL("http://" + ip + ":" + Globals.port_default);
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+            con.setRequestMethod("GET");
+            con.getDoOutput();
+            con.setConnectTimeout(networkTimeout);
+            con.setReadTimeout(networkTimeout);
+            con.setRequestProperty("Content-Type", "application/json");
+            int status = con.getResponseCode();
+
+            if (status == successStatus) return true;
+
+        } catch (Exception e) {}
+        return false;
+    }
+
     public JSONArray communicateQueryLogAllNodes(String jsonString) {
         JSONArray response = new JSONArray();
         try {
             if (availableNodes.size() > 0) {
                 for (String key : availableNodes.keySet()) {
                     JSONObject json = availableNodes.get(key);
-                    response.put(communicateQueryLogSingleNode("", json.get("ip").toString(), jsonString));
+                    response.put(communicateQueryLogSingleNode(json.getString("id"), json.getString("ip"), jsonString));
                 }
             }
         } catch (ConcurrentModificationException cme) {

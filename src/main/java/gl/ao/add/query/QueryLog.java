@@ -4,7 +4,6 @@ import gl.ao.add.ADD;
 import gl.ao.add.helpers.Globals;
 import gl.ao.add.schema.TableReplicaObject;
 import gl.ao.add.schema.TableStorageObject;
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -97,10 +96,10 @@ public class QueryLog {
                         ADD.storage.deleteEverything();
                         break;
 
-                    case "TableReplicaObjectInsert":
+                    case "TableReplicaObjectInsertOrReplace":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
                         JSONObject _json = new JSONObject( jsonObject.getString("json") );
-                        ADD.storage.tableReplicaObjects.get(db+"#"+table).insert(jsonObject.getString("row_id"), new JSONObject() {{
+                        ADD.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jsonObject.getString("row_id"), new JSONObject() {{
                             put("primary", _json.getString("primary") );
                             put("secondary", _json.getString("secondary") );
                         }});
