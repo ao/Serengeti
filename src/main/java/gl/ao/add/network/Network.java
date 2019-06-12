@@ -175,15 +175,19 @@ public class Network {
         for(int i=1;i<=254;i++) {
             final int j = i; // i as non-final variable cannot be referenced from inner class
 
+            String[] ipParts = myIP.split("\\.");
+            final String baseIP = ipParts[0]+"."+ipParts[1]+"."+ipParts[2]+".";
+
             ADD.network.latencyRun = true;
             ADD.network.latency = 0;
             Thread t = new Thread(new Runnable() {
                 public void run() {
-                    ip[3] = (byte) j;
+                    //ip[3] = (byte) j;
 
                     try {
-                        InetAddress address = InetAddress.getByAddress(ip);
-                        String _ip = address.getHostAddress();
+                        //InetAddress address = InetAddress.getByAddress(ip);
+                        //String _ip = address.getHostAddress();
+                        String _ip = baseIP+j;
 
                         long startTime = System.currentTimeMillis();
 
