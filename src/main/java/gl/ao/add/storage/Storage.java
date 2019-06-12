@@ -217,9 +217,11 @@ public class Storage {
             ADD.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonInsertReplicate);
             ADD.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonInsertReplicate);
 
+//            System.out.println("p:"+_node_primary_ip+" s:"+_node_secondary_ip);
+
             // tell all nodes about where the replicated data is stored
             ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
-                put("type", "TableReplicaObjectInsert");
+                put("type", "TableReplicaObjectInsertOrReplace");
                 put("db", db);
                 put("table", table);
                 put("row_id", row_id);

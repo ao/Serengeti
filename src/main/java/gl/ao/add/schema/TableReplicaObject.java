@@ -27,13 +27,27 @@ public class TableReplicaObject implements Serializable {
         this.row_replicas = self.row_replicas;
     }
 
-    public boolean insert(String row_id, JSONObject json) {
+    public boolean insertOrReplace(String row_id, JSONObject json) {
         row_replicas.put(row_id, json.toString());
         return true;
     }
     public boolean delete(String row_id) {
         row_replicas.remove(row_id);
         return true;
+    }
+    public JSONObject updateNewPrimary(String row_id, String primary_id) {
+        String row = row_replicas.get(row_id);
+        JSONObject json = new JSONObject(row);
+        json.put("primary", primary_id);
+        row_replicas.put(row_id, json.toString());
+        return json;
+    }
+    public JSONObject updateNewSecondary(String row_id, String secondary_id) {
+        String row = row_replicas.get(row_id);
+        JSONObject json = new JSONObject(row);
+        json.put("secondary", secondary_id);
+        row_replicas.put(row_id, json.toString());
+        return json;
     }
 
     public JSONObject getRowReplica(String row_id) {
