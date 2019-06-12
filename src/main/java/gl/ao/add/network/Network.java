@@ -260,6 +260,7 @@ public class Network {
                         requestNetworkMetas();
                     } else if (ADD.network.online==false) {
                         ADD.network.online = true;
+                        ADD.network.hasPerformedNetworkSync = true;
                         System.out.println("\nStartup: Completed");
                         System.out.println(" - No other nodes found on the network, waiting..");
                         ADD.server.serve();
