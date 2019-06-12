@@ -115,18 +115,20 @@ public class QueryLog {
                     case "ReplicateUpdateObject":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
                         JSONObject __json1 = ADD.storage.tableStorageObjects.get(db+"#"+table).getJsonFromRowId( jsonObject.getString("row_id") );
-                        Iterator<String> keys1 = __json1.keys();
+                        if (__json1!=null) {
+                            Iterator<String> keys1 = __json1.keys();
 
-                        while(keys1.hasNext()) {
-                            String key = keys1.next();
-                            JSONObject ___json1 = jsonObject.getJSONObject("json");
+                            while (keys1.hasNext()) {
+                                String key = keys1.next();
+                                JSONObject ___json1 = jsonObject.getJSONObject("json");
 
-                            if (key.equals( ___json1.getString("where_col") ) && __json1.get(key).equals( ___json1.getString("where_val") )) {
-                                __json1.remove( ___json1.getString("where_col") );
-                                __json1.put( ___json1.getString("update_key"), ___json1.getString("update_val") );
+                                if (key.equals(___json1.getString("where_col")) && __json1.get(key).equals(___json1.getString("where_val"))) {
+                                    __json1.remove(___json1.getString("where_col"));
+                                    __json1.put(___json1.getString("update_key"), ___json1.getString("update_val"));
+                                }
                             }
+                            ADD.storage.tableStorageObjects.get(db + "#" + table).update(jsonObject.getString("row_id"), __json1);
                         }
-                        ADD.storage.tableStorageObjects.get(db+"#"+table).update( jsonObject.getString("row_id") , __json1);
                         break;
                     case "ReplicateDeleteObject":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
