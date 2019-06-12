@@ -9,6 +9,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 /***
  * Send operations (queries) to the log once they have successfully run
@@ -170,6 +171,25 @@ public class QueryLog {
 
                         response = list.toString();
 
+                        break;
+                    case "SendTableReplicaToNode":
+                        String node_id = jsonObject.getString("node_id");
+                        String node_ip = jsonObject.getString("node_ip");
+                        Map<String, String> tableReplicaRows = ADD.storage.tableReplicaObjects.get(db+"#"+table).row_replicas;
+                        ADD.network.communicateQueryLogSingleNode(node_id, node_ip, new JSONObject(){{
+                            put("type", "ReceiveTableReplicaFromNode");
+                            put("db", db);
+                            put("table", table);
+                            put("rows", tableReplicaRows);
+                        }}.toString());
+                        break;
+                    case "ReceiveTableReplicaFromNode":
+                        Globals.createDatabaseAndTableIfNotExists(db, table);
+                        Map<String, String> row_replicas = (Map<String, String>) jsonObject.get("rows");
+                        for (String rowKey: row_replicas.keySet()) {
+                            JSONObject json = new JSONObject(row_replicas.get(rowKey));
+                            ADD.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(rowKey, json);
+                        }
                         break;
                 }
             } else {

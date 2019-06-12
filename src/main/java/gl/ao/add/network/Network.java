@@ -97,7 +97,13 @@ public class Network {
                                                     ADD.storage.createTable(db, table, true);
                                                     changesFound++;
 
-                                                    // TODO: Build a local replica file so that we can properly participate
+                                                    ADD.network.communicateQueryLogSingleNode( jsonObject.getString("id"), jsonObject.getString("ip"), new JSONObject(){{
+                                                        put("type", "SendTableReplicaToNode");
+                                                        put("db", db);
+                                                        put("table", table);
+                                                        put("node_id", ADD.server.server_constants.id);
+                                                        put("node_ip", ADD.network.myIP);
+                                                    }}.toString() );
                                                 }
                                             }
                                         }
