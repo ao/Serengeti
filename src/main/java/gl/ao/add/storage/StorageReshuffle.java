@@ -47,34 +47,36 @@ public class StorageReshuffle {
 
                                     if (!found.equals("")) {
                                         JSONObject row = ADD.storage.tableStorageObjects.get(tableKey).getJsonFromRowId(rowKey);
-                                        String _jsonReplaceReplicate = new JSONObject() {{
-                                            put("db", databaseName);
-                                            put("table", tableName);
-                                            put("row_id", rowKey);
-                                            put("json", row);
-                                            put("type", "ReplicateInsertObject");
-                                        }}.toString();
-
-                                        if (found.equals("primary")) {
-                                            ADD.network.communicateQueryLogSingleNode(newPrimaryId, newPrimaryIp, _jsonReplaceReplicate);
-                                            row_replica = ADD.storage.tableReplicaObjects.get(tableKey).updateNewPrimary(rowKey, newPrimaryId);
-                                        } else if (found.equals("secondary")) {
-                                            ADD.network.communicateQueryLogSingleNode(newPrimaryId, newPrimaryIp, _jsonReplaceReplicate);
-                                            row_replica = ADD.storage.tableReplicaObjects.get(tableKey).updateNewSecondary(rowKey, newSecondaryId);
-                                        }
-
-                                        if (row_replica != null) {
-                                            final JSONObject row_replica_final = row_replica;
-                                            ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
-                                                put("type", "TableReplicaObjectInsertOrReplace");
+                                        if (row!=null) {
+                                            String _jsonReplaceReplicate = new JSONObject() {{
                                                 put("db", databaseName);
                                                 put("table", tableName);
                                                 put("row_id", rowKey);
-                                                put("json", new JSONObject() {{
-                                                    put("primary", row_replica_final.getString("primary"));
-                                                    put("secondary", row_replica_final.getString("secondary"));
+                                                put("json", row);
+                                                put("type", "ReplicateInsertObject");
+                                            }}.toString();
+
+                                            if (found.equals("primary")) {
+                                                ADD.network.communicateQueryLogSingleNode(newPrimaryId, newPrimaryIp, _jsonReplaceReplicate);
+                                                row_replica = ADD.storage.tableReplicaObjects.get(tableKey).updateNewPrimary(rowKey, newPrimaryId);
+                                            } else if (found.equals("secondary")) {
+                                                ADD.network.communicateQueryLogSingleNode(newPrimaryId, newPrimaryIp, _jsonReplaceReplicate);
+                                                row_replica = ADD.storage.tableReplicaObjects.get(tableKey).updateNewSecondary(rowKey, newSecondaryId);
+                                            }
+
+                                            if (row_replica != null) {
+                                                final JSONObject row_replica_final = row_replica;
+                                                ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
+                                                    put("type", "TableReplicaObjectInsertOrReplace");
+                                                    put("db", databaseName);
+                                                    put("table", tableName);
+                                                    put("row_id", rowKey);
+                                                    put("json", new JSONObject() {{
+                                                        put("primary", row_replica_final.getString("primary"));
+                                                        put("secondary", row_replica_final.getString("secondary"));
+                                                    }}.toString());
                                                 }}.toString());
-                                            }}.toString());
+                                            }
                                         }
                                     }
                                 }

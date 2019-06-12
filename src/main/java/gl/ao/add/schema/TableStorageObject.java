@@ -27,7 +27,11 @@ public class TableStorageObject implements Serializable {
     }
 
     public JSONObject getJsonFromRowId(String row_id) {
-        return new JSONObject( rows.get(row_id) );
+        try {
+            return new JSONObject(rows.get(row_id));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public String insert(JSONObject json) {
