@@ -24,7 +24,7 @@ Currently version 0.0.1 is the only version, so [grab it here](https://github.co
 Then simply run `java -jar ADD.jar`
 
 ## Build it yourself?
-Yes, of course you can.
+Yes, of course you can!
 
 ```
 git clone https://github.com/ao/ADD.git
