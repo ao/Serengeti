@@ -19,17 +19,14 @@ This project was built on IntelliJ IDEA under JDK 11 runtime.
 ## Is there a JAR available?
 Yes, take a look at the [release page](https://github.com/ao/ADD/releases)
 
-Currently version 0.0.1 is the only version, so [grab it here](https://github.com/ao/ADD/releases/download/0.0.1/ADD.jar)
+Currently version 0.0.1 is the only version, so [grab it here](https://github.com/ao/ADD/releases/download/0.0.1/ADD_0.0.1.zip)
 
-Then simply run `java -jar ADD.jar`
+Unzip it and then simply run `java -jar ADD.jar`
 
 ## Build it yourself?
 Yes, of course you can!
 
-```
-git clone https://github.com/ao/ADD.git
-cd ADD
-```
+`git clone https://github.com/ao/ADD.git`
 
 `Open in IntelliJ IDEA.`
 
