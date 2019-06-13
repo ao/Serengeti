@@ -22,7 +22,7 @@ Yes, take a look at the [release page](https://github.com/ao/ADD/releases)
 Currently version 0.0.1 is the only version, so [grab it here](https://github.com/ao/ADD/releases/download/0.0.1/ADD.jar)
 
 ## Build it yourself?
-Yes, ofcourse you can.
+Yes, of course you can.
 
 ```
 git clone https://github.com/ao/ADD.git
