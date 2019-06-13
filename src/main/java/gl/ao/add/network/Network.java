@@ -97,13 +97,23 @@ public class Network {
                                                     ADD.storage.createTable(db, table, true);
                                                     changesFound++;
 
-                                                    ADD.network.communicateQueryLogSingleNode( jsonObject.getString("id"), jsonObject.getString("ip"), new JSONObject(){{
+                                                    String row_replicas = ADD.network.communicateQueryLogSingleNode( jsonObject.getString("id"), jsonObject.getString("ip"), new JSONObject(){{
                                                         put("type", "SendTableReplicaToNode");
                                                         put("db", db);
                                                         put("table", table);
                                                         put("node_id", ADD.server.server_constants.id);
                                                         put("node_ip", ADD.network.myIP);
                                                     }}.toString() );
+
+                                                    try {
+                                                        JSONObject jsonRowsReplica = new JSONObject(row_replicas);
+                                                        Iterator<String> jkeys = jsonRowsReplica.keys();
+                                                        while (jkeys.hasNext()) {
+                                                            String jrow_id = jkeys.next();
+                                                            JSONObject _json = new JSONObject(jsonRowsReplica.getString(jrow_id));
+                                                            ADD.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jrow_id, _json);
+                                                        }
+                                                    } catch (Exception e) {}
                                                 }
                                             }
                                         }
