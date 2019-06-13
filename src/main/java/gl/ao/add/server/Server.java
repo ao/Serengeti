@@ -90,6 +90,12 @@ public class Server {
     }
 
     static class RootHandler implements HttpHandler {
+
+        /***
+         * handle requests to root /
+         * @param t
+         * @throws IOException
+         */
         public void handle(HttpExchange t) throws IOException {
 
             JSONObject jsonObjThis = new JSONObject();
@@ -191,6 +197,7 @@ public class Server {
             os.close();
         }
     }
+
     static class MetaHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
             JSONObject jsonObject = new JSONObject();
