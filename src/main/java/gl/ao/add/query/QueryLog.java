@@ -176,12 +176,19 @@ public class QueryLog {
                         String node_id = jsonObject.getString("node_id");
                         String node_ip = jsonObject.getString("node_ip");
                         Map<String, String> tableReplicaRows = ADD.storage.tableReplicaObjects.get(db+"#"+table).row_replicas;
-                        ADD.network.communicateQueryLogSingleNode(node_id, node_ip, new JSONObject(){{
+                        /*ADD.network.communicateQueryLogSingleNode(node_id, node_ip, new JSONObject(){{
                             put("type", "ReceiveTableReplicaFromNode");
                             put("db", db);
                             put("table", table);
                             put("rows", tableReplicaRows);
-                        }}.toString());
+                        }}.toString());*/
+
+                        try {
+                            response = new JSONObject(tableReplicaRows).toString();
+                        } catch (Exception e) {
+                            // this will raise if the tableReplicaRows is blank..
+                        }
+
                         break;
                     case "ReceiveTableReplicaFromNode":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
