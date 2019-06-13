@@ -29,11 +29,15 @@ git clone https://github.com/ao/ADD.git
 cd ADD
 ```
 
-Open in IntelliJ IDEA.
+`Open in IntelliJ IDEA.`
+
+`Edit configurations..`
+
+`+ Application`
 
 Set the `classpath` to `ADD` and the `Main class` to `gl.ao.add.ADD`
 
-Run the application!
+`Run the application!`
 
 ## Problems?
 [Create an issue](https://github.com/ao/ADD/issues/new) if you need help
