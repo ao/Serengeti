@@ -26,7 +26,9 @@ public class Network {
     private boolean hasPerformedNetworkSync = false;
     public static boolean online = false;
 
-
+    /***
+     * Initialise local IP address and begin finding available nodes on the network
+     */
     public void init() {
         try {
             myIP = Globals.getHost4Address();
@@ -148,9 +150,7 @@ public class Network {
             public void run() {
                 try {
                     for (;;) {
-                        /**
-                         * Ping all availableNodes on the LAN (1-254) for any availableNodes listening on the desired port
-                         */
+                        // Ping all nodes on the LAN (1-254) for any availableNodes listening on the desired port
                         getNetworkIPsPorts();
                         Thread.sleep(pingInterval);
                     }
@@ -166,9 +166,7 @@ public class Network {
      * Search on port 1985
      */
     public void getNetworkIPsPorts() {
-        /**
-         * Create a list(Map) of these available availableNodes
-         */
+        // Create a list(Map) of these available availableNodes
 
         final byte[] ip;
         try {
@@ -192,11 +190,8 @@ public class Network {
             ADD.network.latency = 0;
             Thread t = new Thread(new Runnable() {
                 public void run() {
-                    //ip[3] = (byte) j;
 
                     try {
-                        //InetAddress address = InetAddress.getByAddress(ip);
-                        //String _ip = address.getHostAddress();
                         String _ip = baseIP+j;
 
                         long startTime = System.currentTimeMillis();
@@ -309,6 +304,11 @@ public class Network {
         return false;
     }
 
+    /**
+     * Communicate Query Log to All Nodes
+     * @param jsonString
+     * @return JSONArray
+     */
     public JSONArray communicateQueryLogAllNodes(String jsonString) {
         JSONArray response = new JSONArray();
         try {
@@ -323,13 +323,20 @@ public class Network {
         }
         return response;
     }
+
+    /**
+     * Communicate Query Log to a Single Node
+     * @param id
+     * @param ip
+     * @param jsonString
+     * @return String
+     */
     public String communicateQueryLogSingleNode(String id, String ip, String jsonString) {
         // sometimes we don't have a secondary node to send data to..
         if (id.equals("") || ip.equals("")) return "";
 
         String response = "";
         try {
-//            System.out.println("Communicating to " + ip + ": " + jsonString);
             URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
             HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
             con2.setRequestMethod("POST");
@@ -341,7 +348,6 @@ public class Network {
             for (String line = br.readLine(); line != null; line = br.readLine()) {
                 response += line;
             }
-//            System.out.println(response);
             return response;
         } catch (SocketException se) {
             //System.out.println("Socket Exception (communicateQueryLogSingleNode): " + se.getMessage());
@@ -355,6 +361,10 @@ public class Network {
         }
     }
 
+    /**
+     * Get Myself as a Node
+     * @return JSONObject
+     */
     public JSONObject getSelfNode() {
         JSONObject json = new JSONObject();
         json.put("id", ADD.server.server_constants.id);
@@ -362,6 +372,11 @@ public class Network {
 
         return json;
     }
+
+    /**
+     * Get Primary and Secondary Nodes
+     * @return JSONObject
+     */
     public JSONObject getPrimarySecondary() {
         JSONObject json = new JSONObject();
 
@@ -380,6 +395,12 @@ public class Network {
 
         return json;
     }
+
+    /**
+     * Get Random Available Nodes
+     * @param amount
+     * @return JSONArray
+     */
     public JSONArray getRandomAvailableNodes(int amount) {
         Map<String, JSONObject> an = new HashMap<String, JSONObject>();
         an.putAll(this.availableNodes);

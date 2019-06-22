@@ -14,7 +14,7 @@ public class QueryEngine {
     /***
      * Parse query
      * @param query
-     * @return
+     * @return List
      */
     public static List query(String query) {
         if (query.trim().equals("")) {
@@ -41,7 +41,7 @@ public class QueryEngine {
     /***
      * Perform execution of query
      * @param query
-     * @return
+     * @return JSONObject
      */
     private static JSONObject execute(String query) {
         QueryResponseObject qro = new QueryResponseObject();
@@ -52,13 +52,6 @@ public class QueryEngine {
         qro.executed = false;
 
         long startTime = System.nanoTime();
-
-        if (query.equals("new uuid test")) {
-            String somelongstring = " fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs fdjs nksdn ksn ksnfks ksf nksj nksdj nks nfksd nkfs";
-            String uuid1test = UUID.randomUUID().toString()+somelongstring+somelongstring+somelongstring+somelongstring+somelongstring+somelongstring;
-            String uuid2test = UUID.randomUUID().toString()+somelongstring+somelongstring+somelongstring+somelongstring+somelongstring+somelongstring;
-            query = "insert into db1.users (col1test, col2test) values('"+uuid1test+"', '"+uuid2test+"')";
-        }
 
         if (query.equals("delete everything")) {
             ADD.network.communicateQueryLogAllNodes(new JSONObject() {{
@@ -165,7 +158,9 @@ public class QueryEngine {
                             String v = values.get(i).replaceAll("^\'|\'$", "").trim();
                             json.put(k, v);
                         }
+
                         StorageResponseObject sro = ADD.storage.insert(databaseName, tableName, json);
+
 //                        ADD.indexer.addToQueue(sro);
                         qro.executed = sro.success;
                         qro.primary = sro.primary;

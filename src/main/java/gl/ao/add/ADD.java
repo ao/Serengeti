@@ -42,7 +42,6 @@ public class ADD {
         storage = new Storage();
         this.network.init();
 
-        storageReshuffle.init();
         storageScheduler.init();
         new ShutdownHandler();
     }
