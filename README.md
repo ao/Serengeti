@@ -1,5 +1,7 @@
 # Autonomous Distributed Database (ADD)
 
+![ADD Dashboard](artwork/dash1.png?raw=true "ADD Dashboard")
+
 This software application proves the potential for an autonomous distributed database system.
 
 ADD runs on any machine through the JVM and requires zero configuration or management to setup or maintain.
