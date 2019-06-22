@@ -8,8 +8,10 @@ import java.util.List;
 
 public class StorageReshuffle {
 
-    public void init() {}
-
+    /**
+     * Recheck if a Lost Node will come back online in 10 seconds, otherwise replicate the lost data to another node
+     * @param node
+     */
     public void queueLostNode(JSONObject node) {
         final JSONObject json = node;
         new Thread(new Runnable() {
@@ -18,7 +20,6 @@ public class StorageReshuffle {
                 try {
                     Thread.sleep(10000);
                     boolean nodeIsOnline = ADD.network.nodeIsOnline(json.getString("ip"));
-//                    String nodeKey = json.getString("")
 
                     if (!nodeIsOnline) {
                         // find out if we need to move any local data to another node

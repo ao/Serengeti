@@ -58,10 +58,8 @@ public class Server {
     public void serve() {
         try {
 
-            final Executor fixedThreadPool = Executors.newFixedThreadPool(10);
             final Executor cachedThreadPool = Executors.newCachedThreadPool();
-            final HttpServer server = HttpServer.create(
-                    new InetSocketAddress(Globals.port_default), 5);
+            final HttpServer server = HttpServer.create(new InetSocketAddress(Globals.port_default), 5);
             server.createContext("/", new RootHandler());
             server.createContext("/dashboard", new DashboardHandler());
             server.createContext("/interactive", new InteractiveHandler());
@@ -69,6 +67,7 @@ public class Server {
             server.createContext("/post", new GenericPostHandler());
             server.setExecutor(cachedThreadPool);
             server.start();
+
         } catch (BindException be) {
             System.out.println("Bind Exception: "+be.getMessage());
             System.exit(-1);
@@ -136,8 +135,10 @@ public class Server {
             //memory
             JSONObject jsonObjectThisMemory = new JSONObject();
             try {
-                long memorySize = ((com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getTotalPhysicalMemorySize();
-                long freeMemorySize = ((com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getFreePhysicalMemorySize();
+                long memorySize = ((com.sun.management.OperatingSystemMXBean)
+                        ManagementFactory.getOperatingSystemMXBean()).getTotalPhysicalMemorySize();
+                long freeMemorySize = ((com.sun.management.OperatingSystemMXBean)
+                        ManagementFactory.getOperatingSystemMXBean()).getFreePhysicalMemorySize();
                 jsonObjectThisMemory.put("total", memorySize);
                 jsonObjectThisMemory.put("total_human", memorySize/1024/1024/1024+"G");
                 jsonObjectThisMemory.put("free", freeMemorySize);
@@ -150,9 +151,12 @@ public class Server {
             //os
             JSONObject jsonObjectThisOS = new JSONObject();
             try {
-                String OSName = ((com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getName();
-                String OSVersion = ((com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getVersion();
-                String OSArch = ((com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getArch();
+                String OSName = ((com.sun.management.OperatingSystemMXBean)
+                        ManagementFactory.getOperatingSystemMXBean()).getName();
+                String OSVersion = ((com.sun.management.OperatingSystemMXBean)
+                        ManagementFactory.getOperatingSystemMXBean()).getVersion();
+                String OSArch = ((com.sun.management.OperatingSystemMXBean)
+                        ManagementFactory.getOperatingSystemMXBean()).getArch();
                 jsonObjectThisOS.put("name", OSName);
                 jsonObjectThisOS.put("version", OSVersion);
                 jsonObjectThisOS.put("arch", OSArch);
@@ -181,7 +185,8 @@ public class Server {
 
     static class InteractiveHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
-            String response = Interactive.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"), t.getRequestURI().getPath());
+            String response = Interactive.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"),
+                    t.getRequestURI().getPath());
             t.sendResponseHeaders(200, response.length());
             OutputStream os = t.getResponseBody();
             os.write(response.getBytes());
@@ -190,7 +195,8 @@ public class Server {
     }
     static class DashboardHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
-            String response = Dashboard.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"), t.getRequestURI().getPath());
+            String response = Dashboard.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"),
+                    t.getRequestURI().getPath());
             t.sendResponseHeaders(200, response.length());
             OutputStream os = t.getResponseBody();
             os.write(response.getBytes());
