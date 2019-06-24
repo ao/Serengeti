@@ -312,14 +312,15 @@ public class Network {
     public JSONArray communicateQueryLogAllNodes(String jsonString) {
         JSONArray response = new JSONArray();
         try {
-            if (availableNodes.size() > 0) {
-                for (String key : availableNodes.keySet()) {
-                    JSONObject json = availableNodes.get(key);
+            final Map<String, JSONObject> _availableNodes = this.availableNodes;
+            if (_availableNodes.size() > 0) {
+                for (String key : _availableNodes.keySet()) {
+                    JSONObject json = _availableNodes.get(key);
                     response.put(communicateQueryLogSingleNode(json.getString("id"), json.getString("ip"), jsonString));
                 }
             }
         } catch (ConcurrentModificationException cme) {
-            cme.printStackTrace();
+            //cme.printStackTrace();
         }
         return response;
     }
