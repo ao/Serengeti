@@ -13,7 +13,8 @@ class DashboardTest {
 
     @Test
     void indexTemplate() throws IOException {
-        String interactive = new String(Files.readAllBytes(Paths.get(Globals.res_path + "dashboard.html")))+"1";
+        String interactive = new String(Files.readAllBytes(Paths.get(Globals.res_path + "dashboard.html")));
         assertEquals(Dashboard.IndexTemplate("test", "test"), interactive);
     }
 }
+
