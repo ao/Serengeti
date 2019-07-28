@@ -2,14 +2,13 @@
 <project version="4">
   <component name="ArtifactsWorkspaceSettings">
     <artifacts-to-build>
-      <artifact name="ADD:jar" />
+      <artifact name="add:jar" />
     </artifacts-to-build>
   </component>
   <component name="ChangeListManager">
     <list default="true" id="abe8f7d5-88c3-4e26-9356-ecab695b70e6" name="Default" comment="Update project files">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ADD.iml" beforeDir="false" afterPath="$PROJECT_DIR$/ADD.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/resources/META-INF/MANIFEST.MF" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
     </list>
     <ignored path="$PROJECT_DIR$/out/" />
     <ignored path="$PROJECT_DIR$/target/" />
@@ -63,8 +62,8 @@
         <entry file="file://$PROJECT_DIR$/README.md">
           <provider selected="true" editor-type-id="split-provider[text-editor;markdown-preview-editor]">
             <state split_layout="SPLIT">
-              <first_editor relative-caret-position="270">
-                <caret line="18" column="55" lean-forward="true" selection-start-line="18" selection-start-column="55" selection-end-line="18" selection-end-column="55" />
+              <first_editor relative-caret-position="375">
+                <caret line="25" column="43" selection-start-line="25" selection-start-column="43" selection-end-line="25" selection-end-column="43" />
               </first_editor>
               <second_editor />
             </state>
@@ -286,6 +285,24 @@
             <path>
               <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
               <item name="ADD" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
+              <item name="ADD" type="462c0819:PsiDirectoryNode" />
+              <item name="out" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
+              <item name="ADD" type="462c0819:PsiDirectoryNode" />
+              <item name="out" type="462c0819:PsiDirectoryNode" />
+              <item name="artifacts" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
+              <item name="ADD" type="462c0819:PsiDirectoryNode" />
+              <item name="out" type="462c0819:PsiDirectoryNode" />
+              <item name="artifacts" type="462c0819:PsiDirectoryNode" />
+              <item name="add_jar" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
               <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
@@ -691,7 +708,7 @@
       <workItem from="1543500219582" duration="50358000" />
       <workItem from="1544180494565" duration="2504000" />
       <workItem from="1544503909488" duration="5621000" />
-      <workItem from="1564324382595" duration="311000" />
+      <workItem from="1564324382595" duration="1551000" />
     </task>
     <task id="LOCAL-00001" summary="Update project files">
       <created>1564323061541</created>
@@ -704,7 +721,7 @@
     <servers />
   </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="167057000" />
+    <option name="totallyTimeSpent" value="168297000" />
   </component>
   <component name="TodoView">
     <todo-panel id="selected-file">
@@ -939,8 +956,8 @@
     <entry file="file://$PROJECT_DIR$/README.md">
       <provider selected="true" editor-type-id="split-provider[text-editor;markdown-preview-editor]">
         <state split_layout="SPLIT">
-          <first_editor relative-caret-position="270">
-            <caret line="18" column="55" lean-forward="true" selection-start-line="18" selection-start-column="55" selection-end-line="18" selection-end-column="55" />
+          <first_editor relative-caret-position="375">
+            <caret line="25" column="43" selection-start-line="25" selection-start-column="43" selection-end-line="25" selection-end-column="43" />
           </first_editor>
           <second_editor />
         </state>
@@ -952,7 +969,7 @@
       <state key="ArtifactsStructureConfigurable.UI">
         <settings>
           <artifact-editor />
-          <last-edited>ADD:jar</last-edited>
+          <last-edited>add:jar</last-edited>
           <splitter-proportions>
             <option name="proportions">
               <list>
