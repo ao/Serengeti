@@ -8,7 +8,7 @@
   <component name="ChangeListManager">
     <list default="true" id="abe8f7d5-88c3-4e26-9356-ecab695b70e6" name="Default" comment="Update project files">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ADD.iml" beforeDir="false" afterPath="$PROJECT_DIR$/ADD.iml" afterDir="false" />
     </list>
     <ignored path="$PROJECT_DIR$/out/" />
     <ignored path="$PROJECT_DIR$/target/" />
@@ -52,18 +52,36 @@
       <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/pom.xml">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="705">
-              <caret line="47" selection-start-line="47" selection-end-line="47" />
+            <state relative-caret-position="525">
+              <caret line="35" column="21" selection-start-line="35" selection-start-column="21" selection-end-line="35" selection-end-column="21" />
             </state>
           </provider>
         </entry>
       </file>
       <file pinned="false" current-in-tab="true">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/network/Network.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="480">
+              <caret line="39" column="9" lean-forward="true" selection-start-line="39" selection-start-column="9" selection-end-line="39" selection-end-column="9" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/Globals.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="131">
+              <caret line="127" column="14" lean-forward="true" selection-start-line="127" selection-start-column="14" selection-end-line="127" selection-end-column="14" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/README.md">
           <provider selected="true" editor-type-id="split-provider[text-editor;markdown-preview-editor]">
             <state split_layout="SPLIT">
-              <first_editor relative-caret-position="375">
-                <caret line="25" column="43" selection-start-line="25" selection-start-column="43" selection-end-line="25" selection-end-column="43" />
+              <first_editor relative-caret-position="795">
+                <caret line="53" selection-start-line="53" selection-end-line="53" />
               </first_editor>
               <second_editor />
             </state>
@@ -182,7 +200,6 @@
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/QueryObject.java" />
         <option value="$PROJECT_DIR$/src/test/java/Tests.java" />
         <option value="$PROJECT_DIR$/src/test/java/MyTests.java" />
-        <option value="$PROJECT_DIR$/pom.xml" />
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/QueryEngine.java" />
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/QueryResponseObject.java" />
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/Network.java" />
@@ -211,6 +228,7 @@
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/storage/Storage.java" />
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/DatabaseObject.java" />
         <option value="$PROJECT_DIR$/README.md" />
+        <option value="$PROJECT_DIR$/pom.xml" />
       </list>
     </option>
   </component>
@@ -237,10 +255,10 @@
       <select />
     </treeState>
   </component>
-  <component name="ProjectFrameBounds" extendedState="6">
+  <component name="ProjectFrameBounds">
     <option name="y" value="23" />
-    <option name="width" value="1921" />
-    <option name="height" value="1141" />
+    <option name="width" value="2656" />
+    <option name="height" value="1702" />
   </component>
   <component name="ProjectLevelVcsManager" settingsEditedManually="true">
     <OptionsSetting value="false" id="Update" />
@@ -289,24 +307,6 @@
             <path>
               <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
               <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="out" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="out" type="462c0819:PsiDirectoryNode" />
-              <item name="artifacts" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="out" type="462c0819:PsiDirectoryNode" />
-              <item name="artifacts" type="462c0819:PsiDirectoryNode" />
-              <item name="add_jar" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
               <item name="src" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
@@ -328,7 +328,16 @@
               <item name="src" type="462c0819:PsiDirectoryNode" />
               <item name="main" type="462c0819:PsiDirectoryNode" />
               <item name="java" type="462c0819:PsiDirectoryNode" />
-              <item name="META-INF" type="462c0819:PsiDirectoryNode" />
+              <item name="add" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
+              <item name="ADD" type="462c0819:PsiDirectoryNode" />
+              <item name="src" type="462c0819:PsiDirectoryNode" />
+              <item name="main" type="462c0819:PsiDirectoryNode" />
+              <item name="java" type="462c0819:PsiDirectoryNode" />
+              <item name="add" type="462c0819:PsiDirectoryNode" />
+              <item name="network" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
               <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
@@ -358,7 +367,7 @@
     <property name="js.eslint.eslintPackage" value="" />
     <property name="last_opened_file_path" value="$PROJECT_DIR$" />
     <property name="nodejs_interpreter_path" value="node" />
-    <property name="project.structure.last.edited" value="Artifacts" />
+    <property name="project.structure.last.edited" value="Modules" />
     <property name="project.structure.proportion" value="0.15" />
     <property name="project.structure.side.proportion" value="0.2" />
     <property name="settings.editor.selected.configurable" value="RemoteServers" />
@@ -708,7 +717,7 @@
       <workItem from="1543500219582" duration="50358000" />
       <workItem from="1544180494565" duration="2504000" />
       <workItem from="1544503909488" duration="5621000" />
-      <workItem from="1564324382595" duration="1551000" />
+      <workItem from="1564324382595" duration="3774000" />
     </task>
     <task id="LOCAL-00001" summary="Update project files">
       <created>1564323061541</created>
@@ -717,11 +726,18 @@
       <option name="project" value="LOCAL" />
       <updated>1564323061542</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="Update project files">
+      <created>1564326583536</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1564326583536</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="168297000" />
+    <option name="totallyTimeSpent" value="170520000" />
   </component>
   <component name="TodoView">
     <todo-panel id="selected-file">
@@ -733,10 +749,10 @@
     </todo-panel>
   </component>
   <component name="ToolWindowManager">
-    <frame x="0" y="23" width="3840" height="2100" extended-state="6" />
+    <frame x="0" y="23" width="2656" height="1702" extended-state="0" />
     <editor active="true" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.15244865" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.22149962" />
       <window_info id="Structure" order="1" weight="0.25" />
       <window_info id="Nl-Palette" order="2" />
       <window_info id="Capture Tool" order="3" />
@@ -839,8 +855,6 @@
     <option name="FILTER_TARGETS" value="false" />
   </component>
   <component name="editorHistoryManager">
-    <entry file="file://$PROJECT_DIR$/src/test/java/MyTests.java" />
-    <entry file="file://$PROJECT_DIR$/data/test2.ddbm" />
     <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/Serializer.java" />
     <entry file="file://$PROJECT_DIR$/data/pieces/test1__users__ed655b06-b484-4b75-86cb-441a546c3e75.ddbp" />
     <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/package-info.java" />
@@ -906,13 +920,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/pom.xml">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="705">
-          <caret line="47" selection-start-line="47" selection-end-line="47" />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/storage/StorageScheduler.java">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="1110">
@@ -956,10 +963,31 @@
     <entry file="file://$PROJECT_DIR$/README.md">
       <provider selected="true" editor-type-id="split-provider[text-editor;markdown-preview-editor]">
         <state split_layout="SPLIT">
-          <first_editor relative-caret-position="375">
-            <caret line="25" column="43" selection-start-line="25" selection-start-column="43" selection-end-line="25" selection-end-column="43" />
+          <first_editor relative-caret-position="795">
+            <caret line="53" selection-start-line="53" selection-end-line="53" />
           </first_editor>
           <second_editor />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/pom.xml">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="525">
+          <caret line="35" column="21" selection-start-line="35" selection-start-column="21" selection-end-line="35" selection-end-column="21" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/Globals.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="131">
+          <caret line="127" column="14" lean-forward="true" selection-start-line="127" selection-start-column="14" selection-end-line="127" selection-end-column="14" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/network/Network.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="480">
+          <caret line="39" column="9" lean-forward="true" selection-start-line="39" selection-start-column="9" selection-end-line="39" selection-end-column="9" />
         </state>
       </provider>
     </entry>
