@@ -23,7 +23,7 @@ Yes, take a look at the [release page](https://github.com/ao/ADD/releases)
 
 Currently version 0.0.1 is the only version, so [grab it here](https://github.com/ao/ADD/releases/download/0.0.1/ADD_0.0.1.zip)
 
-Unzip it and then simply run `java -jar ADD.jar`
+Unzip it and then simply run `java -jar add.jar`
 
 ## Build it yourself?
 Yes, of course you can!
