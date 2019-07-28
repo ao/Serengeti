@@ -30,6 +30,8 @@ Yes, of course you can!
 
 `git clone https://github.com/ao/ADD.git`
 
+### Using IntelliJ?
+
 `Open in IntelliJ IDEA.`
 
 `Edit configurations..`
@@ -40,5 +42,12 @@ Set the `classpath` to `ADD` and the `Main class` to `gl.ao.add.ADD`
 
 `Run the application!`
 
+### Using Maven on the commandline?
+
+`mvn clean install`
+
+`java -jar target/add-1.0-SNAPSHOT.jar`
+
 ## Problems?
 [Create an issue](https://github.com/ao/ADD/issues/new) if you need help
+
