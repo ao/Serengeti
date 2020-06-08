@@ -58,9 +58,13 @@ public class StorageScheduler {
 
                         for (Object table : tables) {
                             gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(dbName + "#" + table).saveToDisk();
-                            System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' storage to disk (" + gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(dbName + "#" + table).rows.size() + " rows)");
+                            System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' storage to disk ("
+                                    + gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(dbName + "#"
+                                    + table).rows.size() + " rows)");
                             gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(dbName + "#" + table).saveToDisk();
-                            System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' replica to disk (" + gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(dbName + "#" + table).row_replicas.size() + " rows)");
+                            System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' replica to disk ("
+                                    + gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(dbName + "#"
+                                    + table).row_replicas.size() + " rows)");
                         }
                     }
                 }
