@@ -38,7 +38,7 @@ Yes, of course you can!
 
 `+ Application`
 
-Set the `classpath` to `ADD` and the `Main class` to `gl.ao.add.ADD`
+Set the `classpath` to `ADD` and the `Main class` to `gl.ao.serengeti.Serengeti`
 
 `Run the application!`
 

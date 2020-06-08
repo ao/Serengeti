@@ -71,7 +71,7 @@ import java.util.regex.Pattern;
  * coercion for you. The opt methods differ from the get methods in that they
  * do not throw. Instead, they return a specified value, such as null.
  * <p>
- * The <code>put</code> methods add or replace values in an object. For
+ * The <code>put</code> methods serengeti or replace values in an object. For
  * example,
  *
  * <pre>
@@ -248,7 +248,7 @@ public class JSONObject {
                     // key already exists
                     throw x.syntaxError("Duplicate key \"" + key + "\"");
                 }
-                // Only add value if non-null
+                // Only serengeti value if non-null
                 Object value = x.nextValue();
                 if (value!=null) {
                     this.put(key, value);
@@ -854,7 +854,7 @@ public class JSONObject {
     /**
      * Increment a property of a JSONObject. If there is no such property,
      * create one with a value of 1. If there is such a property, and if it is
-     * an Integer, Long, Double, or Float, then add one to it.
+     * an Integer, Long, Double, or Float, then serengeti one to it.
      *
      * @param key
      *            A key string.
@@ -1626,7 +1626,7 @@ public class JSONObject {
                 Method im = i.getMethod(m.getName(), m.getParameterTypes());
                 int d = getAnnotationDepth(im, annotationClass);
                 if (d > 0) {
-                    // since the annotation was on the interface, add 1
+                    // since the annotation was on the interface, serengeti 1
                     return d + 1;
                 }
             } catch (final SecurityException ex) {
@@ -1641,7 +1641,7 @@ public class JSONObject {
                     c.getSuperclass().getMethod(m.getName(), m.getParameterTypes()),
                     annotationClass);
             if (d > 0) {
-                // since the annotation was on the superclass, add 1
+                // since the annotation was on the superclass, serengeti 1
                 return d + 1;
             }
             return -1;
@@ -2277,7 +2277,7 @@ public class JSONObject {
      * </b>
      *
      * @param indentFactor
-     *            The number of spaces to add to each level of indentation.
+     *            The number of spaces to serengeti to each level of indentation.
      * @return a printable, displayable, portable, transmittable representation
      *         of the object, beginning with <code>{</code>&nbsp;<small>(left
      *         brace)</small> and ending with <code>}</code>&nbsp;<small>(right
@@ -2461,7 +2461,7 @@ public class JSONObject {
      * @param writer
      *            Writes the serialized JSON
      * @param indentFactor
-     *            The number of spaces to add to each level of indentation.
+     *            The number of spaces to serengeti to each level of indentation.
      * @param indent
      *            The indentation of the top level.
      * @return The writer.

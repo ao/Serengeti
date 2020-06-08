@@ -29,7 +29,7 @@
                         <manifest>
                             <addClasspath>true</addClasspath>
                             <classpathPrefix>lib/</classpathPrefix>
-                            <mainClass>gl.ao.add.ADD</mainClass>
+                            <mainClass>gl.ao.serengeti.Serengeti</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
