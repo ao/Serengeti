@@ -160,6 +160,17 @@ public class Network {
         }).start();
     }
 
+    public HttpURLConnection getURLConnection(String ip) throws Exception {
+        URL url = new URL("http://" + ip + ":"+Globals.port_default);
+        HttpURLConnection con = (HttpURLConnection) url.openConnection();
+        con.setRequestMethod("GET");
+        con.getDoOutput();
+        con.setConnectTimeout(networkTimeout);
+        con.setReadTimeout(networkTimeout);
+        con.setRequestProperty("Content-Type", "application/json");
+        return con;
+    }
+
     /***
      * Scan the whole network using the current master NIC
      * Search on port 1985
@@ -195,14 +206,7 @@ public class Network {
 
                         long startTime = System.currentTimeMillis();
 
-                        URL url = new URL("http://" + _ip + ":"+Globals.port_default);
-                        HttpURLConnection con = (HttpURLConnection) url.openConnection();
-                        con.setRequestMethod("GET");
-                        con.getDoOutput();
-                        con.setConnectTimeout(networkTimeout);
-                        con.setReadTimeout(networkTimeout);
-                        con.setRequestProperty("Content-Type", "application/json");
-
+                        HttpURLConnection con = getURLConnection(_ip);
                         int status = con.getResponseCode();
                         if (status == successStatus) {
                             BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
@@ -288,13 +292,7 @@ public class Network {
 
     public boolean nodeIsOnline(String ip) {
         try {
-            URL url = new URL("http://" + ip + ":" + Globals.port_default);
-            HttpURLConnection con = (HttpURLConnection) url.openConnection();
-            con.setRequestMethod("GET");
-            con.getDoOutput();
-            con.setConnectTimeout(networkTimeout);
-            con.setReadTimeout(networkTimeout);
-            con.setRequestProperty("Content-Type", "application/json");
+            HttpURLConnection con = getURLConnection(ip);
             int status = con.getResponseCode();
 
             if (status == successStatus) return true;
