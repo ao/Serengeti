@@ -1,5 +1,6 @@
 package gl.ao.serengeti.network;
 
+import gl.ao.serengeti.Serengeti;
 import gl.ao.serengeti.helpers.Globals;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -58,7 +59,7 @@ public class Network {
                 public void run() {
                     int changesFound = 0;
                     for (Map.Entry<String, JSONObject> node: _availableNodes.entrySet()) {
-                        if (!gl.ao.serengeti.Serengeti.server.server_constants.id.equals(node.getKey())) {
+                        if (!Serengeti.server.server_constants.id.equals(node.getKey())) {
                             JSONObject jsonObject = node.getValue();
 
                             try {
@@ -85,25 +86,25 @@ public class Network {
                                         if (jsonMeta.get(db) instanceof JSONArray) {
                                             JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
 
-                                            if (!gl.ao.serengeti.Serengeti.storage.databaseExists(db)) {
+                                            if (!Serengeti.storage.databaseExists(db)) {
                                                 System.out.println("Startup: Creating missing database '"+db+"'");
-                                                gl.ao.serengeti.Serengeti.storage.createDatabase(db, true);
+                                                Serengeti.storage.createDatabase(db, true);
                                                 changesFound++;
                                             }
 
                                             for (int i = 0; i < jsonArr.length(); i++) {
                                                 String table = jsonArr.getString(i);
-                                                if (!gl.ao.serengeti.Serengeti.storage.tableExists(db, table)) {
+                                                if (!Serengeti.storage.tableExists(db, table)) {
                                                     System.out.println("Startup: Creating missing table '"+table+"' for database '"+db+"'");
-                                                    gl.ao.serengeti.Serengeti.storage.createTable(db, table, true);
+                                                    Serengeti.storage.createTable(db, table, true);
                                                     changesFound++;
 
-                                                    String row_replicas = gl.ao.serengeti.Serengeti.network.communicateQueryLogSingleNode( jsonObject.getString("id"), jsonObject.getString("ip"), new JSONObject(){{
+                                                    String row_replicas = Serengeti.network.communicateQueryLogSingleNode( jsonObject.getString("id"), jsonObject.getString("ip"), new JSONObject(){{
                                                         put("type", "SendTableReplicaToNode");
                                                         put("db", db);
                                                         put("table", table);
-                                                        put("node_id", gl.ao.serengeti.Serengeti.server.server_constants.id);
-                                                        put("node_ip", gl.ao.serengeti.Serengeti.network.myIP);
+                                                        put("node_id", Serengeti.server.server_constants.id);
+                                                        put("node_ip", Serengeti.network.myIP);
                                                     }}.toString() );
 
                                                     try {
@@ -112,7 +113,7 @@ public class Network {
                                                         while (jkeys.hasNext()) {
                                                             String jrow_id = jkeys.next();
                                                             JSONObject _json = new JSONObject(jsonRowsReplica.getString(jrow_id));
-                                                            gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jrow_id, _json);
+                                                            Serengeti.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jrow_id, _json);
                                                         }
                                                     } catch (Exception e) {}
                                                 }
@@ -131,9 +132,9 @@ public class Network {
 
                         }
                     }
-                    gl.ao.serengeti.Serengeti.network.online = true;
+                    Serengeti.network.online = true;
                     System.out.println("Startup: Completed with "+changesFound+" changes found");
-                    gl.ao.serengeti.Serengeti.server.serve();
+                    Serengeti.server.serve();
                 }
             }).start();
         }
@@ -196,8 +197,8 @@ public class Network {
             String[] ipParts = myIP.split("\\.");
             final String baseIP = ipParts[0]+"."+ipParts[1]+"."+ipParts[2]+".";
 
-            gl.ao.serengeti.Serengeti.network.latencyRun = true;
-            gl.ao.serengeti.Serengeti.network.latency = 0;
+            Serengeti.network.latencyRun = true;
+            Serengeti.network.latency = 0;
             Thread t = new Thread(new Runnable() {
                 public void run() {
 
@@ -228,10 +229,10 @@ public class Network {
                             in.close();
                         }
 
-                        if (gl.ao.serengeti.Serengeti.network.latencyRun) {
+                        if (Serengeti.network.latencyRun) {
                             long elapsedTime = System.currentTimeMillis() - startTime;
-                            if (elapsedTime> gl.ao.serengeti.Serengeti.network.latency) {
-                                gl.ao.serengeti.Serengeti.network.latency = elapsedTime;
+                            if (elapsedTime> Serengeti.network.latency) {
+                                Serengeti.network.latency = elapsedTime;
                             }
                         }
 
@@ -263,7 +264,7 @@ public class Network {
                 t.join();
                 threadcompletecount++;
                 if (threadcompletecount==254) {
-                    gl.ao.serengeti.Serengeti.network.latencyRun = false;
+                    Serengeti.network.latencyRun = false;
                     if (availableNodes.size() > 0) {
                         for (String key : availableNodes.keySet()) {
                             JSONObject json = availableNodes.get(key);
@@ -271,17 +272,17 @@ public class Network {
 
                             if (_last_checked < currentTime) {
                                 availableNodes.remove(json.get("id"));
-                                gl.ao.serengeti.Serengeti.storageReshuffle.queueLostNode(json);
+                                Serengeti.storageReshuffle.queueLostNode(json);
                             }
                         }
 
                         requestNetworkMetas();
-                    } else if (gl.ao.serengeti.Serengeti.network.online==false) {
-                        gl.ao.serengeti.Serengeti.network.online = true;
-                        gl.ao.serengeti.Serengeti.network.hasPerformedNetworkSync = true;
+                    } else if (Serengeti.network.online==false) {
+                        Serengeti.network.online = true;
+                        Serengeti.network.hasPerformedNetworkSync = true;
                         System.out.println("\nStartup: Completed");
                         System.out.println(" - No other nodes found on the network, waiting..");
-                        gl.ao.serengeti.Serengeti.server.serve();
+                        Serengeti.server.serve();
                     }
                 }
             }
@@ -365,7 +366,7 @@ public class Network {
      */
     public JSONObject getSelfNode() {
         JSONObject json = new JSONObject();
-        json.put("id", gl.ao.serengeti.Serengeti.server.server_constants.id);
+        json.put("id", Serengeti.server.server_constants.id);
         json.put("ip", myIP);
 
         return json;
