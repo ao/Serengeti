@@ -1320,7 +1320,7 @@ public class JSONArray implements Iterable<Object> {
      * </b>
      * 
      * @param indentFactor
-     *            The number of spaces to add to each level of indentation.
+     *            The number of spaces to serengeti to each level of indentation.
      * @return a printable, displayable, transmittable representation of the
      *         object, beginning with <code>[</code>&nbsp;<small>(left
      *         bracket)</small> and ending with <code>]</code>
@@ -1370,7 +1370,7 @@ public class JSONArray implements Iterable<Object> {
      * @param writer
      *            Writes the serialized JSON
      * @param indentFactor
-     *            The number of spaces to add to each level of indentation.
+     *            The number of spaces to serengeti to each level of indentation.
      * @param indent
      *            The indentation of the top level.
      * @return The writer.
