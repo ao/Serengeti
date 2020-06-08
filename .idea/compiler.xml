@@ -6,12 +6,12 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
-        <module name="add" />
+        <module name="Serengeti" />
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel target="1.8">
-      <module name="add" target="1.8" />
       <module name="ADDI" target="1.8" />
+      <module name="Serengeti" target="1.8" />
     </bytecodeTargetLevel>
   </component>
 </project>

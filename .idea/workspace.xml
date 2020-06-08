@@ -6,9 +6,49 @@
     </artifacts-to-build>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="abe8f7d5-88c3-4e26-9356-ecab695b70e6" name="Default" comment="Update project files">
+    <list default="true" id="abe8f7d5-88c3-4e26-9356-ecab695b70e6" name="Default" comment="Adding some tests">
+      <change afterPath="$PROJECT_DIR$/.idea/pylint.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/Serengeti.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/test/java/gl/ao/serengeti/SerengetiTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/artifacts/add_jar.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/artifacts/add_jar.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/compiler.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/compiler.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Maven__org_junit_jupiter_junit_jupiter_api_5_5_1.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Maven__org_junit_jupiter_junit_jupiter_api_5_7_0_M1.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Maven__org_junit_platform_junit_platform_commons_1_5_1.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Maven__org_junit_platform_junit_platform_commons_1_7_0_M1.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ADD.iml" beforeDir="false" afterPath="$PROJECT_DIR$/ADD.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ADD.iml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Dockerfile" beforeDir="false" afterPath="$PROJECT_DIR$/Dockerfile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/pom.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/META-INF/MANIFEST.MF" beforeDir="false" afterPath="$PROJECT_DIR$/src/META-INF/MANIFEST.MF" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/META-INF/MANIFEST.MF" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/META-INF/MANIFEST.MF" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/ADD.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/Serengeti.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/AppendingObjectOutputStream.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/helpers/AppendingObjectOutputStream.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/Globals.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/helpers/Globals.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/ShutdownHandler.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/helpers/ShutdownHandler.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/network/Network.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/network/Network.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/query/QueryEngine.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/query/QueryEngine.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/query/QueryLog.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/query/QueryLog.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/query/QueryResponseObject.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/query/QueryResponseObject.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/schema/DatabaseObject.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/schema/DatabaseObject.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/schema/TableReplicaObject.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/schema/TableReplicaObject.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/schema/TableStorageObject.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/schema/TableStorageObject.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/server/Server.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/server/Server.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/server/ServerConstants.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/server/ServerConstants.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/storage/Storage.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/storage/Storage.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/storage/StorageReshuffle.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/storage/StorageReshuffle.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/storage/StorageResponseObject.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/storage/StorageResponseObject.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/storage/StorageScheduler.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/storage/StorageScheduler.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/ui/Dashboard.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/ui/Dashboard.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/add/ui/Interactive.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/ui/Interactive.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/org/json/CookieList.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/org/json/CookieList.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/org/json/JSONArray.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/org/json/JSONArray.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/org/json/JSONObject.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/org/json/JSONObject.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/org/json/JSONPointer.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/org/json/JSONPointer.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/resources/META-INF/MANIFEST.MF" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/resources/META-INF/MANIFEST.MF" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/java/gl/ao/add/ADDTest.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/java/gl/ao/add/ui/DashboardTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/java/gl/ao/serengeti/ui/DashboardTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/java/gl/ao/add/ui/InteractiveTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/java/gl/ao/serengeti/ui/InteractiveTest.java" afterDir="false" />
     </list>
     <ignored path="$PROJECT_DIR$/out/" />
     <ignored path="$PROJECT_DIR$/target/" />
@@ -17,6 +57,14 @@
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ComposerSettings">
+    <execution>
+      <executable />
+    </execution>
+  </component>
+  <component name="CoverageViewManager">
+    <option name="myElementSize" value="181" />
   </component>
   <component name="CreatePatchCommitExecutor">
     <option name="PATCH_PATH" value="" />
@@ -37,62 +85,11 @@
   </component>
   <component name="FileEditorManager">
     <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/server/Server.java">
-          <provider selected="true" editor-type-id="text-editor">
-            <state>
-              <caret column="20" selection-start-column="20" selection-end-column="20" />
-              <folding>
-                <element signature="imports" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/pom.xml">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="525">
-              <caret line="35" column="21" selection-start-line="35" selection-start-column="21" selection-end-line="35" selection-end-column="21" />
-            </state>
-          </provider>
-        </entry>
-      </file>
       <file pinned="false" current-in-tab="true">
-        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/network/Network.java">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/server/Server.java">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="480">
-              <caret line="39" column="9" lean-forward="true" selection-start-line="39" selection-start-column="9" selection-end-line="39" selection-end-column="9" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/Globals.java">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="131">
-              <caret line="127" column="14" lean-forward="true" selection-start-line="127" selection-start-column="14" selection-end-line="127" selection-end-column="14" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/README.md">
-          <provider selected="true" editor-type-id="split-provider[text-editor;markdown-preview-editor]">
-            <state split_layout="SPLIT">
-              <first_editor relative-caret-position="795">
-                <caret line="53" selection-start-line="53" selection-end-line="53" />
-              </first_editor>
-              <second_editor />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/storage/StorageScheduler.java">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="1110">
-              <caret line="82" selection-start-line="82" selection-end-line="82" />
+            <state relative-caret-position="177">
+              <caret line="168" column="50" selection-start-line="168" selection-start-column="50" selection-end-line="168" selection-end-column="50" />
               <folding>
                 <element signature="imports" expanded="true" />
               </folding>
@@ -101,10 +98,19 @@
         </entry>
       </file>
       <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/add/ui/InteractiveTest.java">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/Serengeti.java">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="105">
-              <caret line="14" column="4" selection-start-line="14" selection-start-column="4" selection-end-line="14" selection-end-column="4" />
+            <state relative-caret-position="308">
+              <caret line="40" column="22" selection-start-line="40" selection-start-column="22" selection-end-line="40" selection-end-column="22" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/serengeti/SerengetiTest.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="150">
+              <caret line="10" column="10" selection-start-line="10" selection-start-column="10" selection-end-line="10" selection-end-column="10" />
               <folding>
                 <element signature="imports" expanded="true" />
               </folding>
@@ -113,10 +119,28 @@
         </entry>
       </file>
       <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/add/ui/DashboardTest.java">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/network/Network.java">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="195">
-              <caret line="20" selection-start-line="20" selection-end-line="20" />
+            <state relative-caret-position="2400">
+              <caret line="166" column="16" selection-start-line="166" selection-start-column="16" selection-end-line="166" selection-end-column="16" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/schema/DatabaseObject.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="233">
+              <caret line="46" column="26" selection-start-line="46" selection-start-column="26" selection-end-line="46" selection-end-column="26" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/query/QueryEngine.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="210">
+              <caret line="19" column="9" selection-start-line="19" selection-start-column="9" selection-end-line="19" selection-end-column="9" />
               <folding>
                 <element signature="imports" expanded="true" />
               </folding>
@@ -125,7 +149,16 @@
         </entry>
       </file>
       <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/ui/Dashboard.java">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/query/QueryLog.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="150">
+              <caret line="18" column="13" selection-start-line="18" selection-start-column="13" selection-end-line="18" selection-end-column="13" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/ui/Dashboard.java">
           <provider selected="true" editor-type-id="text-editor">
             <state relative-caret-position="300">
               <caret line="24" selection-start-line="24" selection-end-line="24" />
@@ -136,22 +169,37 @@
           </provider>
         </entry>
       </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/helpers/Globals.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="150">
+              <caret line="59" column="25" lean-forward="true" selection-start-line="59" selection-start-column="25" selection-end-line="59" selection-end-column="25" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/server/ServerConstants.java">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="60">
+              <caret line="4" column="13" selection-start-line="4" selection-start-column="13" selection-end-line="4" selection-end-column="13" />
+            </state>
+          </provider>
+        </entry>
+      </file>
     </leaf>
   </component>
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
       <list>
         <option value="package-info" />
-        <option value="JUnit5 Test Class" />
         <option value="Class" />
+        <option value="JUnit5 Test Class" />
       </list>
     </option>
   </component>
   <component name="FindInProjectRecents">
     <findStrings>
-      <find>broadcastToNetwork</find>
-      <find>QueryEngine</find>
-      <find>Storage</find>
       <find>try {             FileOutputStream fos = new FileOutputStream(pieces_path + db + &quot;/&quot; + table + &quot;/&quot; + newId + piece_extention);             ObjectOutputStream oos = new ObjectOutputStream(fos);             oos.writeObject(newRow);             return true;         } catch (Exception e) {             e.printStackTrace();         }</find>
       <find>create</find>
       <find>tableExists</find>
@@ -179,10 +227,18 @@
       <find>.add</find>
       <find>select</find>
       <find>json</find>
+      <find>myINA</find>
+      <find>myIP</find>
+      <find>autonomous dis</find>
     </findStrings>
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="master" />
+      </map>
+    </option>
     <option name="PUSH_TAGS">
       <GitPushTagMode />
     </option>
@@ -229,6 +285,15 @@
         <option value="$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/DatabaseObject.java" />
         <option value="$PROJECT_DIR$/README.md" />
         <option value="$PROJECT_DIR$/pom.xml" />
+        <option value="$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/Globals.java" />
+        <option value="$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/GlobalsTest.java" />
+        <option value="$PROJECT_DIR$/src/main/java/gl/ao/add/ui/Dashboard.java" />
+        <option value="$PROJECT_DIR$/src/test/java/gl/ao/add/server/ServerTest.java" />
+        <option value="$PROJECT_DIR$/src/test/java/gl/ao/add/ADDTest.java" />
+        <option value="$PROJECT_DIR$/src/main/java/gl/ao/add/ADD.java" />
+        <option value="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/ADD.java" />
+        <option value="$PROJECT_DIR$/src/test/java/gl/ao/serengeti/SerengetiTest.java" />
+        <option value="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/server/Server.java" />
       </list>
     </option>
   </component>
@@ -255,10 +320,13 @@
       <select />
     </treeState>
   </component>
+  <component name="PhpServers">
+    <servers />
+  </component>
   <component name="ProjectFrameBounds">
     <option name="y" value="23" />
-    <option name="width" value="2656" />
-    <option name="height" value="1702" />
+    <option name="width" value="1920" />
+    <option name="height" value="1140" />
   </component>
   <component name="ProjectLevelVcsManager" settingsEditedManually="true">
     <OptionsSetting value="false" id="Update" />
@@ -268,6 +336,41 @@
       <foldersAlwaysOnTop value="true" />
     </navigator>
     <panes>
+      <pane id="Scope" />
+      <pane id="ProjectPane">
+        <subPane>
+          <expand>
+            <path>
+              <item name="Serengeti" type="b2602c69:ProjectViewProjectNode" />
+              <item name="Serengeti" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="Serengeti" type="b2602c69:ProjectViewProjectNode" />
+              <item name="Serengeti" type="462c0819:PsiDirectoryNode" />
+              <item name="data" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="Serengeti" type="b2602c69:ProjectViewProjectNode" />
+              <item name="Serengeti" type="462c0819:PsiDirectoryNode" />
+              <item name="src" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="Serengeti" type="b2602c69:ProjectViewProjectNode" />
+              <item name="Serengeti" type="462c0819:PsiDirectoryNode" />
+              <item name="src" type="462c0819:PsiDirectoryNode" />
+              <item name="main" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="Serengeti" type="b2602c69:ProjectViewProjectNode" />
+              <item name="Serengeti" type="462c0819:PsiDirectoryNode" />
+              <item name="src" type="462c0819:PsiDirectoryNode" />
+              <item name="main" type="462c0819:PsiDirectoryNode" />
+              <item name="java" type="462c0819:PsiDirectoryNode" />
+            </path>
+          </expand>
+          <select />
+        </subPane>
+      </pane>
       <pane id="PackagesPane">
         <subPane>
           <expand>
@@ -296,58 +399,6 @@
           <select />
         </subPane>
       </pane>
-      <pane id="Scope" />
-      <pane id="ProjectPane">
-        <subPane>
-          <expand>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="src" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="src" type="462c0819:PsiDirectoryNode" />
-              <item name="main" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="src" type="462c0819:PsiDirectoryNode" />
-              <item name="main" type="462c0819:PsiDirectoryNode" />
-              <item name="java" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="src" type="462c0819:PsiDirectoryNode" />
-              <item name="main" type="462c0819:PsiDirectoryNode" />
-              <item name="java" type="462c0819:PsiDirectoryNode" />
-              <item name="add" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="src" type="462c0819:PsiDirectoryNode" />
-              <item name="main" type="462c0819:PsiDirectoryNode" />
-              <item name="java" type="462c0819:PsiDirectoryNode" />
-              <item name="add" type="462c0819:PsiDirectoryNode" />
-              <item name="network" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="ADD" type="b2602c69:ProjectViewProjectNode" />
-              <item name="ADD" type="462c0819:PsiDirectoryNode" />
-              <item name="target" type="462c0819:PsiDirectoryNode" />
-            </path>
-          </expand>
-          <select />
-        </subPane>
-      </pane>
     </panes>
   </component>
   <component name="PropertiesComponent">
@@ -361,6 +412,8 @@
     <property name="aspect.path.notification.shown" value="true" />
     <property name="com.android.tools.idea.instantapp.provision.ProvisionBeforeRunTaskProvider.myTimeStamp" value="1544632990047" />
     <property name="com.intellij.testIntegration.createTest.CreateTestDialog.defaultLibrary" value="JUnit5" />
+    <property name="com.intellij.testIntegration.createTest.CreateTestDialog.defaultLibrarySuperClass.JUnit5" value="" />
+    <property name="create.test.in.the.same.root" value="true" />
     <property name="go.gopath.indexing.explicitly.defined" value="true" />
     <property name="go.import.settings.migrated" value="true" />
     <property name="js-jscs-nodeInterpreter" value="$USER_HOME$/homebrew/bin/node" />
@@ -370,18 +423,14 @@
     <property name="project.structure.last.edited" value="Modules" />
     <property name="project.structure.proportion" value="0.15" />
     <property name="project.structure.side.proportion" value="0.2" />
-    <property name="settings.editor.selected.configurable" value="RemoteServers" />
+    <property name="settings.editor.selected.configurable" value="configurable.group.tools" />
   </component>
   <component name="RecentsManager">
     <key name="CreateTestDialog.RecentsKey">
+      <recent name="gl.ao.add" />
+      <recent name="gl.ao.add.server" />
+      <recent name="gl.ao.add.helpers" />
       <recent name="gl.ao.addi" />
-    </key>
-    <key name="MoveFile.RECENT_KEYS">
-      <recent name="$PROJECT_DIR$/src/main/java" />
-      <recent name="$PROJECT_DIR$/src/gl.ao.addi" />
-    </key>
-    <key name="CreateTestDialog.Recents.Supers">
-      <recent name="" />
     </key>
     <key name="CopyClassDialog.RECENTS_KEY">
       <recent name="" />
@@ -390,6 +439,13 @@
       <recent name="$PROJECT_DIR$" />
       <recent name="$PROJECT_DIR$/data/pieces" />
       <recent name="$PROJECT_DIR$/src/main/java/org/json" />
+    </key>
+    <key name="CreateTestDialog.Recents.Supers">
+      <recent name="" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src/main/java" />
+      <recent name="$PROJECT_DIR$/src/gl.ao.addi" />
     </key>
   </component>
   <component name="RunDashboard">
@@ -404,58 +460,7 @@
       </list>
     </option>
   </component>
-  <component name="RunManager">
-    <configuration default="true" type="DjangoTestsConfigurationType" factoryName="Django tests">
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs>
-        <env name="PYTHONUNBUFFERED" value="1" />
-      </envs>
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <module name="ADDI" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
-      <option name="TARGET" value="" />
-      <option name="SETTINGS_FILE" value="" />
-      <option name="CUSTOM_SETTINGS" value="false" />
-      <option name="USE_OPTIONS" value="false" />
-      <option name="OPTIONS" value="" />
-      <method />
-    </configuration>
-    <configuration default="true" type="PythonConfigurationType" factoryName="Python">
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs>
-        <env name="PYTHONUNBUFFERED" value="1" />
-      </envs>
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <module name="ADDI" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="" />
-      <option name="PARAMETERS" value="" />
-      <option name="SHOW_COMMAND_LINE" value="false" />
-      <method />
-    </configuration>
-    <configuration default="true" type="Tox" factoryName="Tox">
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs />
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
-      <module name="ADDI" />
-      <method />
-    </configuration>
+  <component name="RunManager" selected="Application.Serengeti">
     <configuration default="true" type="tests" factoryName="Attests">
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
@@ -476,105 +481,15 @@
       <option name="USE_PATTERN" value="false" />
       <method />
     </configuration>
-    <configuration default="true" type="tests" factoryName="Doctests">
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs />
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <module name="ADDI" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="" />
-      <option name="CLASS_NAME" value="" />
-      <option name="METHOD_NAME" value="" />
-      <option name="FOLDER_NAME" value="" />
-      <option name="TEST_TYPE" value="TEST_SCRIPT" />
-      <option name="PATTERN" value="" />
-      <option name="USE_PATTERN" value="false" />
-      <method />
-    </configuration>
-    <configuration default="true" type="tests" factoryName="Nosetests">
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs />
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <module name="ADDI" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="" />
-      <option name="CLASS_NAME" value="" />
-      <option name="METHOD_NAME" value="" />
-      <option name="FOLDER_NAME" value="" />
-      <option name="TEST_TYPE" value="TEST_SCRIPT" />
-      <option name="PATTERN" value="" />
-      <option name="USE_PATTERN" value="false" />
-      <option name="PARAMS" value="" />
-      <option name="USE_PARAM" value="false" />
-      <method />
-    </configuration>
-    <configuration default="true" type="tests" factoryName="Unittests">
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs />
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <module name="ADDI" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="" />
-      <option name="CLASS_NAME" value="" />
-      <option name="METHOD_NAME" value="" />
-      <option name="FOLDER_NAME" value="" />
-      <option name="TEST_TYPE" value="TEST_SCRIPT" />
-      <option name="PATTERN" value="" />
-      <option name="USE_PATTERN" value="false" />
-      <option name="PUREUNITTEST" value="true" />
-      <option name="PARAMS" value="" />
-      <option name="USE_PARAM" value="false" />
-      <method />
-    </configuration>
-    <configuration default="true" type="tests" factoryName="py.test">
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs />
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <module name="ADDI" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" enabled="false" sample_coverage="true" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="" />
-      <option name="CLASS_NAME" value="" />
-      <option name="METHOD_NAME" value="" />
-      <option name="FOLDER_NAME" value="" />
-      <option name="TEST_TYPE" value="TEST_SCRIPT" />
-      <option name="PATTERN" value="" />
-      <option name="USE_PATTERN" value="false" />
-      <option name="testToRun" value="" />
-      <option name="keywords" value="" />
-      <option name="params" value="" />
-      <option name="USE_PARAM" value="false" />
-      <option name="USE_KEYWORD" value="false" />
-      <method />
-    </configuration>
     <configuration default="true" type="Applet">
       <option name="POLICY_FILE" value="$APPLICATION_HOME_DIR$/bin/appletviewer.policy" />
       <method v="2">
         <option name="Make" enabled="true" />
       </method>
     </configuration>
-    <configuration name="ADD" type="Application" factoryName="Application" temporary="true" nameIsGenerated="true">
-      <option name="MAIN_CLASS_NAME" value="gl.ao.add.ADD" />
-      <module name="add" />
+    <configuration name="Serengeti" type="Application" factoryName="Application" temporary="true" nameIsGenerated="true">
+      <option name="MAIN_CLASS_NAME" value="gl.ao.serengeti.Serengeti" />
+      <module name="Serengeti" />
       <extension name="coverage">
         <pattern>
           <option name="PATTERN" value="gl.ao.addi.network.*" />
@@ -619,6 +534,26 @@
         <option name="Make" enabled="true" />
       </method>
     </configuration>
+    <configuration default="true" type="DjangoTestsConfigurationType">
+      <module name="ADDI" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="TARGET" value="" />
+      <option name="SETTINGS_FILE" value="" />
+      <option name="CUSTOM_SETTINGS" value="false" />
+      <option name="USE_OPTIONS" value="false" />
+      <option name="OPTIONS" value="" />
+      <method v="2" />
+    </configuration>
     <configuration default="true" type="GrailsRunConfigurationType" factoryName="Grails">
       <setting name="vmparams" value="" />
       <setting name="cmdLine" value="run-app" />
@@ -627,6 +562,51 @@
       <setting name="launchBrowserUrl" value="" />
       <setting name="depsClasspath" value="false" />
       <method v="2" />
+    </configuration>
+    <configuration name="SerengetiTest" type="JUnit" factoryName="JUnit" temporary="true" nameIsGenerated="true">
+      <module name="Serengeti" />
+      <extension name="coverage">
+        <pattern>
+          <option name="PATTERN" value="gl.ao.serengeti.*" />
+          <option name="ENABLED" value="true" />
+        </pattern>
+      </extension>
+      <option name="PACKAGE_NAME" value="gl.ao.serengeti" />
+      <option name="MAIN_CLASS_NAME" value="gl.ao.serengeti.SerengetiTest" />
+      <option name="TEST_OBJECT" value="class" />
+      <option name="WORKING_DIRECTORY" value="$MODULE_DIR$" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="SerengetiTest.main" type="JUnit" factoryName="JUnit" temporary="true" nameIsGenerated="true">
+      <module name="Serengeti" />
+      <extension name="coverage">
+        <pattern>
+          <option name="PATTERN" value="gl.ao.serengeti.*" />
+          <option name="ENABLED" value="true" />
+        </pattern>
+      </extension>
+      <option name="PACKAGE_NAME" value="gl.ao.serengeti" />
+      <option name="MAIN_CLASS_NAME" value="gl.ao.serengeti.SerengetiTest" />
+      <option name="METHOD_NAME" value="main" />
+      <option name="TEST_OBJECT" value="method" />
+      <option name="WORKING_DIRECTORY" value="$MODULE_DIR$" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Test runner" type="JUnit" factoryName="JUnit">
+      <module name="Serengeti" />
+      <option name="PACKAGE_NAME" value="" />
+      <option name="MAIN_CLASS_NAME" value="" />
+      <option name="METHOD_NAME" value="" />
+      <option name="TEST_OBJECT" value="package" />
+      <option name="PARAMETERS" value="" />
+      <option name="WORKING_DIRECTORY" value="$MODULE_DIR$" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
     </configuration>
     <configuration default="true" type="JUnit" factoryName="JUnit">
       <option name="TEST_OBJECT" value="class" />
@@ -669,6 +649,28 @@
         <option name="Make" enabled="true" />
       </method>
     </configuration>
+    <configuration default="true" type="PythonConfigurationType" factoryName="Python">
+      <module name="ADDI" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
     <configuration default="true" type="TestNG">
       <option name="TEST_OBJECT" value="CLASS" />
       <option name="WORKING_DIRECTORY" value="$MODULE_DIR$" />
@@ -677,6 +679,18 @@
       <method v="2">
         <option name="Make" enabled="true" />
       </method>
+    </configuration>
+    <configuration default="true" type="Tox" factoryName="Tox">
+      <module name="ADDI" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <method v="2" />
     </configuration>
     <configuration default="true" type="#org.jetbrains.idea.devkit.run.PluginConfigurationType">
       <module name="" />
@@ -696,9 +710,83 @@
       <envs />
       <method v="2" />
     </configuration>
+    <configuration default="true" type="tests" factoryName="Doctests">
+      <module name="ADDI" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="" />
+      <option name="CLASS_NAME" value="" />
+      <option name="METHOD_NAME" value="" />
+      <option name="FOLDER_NAME" value="" />
+      <option name="TEST_TYPE" value="TEST_SCRIPT" />
+      <option name="PATTERN" value="" />
+      <option name="USE_PATTERN" value="false" />
+      <method v="2" />
+    </configuration>
+    <configuration default="true" type="tests" factoryName="Nosetests">
+      <module name="ADDI" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="_new_regexPattern" value="&quot;&quot;" />
+      <option name="_new_additionalArguments" value="&quot;&quot;" />
+      <option name="_new_target" value="&quot;&quot;" />
+      <option name="_new_targetType" value="&quot;PATH&quot;" />
+      <method v="2" />
+    </configuration>
+    <configuration default="true" type="tests" factoryName="Unittests">
+      <module name="ADDI" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="_new_additionalArguments" value="&quot;&quot;" />
+      <option name="_new_target" value="&quot;&quot;" />
+      <option name="_new_targetType" value="&quot;PATH&quot;" />
+      <method v="2" />
+    </configuration>
+    <configuration default="true" type="tests" factoryName="py.test">
+      <module name="ADDI" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="_new_keywords" value="&quot;&quot;" />
+      <option name="_new_additionalArguments" value="&quot;&quot;" />
+      <option name="_new_target" value="&quot;&quot;" />
+      <option name="_new_targetType" value="&quot;PATH&quot;" />
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Application.Serengeti" />
+      <item itemvalue="JUnit.Test runner" />
+      <item itemvalue="JUnit.SerengetiTest.main" />
+      <item itemvalue="JUnit.SerengetiTest" />
+    </list>
     <recent_temporary>
       <list>
-        <item itemvalue="Application.ADD" />
+        <item itemvalue="Application.Serengeti" />
+        <item itemvalue="JUnit.SerengetiTest" />
+        <item itemvalue="JUnit.SerengetiTest.main" />
       </list>
     </recent_temporary>
   </component>
@@ -718,6 +806,12 @@
       <workItem from="1544180494565" duration="2504000" />
       <workItem from="1544503909488" duration="5621000" />
       <workItem from="1564324382595" duration="3774000" />
+      <workItem from="1564350528223" duration="2241000" />
+      <workItem from="1574613315212" duration="19000" />
+      <workItem from="1589900797001" duration="972000" />
+      <workItem from="1590094409173" duration="3872000" />
+      <workItem from="1590186798332" duration="1750000" />
+      <workItem from="1591638603334" duration="438000" />
     </task>
     <task id="LOCAL-00001" summary="Update project files">
       <created>1564323061541</created>
@@ -733,11 +827,57 @@
       <option name="project" value="LOCAL" />
       <updated>1564326583536</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="Update project files">
+      <created>1564350649119</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1564350649119</updated>
+    </task>
+    <task id="LOCAL-00004" summary="Adding some tests">
+      <created>1590099527082</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1590099527082</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
+  <component name="TestHistory">
+    <history-entry file="ADDTest - 2020.05.21 at 23h 07m 07s.xml">
+      <configuration name="ADDTest" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="ADDTest - 2020.05.21 at 23h 13m 00s.xml">
+      <configuration name="ADDTest" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="ADDTest_main - 2020.05.21 at 23h 14m 58s.xml">
+      <configuration name="ADDTest.main" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="ADDTest - 2020.05.21 at 23h 15m 28s.xml">
+      <configuration name="ADDTest" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="ADDTest - 2020.05.21 at 23h 15m 31s.xml">
+      <configuration name="ADDTest" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="ADDTest - 2020.05.21 at 23h 16m 18s.xml">
+      <configuration name="ADDTest" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="ADDTest - 2020.05.21 at 23h 16m 31s.xml">
+      <configuration name="ADDTest" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="ADDTest - 2020.05.21 at 23h 19m 02s.xml">
+      <configuration name="ADDTest" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="Test_runner - 2020.05.21 at 23h 19m 09s.xml">
+      <configuration name="Test runner" configurationId="JUnit" />
+    </history-entry>
+    <history-entry file="Test_runner - 2020.05.21 at 23h 19m 23s.xml">
+      <configuration name="Test runner" configurationId="JUnit" />
+    </history-entry>
+  </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="170520000" />
+    <option name="totallyTimeSpent" value="179812000" />
   </component>
   <component name="TodoView">
     <todo-panel id="selected-file">
@@ -749,10 +889,10 @@
     </todo-panel>
   </component>
   <component name="ToolWindowManager">
-    <frame x="0" y="23" width="2656" height="1702" extended-state="0" />
+    <frame x="0" y="23" width="1920" height="1140" extended-state="0" />
     <editor active="true" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.22149962" />
+      <window_info content_ui="combo" id="Project" order="0" visible="true" weight="0.2140575" />
       <window_info id="Structure" order="1" weight="0.25" />
       <window_info id="Nl-Palette" order="2" />
       <window_info id="Capture Tool" order="3" />
@@ -761,19 +901,20 @@
       <window_info id="Favorites" order="6" side_tool="true" />
       <window_info id="Image Layers" order="7" />
       <window_info anchor="bottom" id="Message" order="0" />
-      <window_info anchor="bottom" id="Find" order="1" weight="0.3281412" />
-      <window_info anchor="bottom" id="Run" order="2" weight="0.37962964" />
-      <window_info anchor="bottom" id="Debug" order="3" weight="0.23964968" />
+      <window_info anchor="bottom" id="Find" order="1" weight="0.32780486" />
+      <window_info active="true" anchor="bottom" id="Run" order="2" visible="true" weight="0.43414634" />
+      <window_info anchor="bottom" id="Debug" order="3" weight="0.46439025" />
       <window_info anchor="bottom" id="Cvs" order="4" weight="0.25" />
       <window_info anchor="bottom" id="Inspection" order="5" weight="0.4" />
       <window_info anchor="bottom" id="TODO" order="6" />
       <window_info anchor="bottom" id="Event Log" order="7" side_tool="true" />
       <window_info anchor="bottom" id="Version Control" order="8" />
       <window_info anchor="bottom" id="Terminal" order="9" />
-      <window_info anchor="bottom" id="Messages" order="10" weight="0.40705433" />
+      <window_info anchor="bottom" id="Messages" order="10" weight="0.40682927" />
       <window_info anchor="bottom" id="Inspection Results" order="11" weight="0.32976446" />
       <window_info anchor="bottom" id="Docker" order="12" show_stripe_button="false" />
       <window_info anchor="bottom" id="Database Changes" order="13" />
+      <window_info anchor="bottom" id="Pylint" order="14" />
       <window_info anchor="right" id="Commander" order="0" weight="0.4" />
       <window_info anchor="right" id="Ant Build" order="1" weight="0.25" />
       <window_info anchor="right" content_ui="combo" id="Hierarchy" order="2" weight="0.25" />
@@ -785,6 +926,8 @@
       <window_info anchor="right" id="Theme Preview" order="8" />
       <window_info anchor="right" id="Palette&#9;" order="9" />
       <window_info anchor="right" id="Maven" order="10" />
+      <window_info anchor="right" id="SciView" order="11" />
+      <window_info active="true" anchor="right" id="Coverage" order="12" side_tool="true" visible="true" weight="0.23162939" />
     </layout>
     <layout-to-restore>
       <window_info content_ui="combo" id="Project" order="0" visible="true" weight="0.11474878" />
@@ -830,7 +973,8 @@
     <option name="CHECK_CODE_SMELLS_BEFORE_PROJECT_COMMIT" value="false" />
     <option name="CHECK_NEW_TODO" value="false" />
     <MESSAGE value="Update project files" />
-    <option name="LAST_COMMIT_MESSAGE" value="Update project files" />
+    <MESSAGE value="Adding some tests" />
+    <option name="LAST_COMMIT_MESSAGE" value="Adding some tests" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -847,6 +991,12 @@
           <properties />
           <option name="timeStamp" value="110" />
         </line-breakpoint>
+        <line-breakpoint enabled="true" type="java-line">
+          <url>file://$PROJECT_DIR$/src/test/java/gl/ao/serengeti/SerengetiTest.java</url>
+          <line>15</line>
+          <properties />
+          <option name="timeStamp" value="111" />
+        </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>
   </component>
@@ -854,18 +1004,13 @@
     <option name="IS_AUTOSCROLL_TO_SOURCE" value="false" />
     <option name="FILTER_TARGETS" value="false" />
   </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/ADD$ADDTest.ic" NAME="ADDTest Coverage Results" MODIFIED="1590099540327" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="idea" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false">
+      <FILTER>gl.ao.add.*</FILTER>
+    </SUITE>
+    <SUITE FILE_PATH="coverage/ADD$Test_runner.ic" NAME="Test runner Coverage Results" MODIFIED="1590099560679" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="idea" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" />
+  </component>
   <component name="editorHistoryManager">
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/Serializer.java" />
-    <entry file="file://$PROJECT_DIR$/data/pieces/test1__users__ed655b06-b484-4b75-86cb-441a546c3e75.ddbp" />
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/package-info.java" />
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/Multicaster.java" />
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/network/NetworkScanner.java" />
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/query/QueryResponseObject.java" />
-    <entry file="file://$PROJECT_DIR$/data/test1.ddbm" />
-    <entry file="file://$PROJECT_DIR$/data/pieces/test1/users/882bb806-d9f8-47aa-98d9-fe1bcb0ea499.ddbp" />
-    <entry file="file://$PROJECT_DIR$/data/pieces/test1/users/774ed010-03c6-41c3-b571-095d15839f24.ddbp" />
-    <entry file="file://$PROJECT_DIR$/data/pieces/test1/users/09e35e25-cfed-4354-a614-50fbe1fe196b.ddbp" />
-    <entry file="file://$PROJECT_DIR$/data/pieces/test1/users/9aaf948b-a80a-4ca0-b103-d1748b34cffb.ddbp" />
     <entry file="file://$PROJECT_DIR$/data/pieces/db1/users/0b0a2dd4-48e5-4440-958f-f1eabf5bfa1a.ddbp" />
     <entry file="file://$PROJECT_DIR$/data/pieces/db1/users/c7f5e29f-d962-4f10-b64d-cfdaed4f3081.ddbp" />
     <entry file="jar:///Library/Java/JavaVirtualMachines/jdk1.8.0_121.jdk/Contents/Home/src.zip!/java/io/Serializable.java" />
@@ -896,7 +1041,6 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="15">
           <caret line="1" column="235" lean-forward="true" selection-start-line="1" selection-start-column="235" selection-end-line="1" selection-end-column="235" />
-          <folding />
         </state>
       </provider>
     </entry>
@@ -910,29 +1054,9 @@
     <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/Globals.java" />
     <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/storage/Storage.java" />
     <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/addi/schema/DatabaseObject.java" />
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/server/Server.java">
+    <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/serengeti/ui/InteractiveTest.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state>
-          <caret column="20" selection-start-column="20" selection-end-column="20" />
-          <folding>
-            <element signature="imports" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/storage/StorageScheduler.java">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="1110">
-          <caret line="82" selection-start-line="82" selection-end-line="82" />
-          <folding>
-            <element signature="imports" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/add/ui/InteractiveTest.java">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="105">
+        <state relative-caret-position="210">
           <caret line="14" column="4" selection-start-line="14" selection-start-column="4" selection-end-line="14" selection-end-column="4" />
           <folding>
             <element signature="imports" expanded="true" />
@@ -940,20 +1064,10 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/add/ui/DashboardTest.java">
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/storage/StorageScheduler.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="195">
-          <caret line="20" selection-start-line="20" selection-end-line="20" />
-          <folding>
-            <element signature="imports" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/ui/Dashboard.java">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="300">
-          <caret line="24" selection-start-line="24" selection-end-line="24" />
+        <state relative-caret-position="922">
+          <caret line="82" selection-start-line="82" selection-end-line="82" />
           <folding>
             <element signature="imports" expanded="true" />
           </folding>
@@ -970,24 +1084,125 @@
         </state>
       </provider>
     </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/GlobalsTest.java" />
+    <entry file="file://$PROJECT_DIR$/Dockerfile">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="60">
+          <caret line="4" column="35" lean-forward="true" selection-start-line="4" selection-start-column="35" selection-end-line="4" selection-end-column="35" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/add/server/ServerTest.java" />
+    <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/serengeti/ui/DashboardTest.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="60">
+          <caret line="11" column="12" selection-start-line="11" selection-start-column="12" selection-end-line="11" selection-end-column="12" />
+          <folding>
+            <element signature="imports" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/schema/TableStorageObject.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="60">
+          <caret line="11" column="13" selection-start-line="11" selection-start-column="13" selection-end-line="11" selection-end-column="13" />
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/pom.xml">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="525">
-          <caret line="35" column="21" selection-start-line="35" selection-start-column="21" selection-end-line="35" selection-end-column="21" />
+        <state relative-caret-position="150">
+          <caret line="10" column="11" lean-forward="true" selection-start-line="10" selection-start-column="11" selection-end-line="10" selection-end-column="11" />
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/helpers/Globals.java">
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/network/Network.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="131">
-          <caret line="127" column="14" lean-forward="true" selection-start-line="127" selection-start-column="14" selection-end-line="127" selection-end-column="14" />
+        <state relative-caret-position="2400">
+          <caret line="166" column="16" selection-start-line="166" selection-start-column="16" selection-end-line="166" selection-end-column="16" />
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/add/network/Network.java">
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/query/QueryEngine.java">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="480">
-          <caret line="39" column="9" lean-forward="true" selection-start-line="39" selection-start-column="9" selection-end-line="39" selection-end-column="9" />
+        <state relative-caret-position="210">
+          <caret line="19" column="9" selection-start-line="19" selection-start-column="9" selection-end-line="19" selection-end-column="9" />
+          <folding>
+            <element signature="imports" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/query/QueryLog.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="150">
+          <caret line="18" column="13" selection-start-line="18" selection-start-column="13" selection-end-line="18" selection-end-column="13" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/ui/Dashboard.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="300">
+          <caret line="24" selection-start-line="24" selection-end-line="24" />
+          <folding>
+            <element signature="imports" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="jar:///Library/Java/JavaVirtualMachines/jdk-11.0.1.jdk/Contents/Home/lib/src.zip!/java.base/java/io/ObjectInputStream.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="210">
+          <caret line="58" column="31" selection-start-line="58" selection-start-column="31" selection-end-line="58" selection-end-column="31" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/test/java/gl/ao/serengeti/SerengetiTest.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="150">
+          <caret line="10" column="10" selection-start-line="10" selection-start-column="10" selection-end-line="10" selection-end-column="10" />
+          <folding>
+            <element signature="imports" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/server/ServerConstants.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="60">
+          <caret line="4" column="13" selection-start-line="4" selection-start-column="13" selection-end-line="4" selection-end-column="13" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/Serengeti.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="308">
+          <caret line="40" column="22" selection-start-line="40" selection-start-column="22" selection-end-line="40" selection-end-column="22" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/schema/DatabaseObject.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="233">
+          <caret line="46" column="26" selection-start-line="46" selection-start-column="26" selection-end-line="46" selection-end-column="26" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/helpers/Globals.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="150">
+          <caret line="59" column="25" lean-forward="true" selection-start-line="59" selection-start-column="25" selection-end-line="59" selection-end-column="25" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/main/java/gl/ao/serengeti/server/Server.java">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="177">
+          <caret line="168" column="50" selection-start-line="168" selection-start-column="50" selection-end-line="168" selection-end-column="50" />
+          <folding>
+            <element signature="imports" expanded="true" />
+          </folding>
         </state>
       </provider>
     </entry>
@@ -1002,7 +1217,6 @@
             <option name="proportions">
               <list>
                 <option value="0.2" />
-                <option value="0.5" />
               </list>
             </option>
           </splitter-proportions>
@@ -1046,11 +1260,12 @@
       </state>
       <state key="ModuleStructureConfigurable.UI">
         <settings>
-          <last-edited>add</last-edited>
+          <last-edited>Serengeti</last-edited>
           <splitter-proportions>
             <option name="proportions">
               <list>
                 <option value="0.2" />
+                <option value="0.6" />
               </list>
             </option>
           </splitter-proportions>
