@@ -37,7 +37,7 @@ public class CookieList {
      * The pairs are separated by ';'. The names and the values
      * will be unescaped, possibly converting '+' and '%' sequences.
      *
-     * To add a cookie to a cookie list,
+     * To serengeti a cookie to a cookie list,
      * cookielistJSONObject.put(cookieJSONObject.getString("name"),
      *     cookieJSONObject.getString("value"));
      * @param string  A cookie list string
