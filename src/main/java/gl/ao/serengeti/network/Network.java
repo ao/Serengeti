@@ -54,88 +54,85 @@ public class Network {
 
             System.out.println("\nStartup: Checking to see if local data is stale..");
 
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    int changesFound = 0;
-                    for (Map.Entry<String, JSONObject> node: _availableNodes.entrySet()) {
-                        if (!Serengeti.server.server_constants.id.equals(node.getKey())) {
-                            JSONObject jsonObject = node.getValue();
+            new Thread(() -> {
+                int changesFound = 0;
+                for (Map.Entry<String, JSONObject> node: _availableNodes.entrySet()) {
+                    if (!Serengeti.server.server_constants.id.equals(node.getKey())) {
+                        JSONObject jsonObject = node.getValue();
 
-                            try {
-                                HttpURLConnection con = (HttpURLConnection) new URL("http://" + jsonObject.getString("ip") + ":" + Globals.port_default + "/meta").openConnection();
-                                con.setRequestMethod("GET");
-                                con.getDoOutput();
-                                con.setConnectTimeout(networkTimeout);
-                                con.setReadTimeout(networkTimeout);
-                                con.setRequestProperty("Content-Type", "application/json");
+                        try {
+                            HttpURLConnection con = (HttpURLConnection) new URL("http://" + jsonObject.getString("ip") + ":" + Globals.port_default + "/meta").openConnection();
+                            con.setRequestMethod("GET");
+                            con.getDoOutput();
+                            con.setConnectTimeout(networkTimeout);
+                            con.setReadTimeout(networkTimeout);
+                            con.setRequestProperty("Content-Type", "application/json");
 
-                                if (con.getResponseCode() == successStatus) {
-                                    BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-                                    String inputLine;
-                                    StringBuffer content = new StringBuffer();
-                                    while ((inputLine = in.readLine()) != null) {
-                                        content.append(inputLine);
-                                    }
+                            if (con.getResponseCode() == successStatus) {
+                                BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+                                String inputLine;
+                                StringBuffer content = new StringBuffer();
+                                while ((inputLine = in.readLine()) != null) {
+                                    content.append(inputLine);
+                                }
 
-                                    JSONObject jsonMeta = new JSONObject(content.toString()).getJSONObject("meta");
+                                JSONObject jsonMeta = new JSONObject(content.toString()).getJSONObject("meta");
 
-                                    Iterator<String> keys = jsonMeta.keys();
-                                    while(keys.hasNext()) {
-                                        String db = keys.next();
-                                        if (jsonMeta.get(db) instanceof JSONArray) {
-                                            JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
+                                Iterator<String> keys = jsonMeta.keys();
+                                while(keys.hasNext()) {
+                                    String db = keys.next();
+                                    if (jsonMeta.get(db) instanceof JSONArray) {
+                                        JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
 
-                                            if (!Serengeti.storage.databaseExists(db)) {
-                                                System.out.println("Startup: Creating missing database '"+db+"'");
-                                                Serengeti.storage.createDatabase(db, true);
+                                        if (!Serengeti.storage.databaseExists(db)) {
+                                            System.out.println("Startup: Creating missing database '"+db+"'");
+                                            Serengeti.storage.createDatabase(db, true);
+                                            changesFound++;
+                                        }
+
+                                        for (int i = 0; i < jsonArr.length(); i++) {
+                                            String table = jsonArr.getString(i);
+                                            if (!Serengeti.storage.tableExists(db, table)) {
+                                                System.out.println("Startup: Creating missing table '"+table+"' for database '"+db+"'");
+                                                Serengeti.storage.createTable(db, table, true);
                                                 changesFound++;
-                                            }
 
-                                            for (int i = 0; i < jsonArr.length(); i++) {
-                                                String table = jsonArr.getString(i);
-                                                if (!Serengeti.storage.tableExists(db, table)) {
-                                                    System.out.println("Startup: Creating missing table '"+table+"' for database '"+db+"'");
-                                                    Serengeti.storage.createTable(db, table, true);
-                                                    changesFound++;
+                                                String row_replicas = Serengeti.network.communicateQueryLogSingleNode( jsonObject.getString("id"), jsonObject.getString("ip"), new JSONObject(){{
+                                                    put("type", "SendTableReplicaToNode");
+                                                    put("db", db);
+                                                    put("table", table);
+                                                    put("node_id", Serengeti.server.server_constants.id);
+                                                    put("node_ip", Serengeti.network.myIP);
+                                                }}.toString() );
 
-                                                    String row_replicas = Serengeti.network.communicateQueryLogSingleNode( jsonObject.getString("id"), jsonObject.getString("ip"), new JSONObject(){{
-                                                        put("type", "SendTableReplicaToNode");
-                                                        put("db", db);
-                                                        put("table", table);
-                                                        put("node_id", Serengeti.server.server_constants.id);
-                                                        put("node_ip", Serengeti.network.myIP);
-                                                    }}.toString() );
-
-                                                    try {
-                                                        JSONObject jsonRowsReplica = new JSONObject(row_replicas);
-                                                        Iterator<String> jkeys = jsonRowsReplica.keys();
-                                                        while (jkeys.hasNext()) {
-                                                            String jrow_id = jkeys.next();
-                                                            JSONObject _json = new JSONObject(jsonRowsReplica.getString(jrow_id));
-                                                            Serengeti.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jrow_id, _json);
-                                                        }
-                                                    } catch (Exception e) {}
-                                                }
+                                                try {
+                                                    JSONObject jsonRowsReplica = new JSONObject(row_replicas);
+                                                    Iterator<String> jkeys = jsonRowsReplica.keys();
+                                                    while (jkeys.hasNext()) {
+                                                        String jrow_id = jkeys.next();
+                                                        JSONObject _json = new JSONObject(jsonRowsReplica.getString(jrow_id));
+                                                        Serengeti.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jrow_id, _json);
+                                                    }
+                                                } catch (Exception e) {}
                                             }
                                         }
                                     }
-
-                                    in.close();
                                 }
 
-
-
-                            } catch (Exception e) {
-                                e.printStackTrace();
+                                in.close();
                             }
 
+
+
+                        } catch (Exception e) {
+                            e.printStackTrace();
                         }
+
                     }
-                    Serengeti.network.online = true;
-                    System.out.println("Startup: Completed with "+changesFound+" changes found");
-                    Serengeti.server.serve();
                 }
+                Serengeti.network.online = true;
+                System.out.println("Startup: Completed with "+changesFound+" changes found");
+                Serengeti.server.serve();
             }).start();
         }
     }
@@ -145,18 +142,15 @@ public class Network {
      * Use a separate thread
      */
     public void findNodes() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    for (;;) {
-                        // Ping all nodes on the LAN (1-254) for any availableNodes listening on the desired port
-                        getNetworkIPsPorts();
-                        Thread.sleep(pingInterval);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
+        new Thread(() -> {
+            try {
+                for (;;) {
+                    // Ping all nodes on the LAN (1-254) for any availableNodes listening on the desired port
+                    getNetworkIPsPorts();
+                    Thread.sleep(pingInterval);
                 }
+            } catch (Exception e) {
+                e.printStackTrace();
             }
         }).start();
     }
@@ -199,59 +193,55 @@ public class Network {
 
             Serengeti.network.latencyRun = true;
             Serengeti.network.latency = 0;
-            Thread t = new Thread(new Runnable() {
-                public void run() {
+            Thread t = new Thread(() -> {
+                try {
+                    String _ip = baseIP+j;
 
-                    try {
-                        String _ip = baseIP+j;
+                    long startTime = System.currentTimeMillis();
 
-                        long startTime = System.currentTimeMillis();
-
-                        HttpURLConnection con = getURLConnection(_ip);
-                        int status = con.getResponseCode();
-                        if (status == successStatus) {
-                            BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-                            String inputLine;
-                            StringBuffer content = new StringBuffer();
-                            while ((inputLine = in.readLine()) != null) {
-                                content.append(inputLine);
-                            }
-
-                            JSONObject jsonObj = new JSONObject(content.toString());
-                            JSONObject nodeJSON = (JSONObject) jsonObj.get("this");
-                            nodeJSON.put("last_checked", currentTime);
-
-                            String nodeId = nodeJSON.get("id").toString();
-
-                            if (availableNodes.containsKey(nodeId)) availableNodes.replace(nodeId, nodeJSON);
-                            else availableNodes.put(nodeId, nodeJSON);
-
-                            in.close();
+                    HttpURLConnection con = getURLConnection(_ip);
+                    int status = con.getResponseCode();
+                    if (status == successStatus) {
+                        BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+                        String inputLine;
+                        StringBuffer content = new StringBuffer();
+                        while ((inputLine = in.readLine()) != null) {
+                            content.append(inputLine);
                         }
 
-                        if (Serengeti.network.latencyRun) {
-                            long elapsedTime = System.currentTimeMillis() - startTime;
-                            if (elapsedTime> Serengeti.network.latency) {
-                                Serengeti.network.latency = elapsedTime;
-                            }
-                        }
+                        JSONObject jsonObj = new JSONObject(content.toString());
+                        JSONObject nodeJSON = (JSONObject) jsonObj.get("this");
+                        nodeJSON.put("last_checked", currentTime);
 
+                        String nodeId = nodeJSON.get("id").toString();
 
-                        con.disconnect();
+                        if (availableNodes.containsKey(nodeId)) availableNodes.replace(nodeId, nodeJSON);
+                        else availableNodes.put(nodeId, nodeJSON);
 
-                    } catch (SocketTimeoutException ste) {
-                        // our own little /dev/null
-                    } catch (ConnectException ce) {
-                        // Connection refused (corporate network blocking?)
-                        //System.out.println(tryingIp+" : "+ce.getMessage());
-                    } catch (NoRouteToHostException e) {
-                        //java.net.NoRouteToHostException: No route to host (Host unreachable)
-                    } catch (IOException ioe) {
-                        //java.net.SocketException: Connection reset by peer (connect failed)
-                    } catch (Exception e) {
-                        e.printStackTrace();
+                        in.close();
                     }
 
+                    if (Serengeti.network.latencyRun) {
+                        long elapsedTime = System.currentTimeMillis() - startTime;
+                        if (elapsedTime> Serengeti.network.latency) {
+                            Serengeti.network.latency = elapsedTime;
+                        }
+                    }
+
+
+                    con.disconnect();
+
+                } catch (SocketTimeoutException ste) {
+                    // our own little /dev/null
+                } catch (ConnectException ce) {
+                    // Connection refused (corporate network blocking?)
+                    //System.out.println(tryingIp+" : "+ce.getMessage());
+                } catch (NoRouteToHostException e) {
+                    //java.net.NoRouteToHostException: No route to host (Host unreachable)
+                } catch (IOException ioe) {
+                    //java.net.SocketException: Connection reset by peer (connect failed)
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
             });
 
@@ -462,25 +452,23 @@ public class Network {
             // i as non-final variable cannot be referenced from inner class
             final int j = i;
             // new thread for parallel execution
-            new Thread(new Runnable() {
-                public void run() {
-                    try {
-                        ip[3] = (byte) j;
-                        InetAddress address = InetAddress.getByAddress(ip);
+            new Thread(() -> {
+                try {
+                    ip[3] = (byte) j;
+                    InetAddress address = InetAddress.getByAddress(ip);
 
-                        String output = address.toString().substring(1);
-                        if (address.isReachable(5000)) {
-                            System.out.println(output + " is on the network");
-                        } else {
-                            System.out.println("Not Reachable: "+output);
-                        }
-
-
-
-                    } catch (Exception e) {
-                        System.out.println(ip);
-                        e.printStackTrace();
+                    String output = address.toString().substring(1);
+                    if (address.isReachable(5000)) {
+                        System.out.println(output + " is on the network");
+                    } else {
+                        System.out.println("Not Reachable: "+output);
                     }
+
+
+
+                } catch (Exception e) {
+                    System.out.println(ip);
+                    e.printStackTrace();
                 }
             }).start();
         }
