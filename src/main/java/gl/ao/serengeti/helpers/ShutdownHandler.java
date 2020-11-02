@@ -11,13 +11,10 @@ public class ShutdownHandler {
          * e.g. https://bugs.openjdk.java.net/browse/JDK-7068835
          */
 
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                System.out.println("Safe Shutdown Initiated..");
-                if (gl.ao.serengeti.Serengeti.storageScheduler.performPersistToDisk()) {
-                    System.out.println("Safe Shutdown Completed Succesfully");
-                }
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("Safe Shutdown Initiated..");
+            if (gl.ao.serengeti.Serengeti.storageScheduler.performPersistToDisk()) {
+                System.out.println("Safe Shutdown Completed Succesfully");
             }
         }));
     }

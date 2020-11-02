@@ -16,19 +16,16 @@ public class StorageScheduler {
     public StorageScheduler() {}
 
     public void init() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    while (true) {
-                        Thread.sleep(60 * 1000);
-                        System.out.println("StorageScheduler Initiated..");
-                        performPersistToDisk();
-                        System.out.println("StorageScheduler Completed\n");
-                    }
-                } catch (InterruptedException ie) {
-                    ie.printStackTrace();
+        new Thread(() -> {
+            try {
+                while (true) {
+                    Thread.sleep(60 * 1000);
+                    System.out.println("StorageScheduler Initiated..");
+                    performPersistToDisk();
+                    System.out.println("StorageScheduler Completed\n");
                 }
+            } catch (InterruptedException ie) {
+                ie.printStackTrace();
             }
         }).start();
     }
@@ -58,9 +55,13 @@ public class StorageScheduler {
 
                         for (Object table : tables) {
                             gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(dbName + "#" + table).saveToDisk();
-                            System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' storage to disk (" + gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(dbName + "#" + table).rows.size() + " rows)");
+                            System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' storage to disk ("
+                                    + gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(dbName + "#"
+                                    + table).rows.size() + " rows)");
                             gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(dbName + "#" + table).saveToDisk();
-                            System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' replica to disk (" + gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(dbName + "#" + table).row_replicas.size() + " rows)");
+                            System.out.println(" └- Written table: '" + dbName + "'#'" + table + "' replica to disk ("
+                                    + gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(dbName + "#"
+                                    + table).row_replicas.size() + " rows)");
                         }
                     }
                 }
