@@ -16,19 +16,16 @@ public class StorageScheduler {
     public StorageScheduler() {}
 
     public void init() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    while (true) {
-                        Thread.sleep(60 * 1000);
-                        System.out.println("StorageScheduler Initiated..");
-                        performPersistToDisk();
-                        System.out.println("StorageScheduler Completed\n");
-                    }
-                } catch (InterruptedException ie) {
-                    ie.printStackTrace();
+        new Thread(() -> {
+            try {
+                while (true) {
+                    Thread.sleep(60 * 1000);
+                    System.out.println("StorageScheduler Initiated..");
+                    performPersistToDisk();
+                    System.out.println("StorageScheduler Completed\n");
                 }
+            } catch (InterruptedException ie) {
+                ie.printStackTrace();
             }
         }).start();
     }
