@@ -36,8 +36,7 @@ public class Storage {
         // clear the in-memory list of databases
         databases = new HashMap<>();
 
-        for (int i=0; i<dbs.size(); i++) {
-            String databaseName = dbs.get(i);
+        for (String databaseName : dbs) {
             Path file = Paths.get(Globals.data_path + databaseName + Globals.meta_extention);
             DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             databases.put(databaseName, dbo);
@@ -99,6 +98,7 @@ public class Storage {
 
         List<String> ddbs = new ArrayList<>();
 
+        assert files != null;
         for (File ddb : files) {
             ddbs.add(ddb.getName().replace(Globals.meta_extention, ""));
         }
@@ -120,6 +120,7 @@ public class Storage {
 
         Map<String, List> ddbs = new HashMap<>();
 
+        assert files != null;
         for (File ddb : files) {
             String dbName = ddb.getName().replace(Globals.meta_extention, "");
             List tables = getTables(dbName);
