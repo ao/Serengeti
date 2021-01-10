@@ -3,6 +3,7 @@ package gl.ao.serengeti.server;
 import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -15,6 +16,8 @@ import java.util.concurrent.Executors;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import gl.ao.serengeti.Serengeti;
+import gl.ao.serengeti.network.Network;
 import gl.ao.serengeti.ui.Dashboard;
 import gl.ao.serengeti.ui.Interactive;
 import gl.ao.serengeti.helpers.Globals;
@@ -26,7 +29,7 @@ import org.json.JSONObject;
 public class Server {
 
     public ServerConstants server_constants = null;
-    private String server_constants_file_location = Globals.data_path + "server.constants";
+    private final String server_constants_file_location = Globals.data_path + "server.constants";
     private Path server_constants_file = null;
 
     public void init() {
@@ -47,11 +50,11 @@ public class Server {
     }
 
     private void saveServerConstants() {
-        byte data[] = Globals.convertToBytes(server_constants);
+        byte[] data = Globals.convertToBytes(server_constants);
 
         try {
             Files.write(server_constants_file, data);
-        } catch (Exception e) {}
+        } catch (Exception ignore) {}
     }
 
     public void serve() {
@@ -76,7 +79,7 @@ public class Server {
         try {
             System.out.println("\nHTTP server started at http://" + Globals.getHost4Address() + ":1985/");
             System.out.println("Dashboard available at http://" + Globals.getHost4Address() + ":1985/dashboard");
-            System.out.println("\nNode is 'online' and ready to contribute (took "+(System.currentTimeMillis()- gl.ao.serengeti.Serengeti.startTime)+"ms to startup)");
+            System.out.println("\nNode is 'online' and ready to contribute (took "+(System.currentTimeMillis()- Serengeti.startTime)+"ms to startup)");
         } catch (SocketException se) {
             System.out.println("Could not start HTTP server started, IP lookup failed");
         }
@@ -99,13 +102,13 @@ public class Server {
             JSONObject jsonObjThis = new JSONObject();
 
             jsonObjThis.put("version", "0.0.1");
-            jsonObjThis.put("started", gl.ao.serengeti.Serengeti.currentDate);
+            jsonObjThis.put("started", Serengeti.currentDate);
 
-            jsonObjThis.put("id", gl.ao.serengeti.Serengeti.server.server_constants.id);
+            jsonObjThis.put("id", Serengeti.server.server_constants.id);
 
             DateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
             dateFormat.setTimeZone(java.util.TimeZone.getTimeZone("GMT"));
-            String formattedDate=dateFormat. format( new Date().getTime() - gl.ao.serengeti.Serengeti.currentDate.getTime() );
+            String formattedDate=dateFormat. format( new Date().getTime() - Serengeti.currentDate.getTime() );
             jsonObjThis.put("uptime", formattedDate);
 
             jsonObjThis.put("ip", Globals.getHost4Address());
@@ -168,9 +171,9 @@ public class Server {
             JSONObject jsonObjRoot = new JSONObject();
             jsonObjRoot.put("_", "Serengeti - The Autonomous Distributed Database");
             jsonObjRoot.put("this", jsonObjThis);
-            jsonObjRoot.put("totalNodes", Integer.toString(gl.ao.serengeti.Serengeti.network.availableNodes.size()));
-            jsonObjRoot.put("availableNodes", gl.ao.serengeti.Serengeti.network.availableNodes);
-            jsonObjRoot.put("discoveryLatency", gl.ao.serengeti.Serengeti.network.latency);
+            jsonObjRoot.put("totalNodes", Integer.toString(Serengeti.network.availableNodes.size()));
+            jsonObjRoot.put("availableNodes", Serengeti.network.availableNodes);
+            jsonObjRoot.put("discoveryLatency", Network.latency);
             jsonObjRoot.put("replicationLatency", 0);
 
             //response
@@ -207,7 +210,7 @@ public class Server {
         public void handle(HttpExchange t) throws IOException {
             JSONObject jsonObject = new JSONObject();
 
-            jsonObject.put("meta", gl.ao.serengeti.Serengeti.storage.getDatabasesTablesMeta());
+            jsonObject.put("meta", Serengeti.storage.getDatabasesTablesMeta());
 
             String response = jsonObject.toString();
             t.sendResponseHeaders(200, response.length());
@@ -257,7 +260,7 @@ public class Server {
                     }
 
                 } else if (t.getRequestURI().toString().startsWith("/post")) {
-                    InputStreamReader isr =  new InputStreamReader(t.getRequestBody(),"utf-8");
+                    InputStreamReader isr =  new InputStreamReader(t.getRequestBody(), StandardCharsets.UTF_8);
                     BufferedReader br = new BufferedReader(isr);
 
                     int b;

@@ -1,5 +1,6 @@
 package gl.ao.serengeti.query;
 
+import gl.ao.serengeti.Serengeti;
 import gl.ao.serengeti.storage.StorageResponseObject;
 import org.json.JSONObject;
 
@@ -28,8 +29,7 @@ public class QueryEngine {
 
         List<JSONObject> list = new ArrayList<JSONObject>();
         for (int i=0; i<queries.length; i++) {
-            QueryEngine engine = new QueryEngine();
-            JSONObject n = engine.execute(queries[i].replace("\n", "").trim());
+            JSONObject n = execute(queries[i].replace("\n", "").trim());
             list.add(i, n);
         }
 
@@ -52,7 +52,7 @@ public class QueryEngine {
         long startTime = System.nanoTime();
 
         if (query.equals("delete everything")) {
-            gl.ao.serengeti.Serengeti.network.communicateQueryLogAllNodes(new JSONObject() {{
+            Serengeti.network.communicateQueryLogAllNodes(new JSONObject() {{
                 put("type", "DeleteEverything");
             }}.toString());
             qro.executed = true;
@@ -61,14 +61,14 @@ public class QueryEngine {
         else if (query.equals("show databases")) {
         // `show databases`
 
-            qro.list = gl.ao.serengeti.Serengeti.storage.getDatabases();
+            qro.list = Serengeti.storage.getDatabases();
             qro.executed = true;
 
         } else if (query.startsWith("show ") && query.endsWith(" tables")) {
         // `show testdb tables`
 
             String databaseName = query.replace("show ", "").split(" ")[0];
-            qro.list = gl.ao.serengeti.Serengeti.storage.getTables(databaseName);
+            qro.list = Serengeti.storage.getTables(databaseName);
             qro.executed = true;
 
         } else if (query.startsWith("create database ")) {
@@ -76,10 +76,10 @@ public class QueryEngine {
 
             String databaseName = query.replace("create database ", "");
 
-            if (gl.ao.serengeti.Serengeti.storage.databaseExists(databaseName)) {
+            if (Serengeti.storage.databaseExists(databaseName)) {
                 qro.error = "Database '" + databaseName + "' already exists";
             } else {
-                gl.ao.serengeti.Serengeti.storage.createDatabase(databaseName);
+                Serengeti.storage.createDatabase(databaseName);
                 qro.executed = true;
             }
 
@@ -87,8 +87,8 @@ public class QueryEngine {
         // `drop database testdb`
 
             String databaseName = query.replace("drop database ", "");
-            if (gl.ao.serengeti.Serengeti.storage.databaseExists(databaseName)) {
-                gl.ao.serengeti.Serengeti.storage.dropDatabase(databaseName);
+            if (Serengeti.storage.databaseExists(databaseName)) {
+                Serengeti.storage.dropDatabase(databaseName);
                 qro.executed = true;
             } else {
                 qro.error = "Database " + databaseName + " does not exist";
@@ -104,10 +104,10 @@ public class QueryEngine {
                     String databaseName = dbAndTableList.get(0);
                     String tableName = dbAndTableList.get(1);
 
-                    if (gl.ao.serengeti.Serengeti.storage.tableExists(databaseName, tableName)) {
+                    if (Serengeti.storage.tableExists(databaseName, tableName)) {
                         qro.error = "Table '" + tableName + "' already exists";
                     } else {
-                        gl.ao.serengeti.Serengeti.storage.createTable(databaseName, tableName);
+                        Serengeti.storage.createTable(databaseName, tableName);
                         qro.executed = true;
                     }
                 } else {
@@ -124,8 +124,8 @@ public class QueryEngine {
             String databaseName = dbAndTable.get(0);
             String tableName = dbAndTable.get(1);
 
-            if (gl.ao.serengeti.Serengeti.storage.tableExists(databaseName, tableName)) {
-                gl.ao.serengeti.Serengeti.storage.dropTable(databaseName, tableName);
+            if (Serengeti.storage.tableExists(databaseName, tableName)) {
+                Serengeti.storage.dropTable(databaseName, tableName);
                 qro.executed = true;
             } else {
                 qro.error = "Table "+ tableName + " does not exist";
@@ -157,7 +157,7 @@ public class QueryEngine {
                             json.put(k, v);
                         }
 
-                        StorageResponseObject sro = gl.ao.serengeti.Serengeti.storage.insert(databaseName, tableName, json);
+                        StorageResponseObject sro = Serengeti.storage.insert(databaseName, tableName, json);
 
 //                        Serengeti.indexer.addToQueue(sro);
                         qro.executed = sro.success;
@@ -205,7 +205,7 @@ public class QueryEngine {
                         String w1 = w.get(0).replaceAll("^\'|\'$", "").trim();
                         String w2 = w.get(1).replaceAll("^\'|\'$", "").trim();
 
-                        gl.ao.serengeti.Serengeti.storage.update(databaseName, tableName, kv1, kv2, w1, w2);
+                        Serengeti.storage.update(databaseName, tableName, kv1, kv2, w1, w2);
                         qro.executed = true;
                     } else {
                         qro.error = "Invalid syntax: Invalid parameter match";
@@ -229,7 +229,7 @@ public class QueryEngine {
                 String w1 = w.get(0).replaceAll("^\'|\'$", "").trim();
                 String w2 = w.get(1).replaceAll("^\'|\'$", "").trim();
 
-                gl.ao.serengeti.Serengeti.storage.delete(databaseName, tableName, w1, w2);
+                Serengeti.storage.delete(databaseName, tableName, w1, w2);
                 qro.executed = true;
             } else {
                 qro.error = "Invalid syntax: Invalid parameter match";
@@ -249,7 +249,7 @@ public class QueryEngine {
 
                     String selectWhat = select.get(0).replace("select ", "");
 
-                    qro.list = gl.ao.serengeti.Serengeti.storage.select(databaseName, tableName, selectWhat, "", "");
+                    qro.list = Serengeti.storage.select(databaseName, tableName, selectWhat, "", "");
                     qro.executed = true;
                 } else {
                     qro.error = "Invalid syntax: <db>.<table>";
@@ -273,7 +273,7 @@ public class QueryEngine {
                         String w1 = w.get(0).replaceAll("^\'|\'$", "").trim();
                         String w2 = w.get(1).replaceAll("^\'|\'$", "").trim();
 
-                        qro.list = gl.ao.serengeti.Serengeti.storage.select(databaseName, tableName, selectWhat, w1, w2);
+                        qro.list = Serengeti.storage.select(databaseName, tableName, selectWhat, w1, w2);
                         qro.executed = true;
                     } else {
                         qro.error = "Invalid syntax: invalid size";

@@ -11,8 +11,8 @@ class SerengetiTest {
     void main() {
 
         gl.ao.serengeti.Serengeti testSerengeti = null;
-        testSerengeti.main(new String[] {});
+        Serengeti.main(new String[] {});
 
-        assertEquals(testSerengeti.storage.getClass(), Storage.class);
+        assertEquals(Serengeti.storage.getClass(), Storage.class);
     }
 }
