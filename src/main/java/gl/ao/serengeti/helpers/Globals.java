@@ -28,7 +28,7 @@ public class Globals {
     public static String data_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/data/" : "./data/";
     public static String res_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/res/" : "./res/";
 
-    public static int piece_size = 1*1024*1024;
+    public static int piece_size = 1024 * 1024;
 
     public static String replica_filename = "replica.file";
     public static String storage_filename = "storage.file";
@@ -187,7 +187,7 @@ public class Globals {
         if (path == null)
             return;
         if (path.exists()) {
-            for(File f : path.listFiles()) {
+            for(File f : Objects.requireNonNull(path.listFiles())) {
                 if(f.isDirectory()) {
                     deleteDirectory(f);
                     f.delete();

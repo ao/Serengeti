@@ -49,8 +49,8 @@ public class TableStorageObject implements Serializable {
     }
     public boolean update(String update_key, String update_val, String where_col, String where_val) {
         List<String> results = select(where_col, where_val);
-        for (int i=0; i<results.size(); i++) {
-            JSONObject json = new JSONObject(results.get(i).toString());
+        for (String result : results) {
+            JSONObject json = new JSONObject(result.toString());
             String uuid = json.getString("__uuid");
             json.remove("__uuid");
             json.remove(where_col);
@@ -67,8 +67,8 @@ public class TableStorageObject implements Serializable {
     }
     public boolean delete(String where_col, String where_val) {
         List<String> results = select(where_col, where_val);
-        for (int i=0; i<results.size(); i++) {
-            JSONObject json = new JSONObject(results.get(i).toString());
+        for (String result : results) {
+            JSONObject json = new JSONObject(result.toString());
             String uuid = json.getString("__uuid");
             json.remove("__uuid");
             json.remove(where_col);

@@ -20,9 +20,9 @@ public class StorageReshuffle {
 
                 if (!nodeIsOnline) {
                     // find out if we need to move any local data to another node
-                    for (String tableKey: gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.keySet()) {
-                        for (String rowKey: gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(tableKey).row_replicas.keySet()) {
-                            String strRow = gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(tableKey).row_replicas.get(rowKey);
+                    for (String tableKey: Storage.tableReplicaObjects.keySet()) {
+                        for (String rowKey: Storage.tableReplicaObjects.get(tableKey).row_replicas.keySet()) {
+                            String strRow = Storage.tableReplicaObjects.get(tableKey).row_replicas.get(rowKey);
                             JSONObject jsonRow = new JSONObject(strRow);
                             JSONObject prisec = gl.ao.serengeti.Serengeti.network.getPrimarySecondary();
                             String newPrimaryId = ((JSONObject)prisec.get("primary")).getString("id");
@@ -44,7 +44,7 @@ public class StorageReshuffle {
                                 }
 
                                 if (!found.equals("")) {
-                                    JSONObject row = gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(tableKey).getJsonFromRowId(rowKey);
+                                    JSONObject row = Storage.tableStorageObjects.get(tableKey).getJsonFromRowId(rowKey);
                                     if (row!=null) {
                                         String _jsonReplaceReplicate = new JSONObject() {{
                                             put("db", databaseName);
@@ -56,10 +56,10 @@ public class StorageReshuffle {
 
                                         if (found.equals("primary")) {
                                             gl.ao.serengeti.Serengeti.network.communicateQueryLogSingleNode(newPrimaryId, newPrimaryIp, _jsonReplaceReplicate);
-                                            row_replica = gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(tableKey).updateNewPrimary(rowKey, newPrimaryId);
+                                            row_replica = Storage.tableReplicaObjects.get(tableKey).updateNewPrimary(rowKey, newPrimaryId);
                                         } else if (found.equals("secondary")) {
                                             gl.ao.serengeti.Serengeti.network.communicateQueryLogSingleNode(newPrimaryId, newPrimaryIp, _jsonReplaceReplicate);
-                                            row_replica = gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(tableKey).updateNewSecondary(rowKey, newSecondaryId);
+                                            row_replica = Storage.tableReplicaObjects.get(tableKey).updateNewSecondary(rowKey, newSecondaryId);
                                         }
 
                                         if (row_replica != null) {
@@ -82,7 +82,7 @@ public class StorageReshuffle {
                     }
                 }
 
-            } catch (InterruptedException ie) {}
+            } catch (InterruptedException ignore) {}
         }).start();
     }
 
