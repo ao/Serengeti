@@ -3,6 +3,7 @@ package gl.ao.serengeti.ui;
 import gl.ao.serengeti.helpers.Globals;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
@@ -16,9 +17,12 @@ public class Dashboard {
      * @throws IOException
      */
     public static String IndexTemplate(String host, String uri) throws IOException {
-        String htmlString = new String(Files.readAllBytes(Paths.get(Globals.res_path+"dashboard.html")),
-                "UTF-8");
-        return htmlString;
+        return new String(
+            Files.readAllBytes(
+                Paths.get(Globals.res_path+"dashboard.html")
+            ),
+            StandardCharsets.UTF_8
+        );
     }
 }
 

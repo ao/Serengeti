@@ -13,7 +13,11 @@ class InteractiveTest {
 
     @Test
     void indexTemplate() throws IOException {
-        String interactive = new String(Files.readAllBytes(Paths.get(Globals.res_path + "interactive.html")));
+        String interactive = new String(
+            Files.readAllBytes(
+                Paths.get(Globals.res_path + "interactive.html")
+            )
+        );
         assertEquals(Interactive.IndexTemplate("test", "test"), interactive);
     }
 }

@@ -2,11 +2,13 @@ package gl.ao.serengeti.network;
 
 import gl.ao.serengeti.Serengeti;
 import gl.ao.serengeti.helpers.Globals;
+import gl.ao.serengeti.storage.Storage;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.*;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public class Network {
@@ -33,7 +35,7 @@ public class Network {
         try {
             myIP = Globals.getHost4Address();
             myINA = InetAddress.getByName(myIP);
-        } catch (Exception e) {}
+        } catch (Exception ignore) {}
 
         if (myIP == null || myIP.equals("127.0.0.1")) {
             System.out.println("This node is not connected to a network. It will therefore only function locally.");
@@ -47,7 +49,7 @@ public class Network {
      * in order to make sure the correct data structure is present before allowing node to contribute to network
      */
     public void requestNetworkMetas() {
-        if (hasPerformedNetworkSync==false) {
+        if (!hasPerformedNetworkSync) {
             hasPerformedNetworkSync = true;
 
             final Map<String, JSONObject> _availableNodes = this.availableNodes;
@@ -71,7 +73,7 @@ public class Network {
                             if (con.getResponseCode() == successStatus) {
                                 BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
                                 String inputLine;
-                                StringBuffer content = new StringBuffer();
+                                StringBuilder content = new StringBuilder();
                                 while ((inputLine = in.readLine()) != null) {
                                     content.append(inputLine);
                                 }
@@ -111,7 +113,7 @@ public class Network {
                                                     while (jkeys.hasNext()) {
                                                         String jrow_id = jkeys.next();
                                                         JSONObject _json = new JSONObject(jsonRowsReplica.getString(jrow_id));
-                                                        Serengeti.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jrow_id, _json);
+                                                        Storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jrow_id, _json);
                                                     }
                                                 } catch (Exception e) {}
                                             }
@@ -130,7 +132,7 @@ public class Network {
 
                     }
                 }
-                Serengeti.network.online = true;
+                online = true;
                 System.out.println("Startup: Completed with "+changesFound+" changes found");
                 Serengeti.server.serve();
             }).start();
@@ -191,8 +193,8 @@ public class Network {
             String[] ipParts = myIP.split("\\.");
             final String baseIP = ipParts[0]+"."+ipParts[1]+"."+ipParts[2]+".";
 
-            Serengeti.network.latencyRun = true;
-            Serengeti.network.latency = 0;
+            latencyRun = true;
+            latency = 0;
             Thread t = new Thread(() -> {
                 try {
                     String _ip = baseIP+j;
@@ -204,7 +206,7 @@ public class Network {
                     if (status == successStatus) {
                         BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
                         String inputLine;
-                        StringBuffer content = new StringBuffer();
+                        StringBuilder content = new StringBuilder();
                         while ((inputLine = in.readLine()) != null) {
                             content.append(inputLine);
                         }
@@ -221,10 +223,10 @@ public class Network {
                         in.close();
                     }
 
-                    if (Serengeti.network.latencyRun) {
+                    if (latencyRun) {
                         long elapsedTime = System.currentTimeMillis() - startTime;
-                        if (elapsedTime> Serengeti.network.latency) {
-                            Serengeti.network.latency = elapsedTime;
+                        if (elapsedTime> latency) {
+                            latency = elapsedTime;
                         }
                     }
 
@@ -254,7 +256,7 @@ public class Network {
                 t.join();
                 threadcompletecount++;
                 if (threadcompletecount==254) {
-                    Serengeti.network.latencyRun = false;
+                    latencyRun = false;
                     if (availableNodes.size() > 0) {
                         for (String key : availableNodes.keySet()) {
                             JSONObject json = availableNodes.get(key);
@@ -267,8 +269,8 @@ public class Network {
                         }
 
                         requestNetworkMetas();
-                    } else if (Serengeti.network.online==false) {
-                        Serengeti.network.online = true;
+                    } else if (!online) {
+                        online = true;
                         Serengeti.network.hasPerformedNetworkSync = true;
                         System.out.println("\nStartup: Completed");
                         System.out.println(" - No other nodes found on the network, waiting..");
@@ -276,8 +278,7 @@ public class Network {
                     }
                 }
             }
-            catch (InterruptedException e) {}
-            catch (ConcurrentModificationException cme) {}
+            catch (InterruptedException | ConcurrentModificationException ignore) {}
         }
     }
 
@@ -288,7 +289,7 @@ public class Network {
 
             if (status == successStatus) return true;
 
-        } catch (Exception e) {}
+        } catch (Exception ignore) {}
         return false;
     }
 
@@ -324,20 +325,20 @@ public class Network {
         // sometimes we don't have a secondary node to send data to..
         if (id.equals("") || ip.equals("")) return "";
 
-        String response = "";
+        StringBuilder response = new StringBuilder();
         try {
             URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
             HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
             con2.setRequestMethod("POST");
             con2.setDoOutput(true);
             con2.setConnectTimeout(networkTimeout);
-            con2.getOutputStream().write(jsonString.getBytes("UTF-8"));
+            con2.getOutputStream().write(jsonString.getBytes(StandardCharsets.UTF_8));
 
             BufferedReader br = new BufferedReader(new InputStreamReader(con2.getInputStream()));
             for (String line = br.readLine(); line != null; line = br.readLine()) {
-                response += line;
+                response.append(line);
             }
-            return response;
+            return response.toString();
         } catch (SocketException se) {
             //System.out.println("Socket Exception (communicateQueryLogSingleNode): " + se.getMessage());
             return "";
@@ -391,8 +392,7 @@ public class Network {
      * @return JSONArray
      */
     public JSONArray getRandomAvailableNodes(int amount) {
-        Map<String, JSONObject> an = new HashMap<String, JSONObject>();
-        an.putAll(this.availableNodes);
+        Map<String, JSONObject> an = new HashMap<String, JSONObject>(this.availableNodes);
 
         if (an.size()>=2) {
             JSONArray nodes = new JSONArray();
@@ -411,8 +411,7 @@ public class Network {
         return null;
     }
     public JSONObject getRandomAvailableNode() {
-        Map<String, JSONObject> an = new HashMap<String, JSONObject>();
-        an.putAll(this.availableNodes);
+        Map<String, JSONObject> an = new HashMap<String, JSONObject>(this.availableNodes);
 
         if (an.size() > 0) {
             // Should first remove `self` from the list

@@ -35,12 +35,12 @@ public class Serengeti {
      * Initialisation object
      */
     private void init() {
-        this.startTime = System.currentTimeMillis();
+        startTime = System.currentTimeMillis();
         System.out.println("Starting Serengeti..\n");
         this.instance = this;
-        this.server.init();
+        server.init();
         storage = new Storage();
-        this.network.init();
+        network.init();
 
         storageScheduler.init();
         new ShutdownHandler();

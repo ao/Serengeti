@@ -1,8 +1,10 @@
 package gl.ao.serengeti.query;
 
+import gl.ao.serengeti.Serengeti;
 import gl.ao.serengeti.helpers.Globals;
 import gl.ao.serengeti.schema.TableReplicaObject;
 import gl.ao.serengeti.schema.TableStorageObject;
+import gl.ao.serengeti.storage.Storage;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -27,7 +29,7 @@ public class QueryLog {
 
         String type = jsonObject.getString("type");
 
-        int totalAvailableNodes = gl.ao.serengeti.Serengeti.network.availableNodes.size();
+        int totalAvailableNodes = Serengeti.network.availableNodes.size();
 
         switch (type) {
 
@@ -36,19 +38,19 @@ public class QueryLog {
              */
             case "createDatabase":
                 // {"type":"createDatabase", "db":db}
-                gl.ao.serengeti.Serengeti.network.communicateQueryLogAllNodes(jsonString);
+                Serengeti.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "dropDatabase":
                 // {"type":"dropDatabase", "db":db}
-                gl.ao.serengeti.Serengeti.network.communicateQueryLogAllNodes(jsonString);
+                Serengeti.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "createTable":
                 // {"type":"createTable", "db":db, "table":table}
-                gl.ao.serengeti.Serengeti.network.communicateQueryLogAllNodes(jsonString);
+                Serengeti.network.communicateQueryLogAllNodes(jsonString);
                 break;
             case "dropTable":
                 // {"type":"dropTable", "db":db, "table":table}
-                gl.ao.serengeti.Serengeti.network.communicateQueryLogAllNodes(jsonString);
+                Serengeti.network.communicateQueryLogAllNodes(jsonString);
                 break;
         }
     }
@@ -77,44 +79,44 @@ public class QueryLog {
 
                 switch (type) {
                     case "createDatabase":
-                        gl.ao.serengeti.Serengeti.storage.createDatabase(db, true);
+                        Serengeti.storage.createDatabase(db, true);
                         break;
                     case "dropDatabase":
-                        gl.ao.serengeti.Serengeti.storage.dropDatabase(db, true);
+                        Serengeti.storage.dropDatabase(db, true);
                         break;
                     case "createTable":
-                        gl.ao.serengeti.Serengeti.storage.createTable(db, table, true);
+                        Serengeti.storage.createTable(db, table, true);
                         break;
                     case "dropTable":
-                        gl.ao.serengeti.Serengeti.storage.dropTable(db, table, true);
+                        Serengeti.storage.dropTable(db, table, true);
                         break;
                     case "insert":
-                        gl.ao.serengeti.Serengeti.storage.insert(db, table, jsonObject, true);
+                        Serengeti.storage.insert(db, table, jsonObject, true);
                         break;
 
                     case "DeleteEverything":
-                        gl.ao.serengeti.Serengeti.storage.deleteEverything();
+                        Serengeti.storage.deleteEverything();
                         break;
 
                     case "TableReplicaObjectInsertOrReplace":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
                         JSONObject _json = new JSONObject( jsonObject.getString("json") );
-                        gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jsonObject.getString("row_id"), new JSONObject() {{
+                        Storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jsonObject.getString("row_id"), new JSONObject() {{
                             put("primary", _json.getString("primary") );
                             put("secondary", _json.getString("secondary") );
                         }});
                         break;
                     case "TableReplicaObjectDelete":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
-                        gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(db+"#"+table).delete(jsonObject.getString("row_id"));
+                        Storage.tableReplicaObjects.get(db+"#"+table).delete(jsonObject.getString("row_id"));
                         break;
                     case "ReplicateInsertObject":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
-                        gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(db+"#"+table).insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
+                        Storage.tableStorageObjects.get(db+"#"+table).insert(jsonObject.getString("row_id"), (JSONObject) jsonObject.get("json"));
                         break;
                     case "ReplicateUpdateObject":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
-                        JSONObject __json1 = gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(db+"#"+table).getJsonFromRowId( jsonObject.getString("row_id") );
+                        JSONObject __json1 = Storage.tableStorageObjects.get(db+"#"+table).getJsonFromRowId( jsonObject.getString("row_id") );
                         if (__json1!=null) {
                             Iterator<String> keys1 = __json1.keys();
 
@@ -127,12 +129,12 @@ public class QueryLog {
                                     __json1.put(___json1.getString("update_key"), ___json1.getString("update_val"));
                                 }
                             }
-                            gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(db + "#" + table).update(jsonObject.getString("row_id"), __json1);
+                            Storage.tableStorageObjects.get(db + "#" + table).update(jsonObject.getString("row_id"), __json1);
                         }
                         break;
                     case "ReplicateDeleteObject":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
-                        gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(db+"#"+table).delete( jsonObject.getString("row_id") );
+                        Storage.tableStorageObjects.get(db+"#"+table).delete( jsonObject.getString("row_id") );
                         break;
                     case "SelectRespond":
                         Globals.createDatabaseAndTableIfNotExists(db, table);
@@ -143,7 +145,7 @@ public class QueryLog {
 
                         List<String> list = new ArrayList<>();
 
-                        List jsonList = gl.ao.serengeti.Serengeti.storage.tableStorageObjects.get(db+"#"+table).select(col, val);
+                        List jsonList = Storage.tableStorageObjects.get(db+"#"+table).select(col, val);
                         if (jsonList.size()==0) {
                             // return list;
                         } else if (jsonList.size()==1) {
@@ -174,7 +176,7 @@ public class QueryLog {
                     case "SendTableReplicaToNode":
                         String node_id = jsonObject.getString("node_id");
                         String node_ip = jsonObject.getString("node_ip");
-                        Map<String, String> tableReplicaRows = gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(db+"#"+table).row_replicas;
+                        Map<String, String> tableReplicaRows = Storage.tableReplicaObjects.get(db+"#"+table).row_replicas;
                         /*Serengeti.network.communicateQueryLogSingleNode(node_id, node_ip, new JSONObject(){{
                             put("type", "ReceiveTableReplicaFromNode");
                             put("db", db);
@@ -194,7 +196,7 @@ public class QueryLog {
                         Map<String, String> row_replicas = (Map<String, String>) jsonObject.get("rows");
                         for (String rowKey: row_replicas.keySet()) {
                             JSONObject json = new JSONObject(row_replicas.get(rowKey));
-                            gl.ao.serengeti.Serengeti.storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(rowKey, json);
+                            Storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(rowKey, json);
                         }
                         break;
                 }
