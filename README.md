@@ -1,5 +1,7 @@
 # Serengeti - The Autonomous Distributed Database
 
+![Java CI with Maven](https://github.com/ao/Serengeti/workflows/Java%20CI%20with%20Maven/badge.svg)
+
 ![Serengeti Dashboard](artwork/dash1.png?raw=true "Serengeti Dashboard")
 
 This software application proves the potential for an autonomous distributed database system.
