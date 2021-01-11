@@ -9,8 +9,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="abe8f7d5-88c3-4e26-9356-ecab695b70e6" name="Default" comment="Updates">
-      <change beforePath="$PROJECT_DIR$/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/pom.xml" afterDir="false" />
+    <list default="true" id="abe8f7d5-88c3-4e26-9356-ecab695b70e6" name="Default" comment="Bump version">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Serengeti.iml" beforeDir="false" afterPath="$PROJECT_DIR$/Serengeti.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/Serengeti.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/gl/ao/serengeti/Serengeti.java" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -528,7 +530,8 @@
       <workItem from="1591638603334" duration="2306000" />
       <workItem from="1610204079275" duration="199000" />
       <workItem from="1610243545552" duration="1954000" />
-      <workItem from="1610300064268" duration="639000" />
+      <workItem from="1610300064268" duration="891000" />
+      <workItem from="1610301550319" duration="745000" />
     </task>
     <task id="LOCAL-00001" summary="Update project files">
       <created>1564323061541</created>
@@ -607,7 +610,14 @@
       <option name="project" value="LOCAL" />
       <updated>1610300512741</updated>
     </task>
-    <option name="localTasksCounter" value="12" />
+    <task id="LOCAL-00012" summary="Bump version">
+      <created>1610300742174</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1610300742174</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="TestHistory">
@@ -664,7 +674,8 @@
     <MESSAGE value="Network class, code reuse" />
     <MESSAGE value="Network class, localized parents" />
     <MESSAGE value="Updates" />
-    <option name="LAST_COMMIT_MESSAGE" value="Updates" />
+    <MESSAGE value="Bump version" />
+    <option name="LAST_COMMIT_MESSAGE" value="Bump version" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

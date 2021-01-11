@@ -12,14 +12,14 @@ import java.util.Date;
 
 public class Serengeti {
 
-    public gl.ao.serengeti.Serengeti instance = null;
     public static Storage storage = null;
     public static Server server = new Server();
     public static Date currentDate = new Date();
     public static Network network = new Network();
     public static StorageScheduler storageScheduler = new StorageScheduler();
     public static StorageReshuffle storageReshuffle = new StorageReshuffle();
-    public Interactive interactive = new Interactive();
+    public Interactive interactive;
+    public Serengeti instance;
 
     public static long startTime;
 
@@ -28,16 +28,18 @@ public class Serengeti {
      * @param args
      */
     public static void main(String[] args) {
-        new gl.ao.serengeti.Serengeti().init();
+        new Serengeti();
     }
 
-    /***
-     * Initialisation object
+
+    /**
+     * Constructor
      */
-    private void init() {
+    public Serengeti() {
+        interactive = new Interactive();
         startTime = System.currentTimeMillis();
         System.out.println("Starting Serengeti..\n");
-        this.instance = this;
+        instance = this;
         server.init();
         storage = new Storage();
         network.init();
