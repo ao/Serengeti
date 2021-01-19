@@ -10,7 +10,6 @@ class SerengetiTest {
     @Test
     void main() {
 
-        gl.ao.serengeti.Serengeti testSerengeti = null;
         Serengeti.main(new String[] {});
 
         assertEquals(Serengeti.storage.getClass(), Storage.class);

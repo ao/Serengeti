@@ -1,23 +1,27 @@
 package gl.ao.serengeti.ui;
 
-import gl.ao.serengeti.helpers.Globals;
 import org.junit.jupiter.api.Test;
-
+import java.io.BufferedReader;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class InteractiveTest {
 
     @Test
-    void indexTemplate() throws IOException {
-        String interactive = new String(
-            Files.readAllBytes(
-                Paths.get(Globals.res_path + "interactive.html")
-            )
-        );
-        assertEquals(Interactive.IndexTemplate("test", "test"), interactive);
+    void indexTemplate() throws IOException, URISyntaxException {
+        InputStream inputStream = getClass().getClassLoader().getResourceAsStream("html/interactive.html");
+        String interactive = new BufferedReader(
+                new InputStreamReader(Objects.requireNonNull(inputStream), StandardCharsets.UTF_8))
+                .lines()
+                .collect(Collectors.joining("\n"));
+
+        assertEquals(new Interactive().IndexTemplate("test", "test"), interactive);
     }
 }
