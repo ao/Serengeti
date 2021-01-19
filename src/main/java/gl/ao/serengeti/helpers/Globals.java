@@ -23,10 +23,8 @@ import java.util.*;
 public class Globals {
 
     public static String meta_extention = ".ddbm";
-//    public static String piece_extention = ".ddbp";
-//    public static String pieces_path = Globals.data_path + "pieces/";
+
     public static String data_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/data/" : "./data/";
-    public static String res_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/res/" : "./res/";
 
     public static int piece_size = 1024 * 1024;
 
