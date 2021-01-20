@@ -187,9 +187,14 @@ public class Server {
 
     static class InteractiveHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
-            String response = Interactive.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"),
-                    t.getRequestURI().getPath());
-            t.sendResponseHeaders(200, response.length());
+            String response = null;
+            try {
+                response = new Interactive().IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"),
+                        t.getRequestURI().getPath());
+            } catch (URISyntaxException e) {
+                e.printStackTrace();
+            }
+            t.sendResponseHeaders(200, Objects.requireNonNull(response).length());
             OutputStream os = t.getResponseBody();
             os.write(response.getBytes());
             os.close();
@@ -197,9 +202,14 @@ public class Server {
     }
     static class DashboardHandler implements HttpHandler {
         public void handle(HttpExchange t) throws IOException {
-            String response = Dashboard.IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"),
-                    t.getRequestURI().getPath());
-            t.sendResponseHeaders(200, response.length());
+            String response = null;
+            try {
+                response = new Dashboard().IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"),
+                        t.getRequestURI().getPath());
+            } catch (URISyntaxException e) {
+                e.printStackTrace();
+            }
+            t.sendResponseHeaders(200, Objects.requireNonNull(response).length());
             OutputStream os = t.getResponseBody();
             os.write(response.getBytes());
             os.close();
