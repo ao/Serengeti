@@ -1,5 +1,6 @@
 package gl.ao.serengeti.storage;
 
+import gl.ao.serengeti.Serengeti;
 import gl.ao.serengeti.query.QueryLog;
 import gl.ao.serengeti.schema.DatabaseObject;
 import gl.ao.serengeti.helpers.Globals;
@@ -87,7 +88,7 @@ public class Storage {
      * @param getFromFileSystem
      * @return
      */
-    public List getDatabases(boolean getFromFileSystem) {
+    public List<String> getDatabases(boolean getFromFileSystem) {
         File dir = new File(Globals.data_path);
         File[] files = dir.listFiles(new FilenameFilter() {
             @Override
@@ -109,7 +110,7 @@ public class Storage {
      * Scan meta information and return a list of Databases and Tables included
      * @return
      */
-    public Map getDatabasesTablesMeta() {
+    public Map<String, List> getDatabasesTablesMeta() {
         File dir = new File(Globals.data_path);
         File[] files = dir.listFiles(new FilenameFilter() {
             @Override
@@ -452,7 +453,7 @@ public class Storage {
 //            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             DatabaseObject dbo = databases.get(db);
 
-            gl.ao.serengeti.Serengeti.storage.createTablePathIfNotExists(db, table);
+            Serengeti.storage.createTablePathIfNotExists(db, table);
 
             if (tableExists(db, table)) {
                 return false;

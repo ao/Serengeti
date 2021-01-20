@@ -1,5 +1,6 @@
 package gl.ao.serengeti.helpers;
 
+import gl.ao.serengeti.Serengeti;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -22,6 +23,7 @@ import java.util.*;
  */
 public class Globals {
 
+    public static String name = "Serengeti";
     public static String meta_extention = ".ddbm";
 
     public static String data_path = System.getProperty("user.dir") != null ? System.getProperty("user.dir")+"/data/" : "./data/";
@@ -230,10 +232,10 @@ public class Globals {
      * @param table
      */
     static public void createDatabaseAndTableIfNotExists(String db, String table) {
-        if (!gl.ao.serengeti.Serengeti.storage.databaseExists(db))
-            gl.ao.serengeti.Serengeti.storage.createDatabase(db, true);
-        if (!gl.ao.serengeti.Serengeti.storage.tableExists(db, table))
-            gl.ao.serengeti.Serengeti.storage.createTable(db, table, true);
+        if (!Serengeti.storage.databaseExists(db))
+            Serengeti.storage.createDatabase(db, true);
+        if (!Serengeti.storage.tableExists(db, table))
+            Serengeti.storage.createTable(db, table, true);
     }
 
 }
