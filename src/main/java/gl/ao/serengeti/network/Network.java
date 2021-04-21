@@ -63,7 +63,9 @@ public class Network {
                         JSONObject jsonObject = node.getValue();
 
                         try {
-                            HttpURLConnection con = (HttpURLConnection) new URL("http://" + jsonObject.getString("ip") + ":" + Globals.port_default + "/meta").openConnection();
+                            HttpURLConnection con = (HttpURLConnection) new URL(
+                                    String.format("http://%s:%d/meta", jsonObject.getString("ip"), Globals.port_default))
+                                    .openConnection();
                             con.setRequestMethod("GET");
                             con.getDoOutput();
                             con.setConnectTimeout(networkTimeout);
@@ -87,7 +89,7 @@ public class Network {
                                         JSONArray jsonArr = (JSONArray) jsonMeta.get(db);
 
                                         if (!Serengeti.storage.databaseExists(db)) {
-                                            System.out.println("Startup: Creating missing database '"+db+"'");
+                                            System.out.printf("Startup: Creating missing database '%s'%n", db);
                                             Serengeti.storage.createDatabase(db, true);
                                             changesFound++;
                                         }
@@ -95,17 +97,21 @@ public class Network {
                                         for (int i = 0; i < jsonArr.length(); i++) {
                                             String table = jsonArr.getString(i);
                                             if (!Serengeti.storage.tableExists(db, table)) {
-                                                System.out.println("Startup: Creating missing table '"+table+"' for database '"+db+"'");
+                                                System.out.printf("Startup: Creating missing table '%s' for database '%s'%n", table, db);
                                                 Serengeti.storage.createTable(db, table, true);
                                                 changesFound++;
 
-                                                String row_replicas = Serengeti.network.communicateQueryLogSingleNode( jsonObject.getString("id"), jsonObject.getString("ip"), new JSONObject(){{
-                                                    put("type", "SendTableReplicaToNode");
-                                                    put("db", db);
-                                                    put("table", table);
-                                                    put("node_id", Serengeti.server.server_constants.id);
-                                                    put("node_ip", Serengeti.network.myIP);
-                                                }}.toString() );
+                                                String row_replicas = Serengeti.network.communicateQueryLogSingleNode(
+                                                        jsonObject.getString("id"),
+                                                        jsonObject.getString("ip"),
+                                                        new JSONObject() {{
+                                                            put("type", "SendTableReplicaToNode");
+                                                            put("db", db);
+                                                            put("table", table);
+                                                            put("node_id", Serengeti.server.server_constants.id);
+                                                            put("node_ip", Serengeti.network.myIP);
+                                                        }}.toString()
+                                                );
 
                                                 try {
                                                     JSONObject jsonRowsReplica = new JSONObject(row_replicas);
@@ -113,9 +119,11 @@ public class Network {
                                                     while (jkeys.hasNext()) {
                                                         String jrow_id = jkeys.next();
                                                         JSONObject _json = new JSONObject(jsonRowsReplica.getString(jrow_id));
-                                                        Storage.tableReplicaObjects.get(db+"#"+table).insertOrReplace(jrow_id, _json);
+                                                        Storage.tableReplicaObjects
+                                                                .get(db+"#"+table)
+                                                                .insertOrReplace(jrow_id, _json);
                                                     }
-                                                } catch (Exception e) {}
+                                                } catch (Exception ignore) {}
                                             }
                                         }
                                     }
@@ -125,7 +133,6 @@ public class Network {
                             }
 
 
-
                         } catch (Exception e) {
                             e.printStackTrace();
                         }
@@ -133,7 +140,7 @@ public class Network {
                     }
                 }
                 online = true;
-                System.out.println("Startup: Completed with "+changesFound+" changes found");
+                System.out.printf("Startup: Completed with %d changes found%n", changesFound);
                 Serengeti.server.serve();
             }).start();
         }
@@ -207,9 +214,8 @@ public class Network {
                         BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
                         String inputLine;
                         StringBuilder content = new StringBuilder();
-                        while ((inputLine = in.readLine()) != null) {
+                        while ((inputLine = in.readLine()) != null)
                             content.append(inputLine);
-                        }
 
                         JSONObject jsonObj = new JSONObject(content.toString());
                         JSONObject nodeJSON = (JSONObject) jsonObj.get("this");
@@ -225,9 +231,8 @@ public class Network {
 
                     if (latencyRun) {
                         long elapsedTime = System.currentTimeMillis() - startTime;
-                        if (elapsedTime> latency) {
+                        if (elapsedTime > latency)
                             latency = elapsedTime;
-                        }
                     }
 
 
@@ -327,7 +332,7 @@ public class Network {
 
         StringBuilder response = new StringBuilder();
         try {
-            URL url2 = new URL("http://" + ip + ":" + Globals.port_default + "/post");
+            URL url2 = new URL(String.format("http://%s:%d/post", ip, Globals.port_default));
             HttpURLConnection con2 = (HttpURLConnection) url2.openConnection();
             con2.setRequestMethod("POST");
             con2.setDoOutput(true);
@@ -335,15 +340,14 @@ public class Network {
             con2.getOutputStream().write(jsonString.getBytes(StandardCharsets.UTF_8));
 
             BufferedReader br = new BufferedReader(new InputStreamReader(con2.getInputStream()));
-            for (String line = br.readLine(); line != null; line = br.readLine()) {
+            for (String line = br.readLine(); line != null; line = br.readLine())
                 response.append(line);
-            }
             return response.toString();
         } catch (SocketException se) {
             //System.out.println("Socket Exception (communicateQueryLogSingleNode): " + se.getMessage());
             return "";
         } catch (IOException ioe) {
-            System.out.println("IOException: " + ioe.getMessage()+ " > Tried: Communicating to " + ip + ": " + jsonString );
+            System.out.printf("IOException: %s > Tried: Communicating to %s: %s%n", ioe.getMessage(), ip, jsonString);
             return "";
         } catch (Exception e) {
             e.printStackTrace();
@@ -415,20 +419,13 @@ public class Network {
 
         if (an.size() > 0) {
             // Should first remove `self` from the list
-            Iterator it=an.entrySet().iterator();
-            while(it.hasNext()) {
-                Map.Entry<String, JSONObject> item = (Map.Entry<String, JSONObject>) it.next();
-                if (item.getValue().get("ip").toString().equals(myIP)) {
-                    it.remove();
-                }
-            }
+            an.entrySet().removeIf(item -> item.getValue().get("ip").toString().equals(myIP));
 
             if (an.size()==0) return null; // this can happen when there was only 1 node in the list and it was ourselves!
 
             List<JSONObject> list = new ArrayList<JSONObject>();
-            for (String key: an.keySet()) {
+            for (String key: an.keySet())
                 list.add(an.get(key));
-            }
 
             // Shuffle and send the first one back
             Collections.shuffle(list);
@@ -463,10 +460,8 @@ public class Network {
                         System.out.println("Not Reachable: "+output);
                     }
 
-
-
                 } catch (Exception e) {
-                    System.out.println(ip);
+                    System.out.println(Arrays.toString(ip));
                     e.printStackTrace();
                 }
             }).start();
