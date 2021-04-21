@@ -15,7 +15,7 @@ public class QueryEngine {
      * @param query
      * @return List
      */
-    public static List query(String query) {
+    public static List<JSONObject> query(String query) {
         if (query.trim().equals("")) {
             return null;
         }

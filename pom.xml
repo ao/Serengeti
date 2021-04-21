@@ -77,6 +77,12 @@
             <artifactId>junit-jupiter-api</artifactId>
             <version>5.7.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.12</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <scm>

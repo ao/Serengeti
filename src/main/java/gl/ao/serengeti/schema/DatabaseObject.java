@@ -1,5 +1,6 @@
 package gl.ao.serengeti.schema;
 
+import gl.ao.serengeti.data.DatabaseObjectData;
 import gl.ao.serengeti.helpers.Globals;
 
 import java.io.*;
@@ -15,6 +16,7 @@ public class DatabaseObject implements Serializable {
     public String name = "";
 
     public List<String> tables = new ArrayList<>();
+//    public DatabaseObjectData tables2 = new DatabaseObjectData();
 
     public DatabaseObject() {}
 
