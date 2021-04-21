@@ -43,9 +43,8 @@ public class TableStorageObject implements Serializable {
         rows.put(row_id, json.toString());
         return row_id;
     }
-    public boolean update(String row_id, JSONObject json) {
+    public void update(String row_id, JSONObject json) {
         rows.replace(row_id, json.toString());
-        return true;
     }
     public boolean update(String update_key, String update_val, String where_col, String where_val) {
         List<String> results = select(where_col, where_val);
@@ -61,9 +60,8 @@ public class TableStorageObject implements Serializable {
 
         return false;
     }
-    public boolean delete(String row_id) {
+    public void delete(String row_id) {
         rows.remove(row_id);
-        return true;
     }
     public boolean delete(String where_col, String where_val) {
         List<String> results = select(where_col, where_val);
@@ -78,7 +76,7 @@ public class TableStorageObject implements Serializable {
 
         return false;
     }
-    public List select(String col, String val) {
+    public List<String> select(String col, String val) {
         List<String> ret = new ArrayList<>();
 
         for (String key: rows.keySet()) {
@@ -113,24 +111,20 @@ public class TableStorageObject implements Serializable {
         return Globals.convertToBytes(this);
     }
 
-    public boolean saveToDisk() {
+    public void saveToDisk() {
         ObjectOutputStream oos = null;
         try {
             FileOutputStream fos = new FileOutputStream(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.storage_filename);
             oos = new ObjectOutputStream(fos);
             oos.writeObject(this);
-            return true;
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-            if (oos != null) {
-                try {
-                    oos.close();
-                } catch (IOException ex) {
-                    ex.printStackTrace();
-                }
+            if (oos != null) try {
+                oos.close();
+            } catch (IOException ex) {
+                ex.printStackTrace();
             }
         }
-        return false;
     }
 }

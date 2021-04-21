@@ -35,9 +35,6 @@ public class Globals {
     public static String index_filename = "index.file";
 
     public static int port_default = 1985;
-    public static int port_communication = 19851;
-
-    public static int max_cluster_nodes = 3;
 
     /***
      * Convert to Bytes
@@ -184,18 +181,13 @@ public class Globals {
      * @param path
      */
     static public void deleteDirectory(File path) {
-        if (path == null)
-            return;
+        if (path == null) return;
         if (path.exists()) {
             for(File f : Objects.requireNonNull(path.listFiles())) {
-                if(f.isDirectory()) {
-                    deleteDirectory(f);
-                    f.delete();
-                } else {
-                    f.delete();
-                }
+                if (f.isDirectory()) deleteDirectory(f);
+                f.delete();
             }
-            path.delete();
+            boolean delete = path.delete();
         }
     }
 

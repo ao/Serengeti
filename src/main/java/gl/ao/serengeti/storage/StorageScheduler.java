@@ -47,7 +47,7 @@ public class StorageScheduler {
                         DatabaseObject dbo = Storage.databases.get(key);
 
                         String dbName = dbo.name;
-                        List tables = dbo.tables;
+                        List<String> tables = dbo.tables;
 
                         byte[] data = dbo.returnDBObytes();
                         Path file = Paths.get(Globals.data_path + dbName + Globals.meta_extention);

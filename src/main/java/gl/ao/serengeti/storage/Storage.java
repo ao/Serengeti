@@ -79,7 +79,7 @@ public class Storage {
      * Get a List of existing Databases (use in-memory)
      * @return List
      */
-    public List getDatabases() {
+    public List<String> getDatabases() {
         return getDatabases(false);
     }
 
@@ -90,12 +90,7 @@ public class Storage {
      */
     public List<String> getDatabases(boolean getFromFileSystem) {
         File dir = new File(Globals.data_path);
-        File[] files = dir.listFiles(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String name) {
-                return name.endsWith(Globals.meta_extention);
-            }
-        });
+        File[] files = dir.listFiles((dir1, name) -> name.endsWith(Globals.meta_extention));
 
         List<String> ddbs = new ArrayList<>();
 
@@ -110,21 +105,16 @@ public class Storage {
      * Scan meta information and return a list of Databases and Tables included
      * @return
      */
-    public Map<String, List> getDatabasesTablesMeta() {
+    public Map<String, List<String>> getDatabasesTablesMeta() {
         File dir = new File(Globals.data_path);
-        File[] files = dir.listFiles(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String name) {
-                return name.endsWith(Globals.meta_extention);
-            }
-        });
+        File[] files = dir.listFiles((dir1, name) -> name.endsWith(Globals.meta_extention));
 
-        Map<String, List> ddbs = new HashMap<>();
+        Map<String, List<String>> ddbs = new HashMap<>();
 
         assert files != null;
         for (File ddb : files) {
             String dbName = ddb.getName().replace(Globals.meta_extention, "");
-            List tables = getTables(dbName);
+            List<String> tables = getTables(dbName);
             ddbs.put(dbName, tables);
         }
         return ddbs;
@@ -148,7 +138,7 @@ public class Storage {
 
             if (tableExists(db, table)) {
                 List<String> list = new ArrayList<>();
-                Set uuids = new HashSet();
+                Set<String> uuids = new HashSet<String>();
 
                 JSONArray array = gl.ao.serengeti.Serengeti.network.communicateQueryLogAllNodes(new JSONObject() {{
                     put("type", "SelectRespond");
@@ -390,7 +380,7 @@ public class Storage {
         try {
             DatabaseObject dbo = new DatabaseObject();
             dbo.createNew(db, null);
-            byte data[] = dbo.returnDBObytes();
+            byte[] data = dbo.returnDBObytes();
             Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
             Files.write(file, data);
 
@@ -488,9 +478,8 @@ public class Storage {
 //        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
         if (databases.containsKey(db)) {
             DatabaseObject dbo = databases.get(db);
-            if (dbo.tables != null && dbo.tables.size() > 0) {
+            if (dbo.tables != null && dbo.tables.size() > 0)
                 return dbo.tables.contains(table);
-            }
         }
         return false;
     }
@@ -551,13 +540,13 @@ public class Storage {
      * @param db
      * @return List
      */
-    public List getTables(String db) {
+    public List<String> getTables(String db) {
 //        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
 //        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
         DatabaseObject dbo = databases.get(db);
         if (dbo.tables == null) return null;
         else if (dbo.tables.size()>0) return dbo.tables;
-        else return new ArrayList();
+        else return new ArrayList<String>();
     }
 
     /***
@@ -644,7 +633,7 @@ public class Storage {
         for (String db: dbs) {
             try {
                 dropDatabase(db);
-            } catch (Exception e) {}
+            } catch (Exception ignored) {}
         }
     }
 

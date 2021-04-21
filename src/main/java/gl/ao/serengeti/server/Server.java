@@ -36,7 +36,9 @@ public class Server {
 
         try {
             File root_directory = new File(Globals.data_path);
-            if (! root_directory.exists()) root_directory.mkdir();
+            if (! root_directory.exists()) {
+                boolean mkdir = root_directory.mkdir();
+            }
 
             server_constants_file = Paths.get(server_constants_file_location);
             if (Files.exists(server_constants_file)) {
@@ -46,7 +48,7 @@ public class Server {
                 server_constants.id = UUID.randomUUID().toString();
                 saveServerConstants();
             }
-        } catch (Exception e) {}
+        } catch (Exception ignore) {}
     }
 
     private void saveServerConstants() {
@@ -77,17 +79,30 @@ public class Server {
             e.printStackTrace();
         }
         try {
-            System.out.println("\nHTTP server started at http://" + Globals.getHost4Address() + ":1985/");
-            System.out.println("Dashboard available at http://" + Globals.getHost4Address() + ":1985/dashboard");
-            System.out.println("\nNode is 'online' and ready to contribute (took "+(System.currentTimeMillis()- Serengeti.startTime)+"ms to startup)");
+            System.out.printf("\nHTTP server started at http://%s:%d/%n",
+                    Globals.getHost4Address(), Globals.port_default);
+            System.out.printf("Dashboard available at http://%s:%d/dashboard%n",
+                    Globals.getHost4Address(), Globals.port_default);
+            System.out.printf("\nNode is 'online' and ready to contribute (took %dms to startup)%n",
+                    System.currentTimeMillis() - Serengeti.startTime);
         } catch (SocketException se) {
             System.out.println("Could not start HTTP server started, IP lookup failed");
         }
     }
 
     static InetAddress getMyIP() throws IOException {
-        InetAddress IP = InetAddress.getLocalHost();
-        return IP;
+        return InetAddress.getLocalHost();
+    }
+
+    private static ByteArrayOutputStream requestBodyToByteArray(HttpExchange t) throws IOException {
+        InputStream inputStream = t.getRequestBody();
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        byte[] buffer = new byte[2048];
+        int read = 0;
+        while ((read = inputStream.read(buffer)) != -1) {
+            byteArrayOutputStream.write(buffer, 0, read);
+        }
+        return byteArrayOutputStream;
     }
 
     static class RootHandler implements HttpHandler {
@@ -196,7 +211,7 @@ public class Server {
             }
             t.sendResponseHeaders(200, Objects.requireNonNull(response).length());
             OutputStream os = t.getResponseBody();
-            os.write(response.getBytes());
+            os.write(Objects.requireNonNull(response).getBytes());
             os.close();
         }
     }
@@ -204,8 +219,11 @@ public class Server {
         public void handle(HttpExchange t) throws IOException {
             String response = null;
             try {
-                response = new Dashboard().IndexTemplate("http://"+t.getRequestHeaders().getFirst("Host"),
-                        t.getRequestURI().getPath());
+                response = new Dashboard()
+                        .IndexTemplate(
+                            "http://"+t.getRequestHeaders().getFirst("Host"),
+                            t.getRequestURI().getPath()
+                        );
             } catch (URISyntaxException e) {
                 e.printStackTrace();
             }
@@ -251,13 +269,7 @@ public class Server {
 
                 if (t.getRequestURI().toString().startsWith("/post?query")) {
                     //interactive!
-                    InputStream inputStream = t.getRequestBody();
-                    ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-                    byte[] buffer = new byte[2048];
-                    int read = 0;
-                    while ((read = inputStream.read(buffer)) != -1) {
-                        byteArrayOutputStream.write(buffer, 0, read);
-                    }
+                    ByteArrayOutputStream byteArrayOutputStream = requestBodyToByteArray(t);
 
                     JSONObject jsonObj = null;
                     try {
@@ -298,13 +310,7 @@ public class Server {
     static Map<String, String> getParameters(HttpExchange httpExchange) {
         Map<String, String> parameters = new HashMap<>();
         try {
-            InputStream inputStream = httpExchange.getRequestBody();
-            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-            byte[] buffer = new byte[2048];
-            int read = 0;
-            while ((read = inputStream.read(buffer)) != -1) {
-                byteArrayOutputStream.write(buffer, 0, read);
-            }
+            ByteArrayOutputStream byteArrayOutputStream = requestBodyToByteArray(httpExchange);
             String[] keyValuePairs = byteArrayOutputStream.toString().split("&");
             for (String keyValuePair : keyValuePairs) {
                 String[] keyValue = keyValuePair.split("=");
