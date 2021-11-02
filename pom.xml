@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>gl.ao.serengeti</groupId>
+    <groupId>ms.ao.serengeti</groupId>
     <artifactId>Serengeti</artifactId>
-    <version>1.2-SNAPSHOT</version>
+    <version>1.3-SNAPSHOT</version>
 
     <build>
         <sourceDirectory>src/main/java</sourceDirectory>
@@ -35,7 +35,7 @@
 <!--                        <manifest>-->
 <!--                            <addClasspath>true</addClasspath>-->
 <!--                            <classpathPrefix>lib/</classpathPrefix>-->
-<!--                            <mainClass>gl.ao.serengeti.Serengeti</mainClass>-->
+<!--                            <mainClass>Serengeti</mainClass>-->
 <!--                        </manifest>-->
 <!--                    </archive>-->
 <!--                </configuration>-->
@@ -47,7 +47,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>gl.ao.serengeti.Serengeti</mainClass>
+                            <mainClass>ms.ao.serengeti.Serengeti</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>
