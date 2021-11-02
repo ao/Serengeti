@@ -40,7 +40,7 @@ Yes, of course you can!
 
 `+ Application`
 
-Set the `classpath` to `Serengeti` and the `Main class` to `gl.ao.serengeti.Serengeti`
+Set the `classpath` to `Serengeti` and the `Main class` to `Serengeti`
 
 `Run the application!`
 
