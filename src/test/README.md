@@ -8,7 +8,7 @@ The test suite is organized into the following categories:
 
 ### Unit Tests
 
-Unit tests test individual classes and methods in isolation. They are located in the `ms.ao.serengeti.unit` package.
+Unit tests test individual classes and methods in isolation. They are located in the `com.ataiva.serengeti.unit` package.
 
 - **Storage Tests**: Test the Storage component, which is responsible for managing databases, tables, and data.
 - **Network Tests**: Test the Network component, which is responsible for node discovery and communication.
@@ -17,19 +17,19 @@ Unit tests test individual classes and methods in isolation. They are located in
 
 ### Integration Tests
 
-Integration tests test the interaction between multiple components. They are located in the `ms.ao.serengeti.integration` package.
+Integration tests test the interaction between multiple components. They are located in the `com.ataiva.serengeti.integration` package.
 
 - **Storage-Network Integration Tests**: Test the interaction between the Storage and Network components, particularly for data replication.
 
 ### System Tests
 
-System tests test the entire system as a whole. They are located in the `ms.ao.serengeti.system` package.
+System tests test the entire system as a whole. They are located in the `com.ataiva.serengeti.system` package.
 
 - **Serengeti System Tests**: Test the entire Serengeti system by starting a complete instance and testing it as a black box.
 
 ### Performance Tests
 
-Performance tests measure the performance of the system under load. They are located in the `ms.ao.serengeti.performance` package.
+Performance tests measure the performance of the system under load. They are located in the `com.ataiva.serengeti.performance` package.
 
 - **Storage Performance Tests**: Measure the performance of the Storage component for various operations.
 
@@ -65,25 +65,25 @@ mvn test
 To run only unit tests:
 
 ```bash
-mvn test -Dtest=ms.ao.serengeti.unit.**.*Test
+mvn test -Dtest=com.ataiva.serengeti.unit.**.*Test
 ```
 
 To run only integration tests:
 
 ```bash
-mvn test -Dtest=ms.ao.serengeti.integration.**.*Test
+mvn test -Dtest=com.ataiva.serengeti.integration.**.*Test
 ```
 
 To run only system tests:
 
 ```bash
-mvn test -Dtest=ms.ao.serengeti.system.**.*Test
+mvn test -Dtest=com.ataiva.serengeti.system.**.*Test
 ```
 
 To run only performance tests:
 
 ```bash
-mvn test -Dtest=ms.ao.serengeti.performance.**.*Test
+mvn test -Dtest=com.ataiva.serengeti.performance.**.*Test
 ```
 
 ### Running Specific Tests
@@ -91,13 +91,13 @@ mvn test -Dtest=ms.ao.serengeti.performance.**.*Test
 To run a specific test class:
 
 ```bash
-mvn test -Dtest=ms.ao.serengeti.unit.storage.StorageComprehensiveTest
+mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageComprehensiveTest
 ```
 
 To run a specific test method:
 
 ```bash
-mvn test -Dtest=ms.ao.serengeti.unit.storage.StorageComprehensiveTest#testCreateDatabaseWithValidName
+mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageComprehensiveTest#testCreateDatabaseWithValidName
 ```
 
 ## Code Coverage

@@ -88,7 +88,7 @@ strategy:
 
 ```yaml
 if [ "${{ matrix.component }}" == "your-new-component" ]; then
-  mvn test -Dtest=ms.ao.serengeti.your.package.YourComponentFastTest
+  mvn test -Dtest=com.ataiva.serengeti.your.package.YourComponentFastTest
 fi
 ```
 
