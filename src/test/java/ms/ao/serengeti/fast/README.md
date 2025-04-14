@@ -13,12 +13,16 @@ The fast test suite is organized as follows:
 - **Base Classes**: Lightweight test base classes that provide minimal setup
   - `LightweightTestBase`: Base class for all fast tests
   - `StorageFastTestBase`: Base class for Storage tests
+  - `LSMFastTestBase`: Base class for LSM storage engine tests
   - `NetworkFastTestBase`: Base class for Network tests
   - `QueryFastTestBase`: Base class for Query tests
   - `ServerFastTestBase`: Base class for Server tests
 
 - **Test Classes**: Fast tests for each component
   - `StorageFastTest`: Fast tests for the Storage component
+  - `LSMStorageEngineFastTest`: Fast tests for the LSM storage engine
+  - `MemTableFastTest`: Fast tests for the MemTable component
+  - `SSTableFastTest`: Fast tests for the SSTable component
   - `NetworkFastTest`: Fast tests for the Network component
   - `QueryFastTest`: Fast tests for the Query component
   - `ServerFastTest`: Fast tests for the Server component
@@ -42,6 +46,16 @@ To run specific fast tests, use the following Maven command:
 
 ```bash
 mvn test -Pfast-tests -Dtest=StorageFastTest
+```
+
+Or use the provided scripts to run specific component tests:
+
+```bash
+# Run all fast tests
+./run_fast_tests.sh
+
+# Run only LSM storage engine fast tests
+mvn test -Dtest=ms.ao.serengeti.storage.lsm.*FastTest
 ```
 
 ## Benefits
@@ -81,3 +95,15 @@ The fast test suite uses several techniques to improve performance:
 3. **Mocked Dependencies**: Avoid network and other external dependencies
 4. **Parallel Execution**: Run tests concurrently
 5. **Focused Test Scope**: Test only core functionality
+6. **Temporary Directories**: Use temporary directories for tests that require file system operations
+7. **Small Data Sets**: Use small data sets for testing
+
+## LSM Storage Engine Fast Tests
+
+The LSM storage engine fast tests focus on testing the core functionality of the LSM storage engine components:
+
+1. **LSMStorageEngine**: Tests basic operations like put, get, and delete
+2. **MemTable**: Tests in-memory operations and size tracking
+3. **SSTable**: Tests on-disk operations with temporary directories
+
+These tests use the `LSMFastTestBase` class, which provides a lightweight setup for LSM storage engine tests.

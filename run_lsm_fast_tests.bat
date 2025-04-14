@@ -1,18 +1,18 @@
 @echo off
-REM Script to run the LSM storage engine fast tests
+REM Script to run the fast tests for Serengeti components
 
-echo Running LSM Storage Engine Fast Tests...
-echo ---------------------------------------
+echo Running Serengeti Fast Tests...
+echo -----------------------------
 
-REM Run the LSM fast tests using Maven
-call mvn test -Dtest=*LSM*FastTest,*MemTable*FastTest,*SSTable*FastTest
+REM Run the fast tests using Maven
+call mvn test -Dtest=*LSM*FastTest,*MemTable*FastTest,*SSTable*FastTest,*Network*FastTest
 
 REM Check the exit code
 if %ERRORLEVEL% EQU 0 (
-    echo ---------------------------------------
-    echo LSM Fast Tests completed successfully!
+    echo -----------------------------
+    echo Fast Tests completed successfully!
 ) else (
-    echo ---------------------------------------
-    echo LSM Fast Tests failed!
+    echo -----------------------------
+    echo Fast Tests failed!
     exit /b 1
 )

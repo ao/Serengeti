@@ -1,19 +1,19 @@
 #!/bin/bash
 
-# Script to run the LSM storage engine fast tests
+# Script to run the fast tests for Serengeti components
 
-echo "Running LSM Storage Engine Fast Tests..."
-echo "---------------------------------------"
+echo "Running Serengeti Fast Tests..."
+echo "-----------------------------"
 
-# Run the LSM fast tests using Maven
-mvn test -Dtest=*LSM*FastTest,*MemTable*FastTest,*SSTable*FastTest
+# Run the fast tests using Maven
+mvn test -Dtest=*LSM*FastTest,*MemTable*FastTest,*SSTable*FastTest,*Network*FastTest
 
 # Check the exit code
 if [ $? -eq 0 ]; then
-    echo "---------------------------------------"
-    echo "LSM Fast Tests completed successfully!"
+    echo "-----------------------------"
+    echo "Fast Tests completed successfully!"
 else
-    echo "---------------------------------------"
-    echo "LSM Fast Tests failed!"
+    echo "-----------------------------"
+    echo "Fast Tests failed!"
     exit 1
 fi
