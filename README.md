@@ -50,6 +50,33 @@ Set the `classpath` to `Serengeti` and the `Main class` to `Serengeti`
 
 `java -jar target/serengeti-1.0-SNAPSHOT.jar`
 
+## Testing
+
+### Running the Comprehensive Test Suite
+
+To run the comprehensive test suite:
+
+```bash
+mvn test
+```
+
+### Running the Fast Test Suite
+
+For rapid feedback during development, use the fast test suite which completes in under 2 minutes:
+
+```bash
+./run_fast_tests.sh  # On Linux/Mac
+run_fast_tests.bat   # On Windows
+```
+
+Or directly with Maven:
+
+```bash
+mvn test -Pfast-tests
+```
+
+For more information about the fast test suite, see [Fast Test Suite README](src/test/java/ms/ao/serengeti/fast/README.md).
+
 ## Problems?
 [Create an issue](https://github.com/ao/serengeti/issues/new) if you need help
 
