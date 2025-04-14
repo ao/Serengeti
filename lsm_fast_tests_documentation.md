@@ -153,3 +153,35 @@ run_fast_tests.bat
 2. Improve test coverage for compaction and recovery scenarios
 3. Add performance benchmarks to the fast test suite
 4. Add more parameterized tests to cover a wider range of inputs
+
+## CI/CD Integration
+
+The fast test suite is integrated with the CI/CD pipeline using GitHub Actions. The workflow is defined in `.github/workflows/fast-tests.yml` and includes:
+
+1. **Parallel Test Execution**: Tests are run in parallel using GitHub Actions matrix strategy:
+   - Storage LSM tests
+   - Network tests
+   - Query tests
+   - Server tests
+
+2. **Code Coverage**: JaCoCo is used to generate code coverage reports, which are uploaded as artifacts.
+
+3. **Test Results Publishing**: Test results are published for easy viewing.
+
+4. **Coverage Check**: The workflow checks that code coverage is at least 80%.
+
+The workflow runs on every push to main, master, and develop branches, as well as on pull requests to these branches.
+
+## Release Process
+
+The fast test suite is part of a comprehensive CI/CD pipeline that includes automatic releases to DockerHub. The release process is defined in `.github/workflows/release.yml` and includes:
+
+1. **Automatic Triggering**: The release workflow is triggered automatically after a successful Maven CI workflow run on the main or master branch.
+
+2. **Docker Image Building**: The workflow builds a Docker image from the Dockerfile in the repository.
+
+3. **DockerHub Publishing**: The Docker image is pushed to DockerHub with appropriate tags based on the version and commit SHA.
+
+4. **GitHub Release Creation**: A GitHub release is created with the JAR file attached.
+
+This ensures that once all tests pass (including the fast tests), a new release is automatically created and pushed to DockerHub, making it available for deployment.

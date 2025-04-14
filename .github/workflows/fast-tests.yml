@@ -1,0 +1,92 @@
+name: Fast Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  fast-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [storage-lsm, network, query, server]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: Run Fast Tests - ${{ matrix.component }}
+      run: |
+        if [ "${{ matrix.component }}" == "storage-lsm" ]; then
+          mvn test -Dtest=ms.ao.serengeti.storage.lsm.*FastTest
+        elif [ "${{ matrix.component }}" == "network" ]; then
+          mvn test -Dtest=ms.ao.serengeti.network.NetworkFastTest
+        elif [ "${{ matrix.component }}" == "query" ]; then
+          mvn test -Dtest=ms.ao.serengeti.unit.query.QueryFastTest
+        elif [ "${{ matrix.component }}" == "server" ]; then
+          mvn test -Dtest=ms.ao.serengeti.unit.server.ServerFastTest
+        fi
+    
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.component }}
+        path: target/surefire-reports/
+        
+  coverage:
+    needs: fast-tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: Download all test results
+      uses: actions/download-artifact@v3
+      with:
+        path: test-results
+    
+    - name: Run all fast tests with coverage
+      run: |
+        chmod +x ./run_fast_tests.sh
+        ./run_fast_tests.sh
+    
+    - name: Generate JaCoCo Report
+      run: mvn jacoco:report
+    
+    - name: Upload JaCoCo Report
+      uses: actions/upload-artifact@v3
+      with:
+        name: jacoco-report
+        path: target/site/jacoco/
+    
+    - name: Publish Test Results
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        files: target/surefire-reports/*.xml
+    
+    - name: Check Test Coverage
+      run: |
+        COVERAGE=$(grep -A 1 "<tfoot>" target/site/jacoco/index.html | tail -n 1 | grep -o '[0-9]\+%' | head -1 | tr -d '%')
+        echo "Test coverage: $COVERAGE%"
+        if [ "$COVERAGE" -lt "80" ]; then
+          echo "Test coverage is below 80%"
+          exit 1
+        fi
