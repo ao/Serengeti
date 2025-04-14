@@ -76,6 +76,28 @@ The fast test suite complements the comprehensive test suite, which provides mor
 3. **Performance Testing**: Measuring system performance under load
 4. **Fault Tolerance Testing**: Testing system behavior under failure conditions
 
+## CI/CD Integration
+
+The fast test suite is integrated with the CI/CD pipeline using GitHub Actions. The workflow is defined in `.github/workflows/fast-tests.yml` and includes:
+
+1. **Parallel Test Execution**: Tests are run in parallel using GitHub Actions matrix strategy
+2. **Code Coverage**: JaCoCo is used to generate code coverage reports
+3. **Test Results Publishing**: Test results are published for easy viewing
+4. **Coverage Check**: The workflow checks that code coverage is at least 80%
+
+The workflow runs on every push to main, master, and develop branches, as well as on pull requests to these branches.
+
+### Automated Release Process
+
+The fast test suite is part of a comprehensive CI/CD pipeline that includes automatic releases to DockerHub. The release process is defined in `.github/workflows/release.yml` and includes:
+
+1. **Automatic Triggering**: The release workflow is triggered automatically after a successful Maven CI workflow run on the main or master branch.
+2. **Docker Image Building**: The workflow builds a Docker image from the Dockerfile in the repository.
+3. **DockerHub Publishing**: The Docker image is pushed to DockerHub with appropriate tags based on the version and commit SHA.
+4. **GitHub Release Creation**: A GitHub release is created with the JAR file attached.
+
+This ensures that once all tests pass (including the fast tests), a new release is automatically created and pushed to DockerHub, making it available for deployment.
+
 ## Adding New Fast Tests
 
 When adding new functionality to Serengeti, consider adding fast tests to provide rapid feedback during development. Follow these guidelines:
