@@ -1,16 +1,30 @@
-# LSM Storage Engine Fast Tests
+# Serengeti Fast Tests
 
 ## Overview
 
-This document describes the fast test suite for the LSM (Log-Structured Merge-tree) storage engine components. The fast test suite is designed to run quickly (under 2 minutes) and provide rapid feedback during development. It focuses on testing core functionality with minimal setup and dependencies.
+This document describes the fast test suite for Serengeti components. The fast test suite is designed to run quickly (under 2 minutes) and provide rapid feedback during development. It focuses on testing core functionality with minimal setup and dependencies.
 
 ## Components
 
 The fast test suite includes tests for the following components:
 
+### Storage Components
+
 1. **LSMStorageEngine** - The main class that coordinates the LSM-Tree components
 2. **MemTable** - In-memory data structure for storing key-value pairs
 3. **SSTable** - On-disk sorted string table for persistent storage
+
+### Network Components
+
+1. **Network** - The component responsible for node discovery and communication
+
+### Query Components
+
+1. **QueryEngine** - The component responsible for parsing and executing queries
+
+### Server Components
+
+1. **Server** - The component responsible for handling HTTP requests and responses
 
 ## Test Base Classes
 
@@ -26,6 +40,27 @@ The base class for all fast tests. It provides:
 Extends LightweightTestBase and provides:
 - LSMStorageEngine initialization with a temporary directory
 - Helper methods for creating MemTables and test data
+
+### NetworkFastTestBase
+
+Extends LightweightTestBase and provides:
+- MockNetwork initialization
+- Helper methods for adding mock nodes and setting mock responses
+- Utility methods for generating random node IDs and IP addresses
+
+### QueryFastTestBase
+
+Extends LightweightTestBase and provides:
+- MockQueryEngine initialization
+- Helper methods for query testing
+- Utility methods for generating test queries
+
+### ServerFastTestBase
+
+Extends LightweightTestBase and provides:
+- MockServer initialization
+- Helper methods for HTTP request testing
+- Utility methods for simulating client requests
 
 ## Test Classes
 
@@ -57,18 +92,44 @@ Tests the core functionality of the SSTable:
 - Tombstone handling
 - Metadata correctness
 
+### NetworkFastTest
+
+Tests the core functionality of the Network component:
+- Network initialization
+- Adding and retrieving nodes
+- Getting IP from UUID
+- Communicating query logs to single and all nodes
+- Getting primary and secondary nodes
+- Getting random available nodes
+
+### QueryFastTest
+
+Tests the core functionality of the Query Engine:
+- Query parsing
+- Query execution
+- Error handling
+- Query optimization
+
+### ServerFastTest
+
+Tests the core functionality of the Server component:
+- Server initialization
+- Request handling
+- Response generation
+- Error handling
+
 ## Running the Tests
 
 ### Unix/Linux/macOS
 
 ```bash
-./run_lsm_fast_tests.sh
+./run_fast_tests.sh
 ```
 
 ### Windows
 
 ```cmd
-run_lsm_fast_tests.bat
+run_fast_tests.bat
 ```
 
 ## Benefits
