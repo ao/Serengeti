@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  serengeti:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "1985:1985"
+    volumes:
+      - serengeti-data:/app/data
+    environment:
+      - JAVA_OPTS=-Xmx512m
+    restart: unless-stopped
+
+volumes:
+  serengeti-data:

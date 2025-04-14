@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>ms.ao.serengeti</groupId>
+    <groupId>com.ataiva.serengeti</groupId>
     <artifactId>Serengeti</artifactId>
     <version>1.3-SNAPSHOT</version>
 
@@ -48,7 +48,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>ms.ao.serengeti.Serengeti</mainClass>
+                            <mainClass>com.ataiva.serengeti.Serengeti</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>

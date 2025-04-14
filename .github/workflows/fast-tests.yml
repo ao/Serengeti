@@ -27,13 +27,13 @@ jobs:
     - name: Run Fast Tests - ${{ matrix.component }}
       run: |
         if [ "${{ matrix.component }}" == "storage-lsm" ]; then
-          mvn test -Dtest=ms.ao.serengeti.storage.lsm.*FastTest
+          mvn test -Dtest=com.ataiva.serengeti.storage.lsm.*FastTest
         elif [ "${{ matrix.component }}" == "network" ]; then
-          mvn test -Dtest=ms.ao.serengeti.network.NetworkFastTest
+          mvn test -Dtest=com.ataiva.serengeti.network.NetworkFastTest
         elif [ "${{ matrix.component }}" == "query" ]; then
-          mvn test -Dtest=ms.ao.serengeti.unit.query.QueryFastTest
+          mvn test -Dtest=com.ataiva.serengeti.unit.query.QueryFastTest
         elif [ "${{ matrix.component }}" == "server" ]; then
-          mvn test -Dtest=ms.ao.serengeti.unit.server.ServerFastTest
+          mvn test -Dtest=com.ataiva.serengeti.unit.server.ServerFastTest
         fi
     
     - name: Upload Test Results

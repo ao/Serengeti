@@ -5,7 +5,7 @@ echo Running Serengeti Fast Tests...
 echo -----------------------------
 
 REM Run the fast tests using Maven
-call mvn test -Dtest=ms.ao.serengeti.storage.lsm.*FastTest,ms.ao.serengeti.network.NetworkFastTest,ms.ao.serengeti.unit.query.QueryFastTest,ms.ao.serengeti.unit.server.ServerFastTest
+call mvn test -Dtest=com.ataiva.serengeti.storage.lsm.*FastTest,com.ataiva.serengeti.network.NetworkFastTest,com.ataiva.serengeti.unit.query.QueryFastTest,com.ataiva.serengeti.unit.server.ServerFastTest
 
 REM Check the exit code
 if %ERRORLEVEL% EQU 0 (
