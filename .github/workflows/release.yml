@@ -6,7 +6,7 @@ on:
     workflows: ["Java CI with Maven"]
     types:
       - completed
-    branches: [main, master]
+    branches: [main]
 
   # Allow manual triggering
   workflow_dispatch:
