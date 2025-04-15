@@ -1,6 +1,6 @@
-package ms.ao.serengeti.schema;
+package com.ataiva.serengeti.schema;
 
-import ms.ao.serengeti.helpers.Globals;
+import com.ataiva.serengeti.helpers.Globals;
 import org.json.JSONObject;
 
 import java.io.*;
@@ -96,15 +96,31 @@ public class TableStorageObject implements Serializable {
     public TableStorageObject loadExisting() {
         try {
             Path path = Paths.get(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.storage_filename);
-            TableStorageObject tableMeta = (TableStorageObject) Globals.convertFromBytes(Files.readAllBytes(path));
-            System.out.println("Loaded storage table\t\t: '"+databaseName+"#"+tableMeta.tableName+"' ("+tableMeta.rows.size()+" rows)");
-            return tableMeta;
+            Object obj = Globals.convertFromBytes(Files.readAllBytes(path));
+            
+            if (obj == null) {
+                System.out.println("Warning: Could not deserialize table storage object. Creating new one for " + databaseName + "#" + tableName);
+                return new TableStorageObject();
+            }
+            
+            if (obj instanceof TableStorageObject) {
+                TableStorageObject tableMeta = (TableStorageObject) obj;
+                System.out.println("Loaded storage table\t\t: '"+databaseName+"#"+tableMeta.tableName+"' ("+tableMeta.rows.size()+" rows)");
+                return tableMeta;
+            } else {
+                System.out.println("Warning: Deserialized object is not a TableStorageObject. Creating new one for " + databaseName + "#" + tableName);
+                return new TableStorageObject();
+            }
+        } catch (ClassCastException e) {
+            System.out.println("Warning: Class cast exception when deserializing table storage object: " + e.getMessage());
+            return new TableStorageObject();
         } catch (StreamCorruptedException sce) {
-            System.out.println("Stream Corrupted Exception (TableStorageObject): "+sce.getMessage()+" - Could not 'loadExisting'");
+            System.out.println("Warning: Stream Corrupted Exception (TableStorageObject): "+sce.getMessage()+" - Could not 'loadExisting'");
+            return new TableStorageObject();
         } catch (Exception e) {
-            e.printStackTrace();
+            System.out.println("Warning: Error deserializing table storage object: " + e.getMessage());
+            return new TableStorageObject();
         }
-        return new TableStorageObject();
     }
 
     public byte[] returnDBObytes() {

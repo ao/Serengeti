@@ -6,7 +6,7 @@ echo "Running Serengeti Fast Tests..."
 echo "-----------------------------"
 
 # Run the fast tests using Maven
-mvn test -Dtest=com.ataiva.serengeti.storage.lsm.*FastTest,com.ataiva.serengeti.network.NetworkFastTest,com.ataiva.serengeti.unit.query.QueryFastTest,com.ataiva.serengeti.unit.server.ServerFastTest
+mvn test -Dtest=com.ataiva.serengeti.storage.lsm.*FastTest,com.ataiva.serengeti.network.NetworkFastTest,com.ataiva.serengeti.unit.query.QueryFastTest,com.ataiva.serengeti.unit.server.ServerFastTest -Djacoco.skip=true
 
 # Check the exit code
 if [ $? -eq 0 ]; then

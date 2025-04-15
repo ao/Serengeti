@@ -1,6 +1,6 @@
-package ms.ao.serengeti.storage.lsm;
+package com.ataiva.serengeti.storage.lsm;
 
-import ms.ao.serengeti.utils.LSMFastTestBase;
+import com.ataiva.serengeti.utils.LSMFastTestBase;
 import org.junit.jupiter.api.*;
 
 import java.io.IOException;

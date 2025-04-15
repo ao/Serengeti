@@ -1,13 +1,14 @@
 package com.ataiva.serengeti.storage;
 
-import com.ataiva.serengeti.Serengeti;
-import com.ataiva.serengeti.query.QueryLog;
-import com.ataiva.serengeti.schema.DatabaseObject;
-import com.ataiva.serengeti.helpers.Globals;
-import com.ataiva.serengeti.schema.TableReplicaObject;
-import com.ataiva.serengeti.schema.TableStorageObject;
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import com.ataiva.serengeti.Serengeti;
+import com.ataiva.serengeti.helpers.Globals;
+import com.ataiva.serengeti.query.QueryLog;
+import com.ataiva.serengeti.schema.DatabaseObject;
+import com.ataiva.serengeti.schema.TableReplicaObject;
+import com.ataiva.serengeti.schema.TableStorageObject;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -130,34 +131,56 @@ public class Storage {
      */
     public List<String> select(String db, String table, String selectWhat, String col, String val) {
         try {
-
-//            Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-//            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
             DatabaseObject dbo = databases.get(db);
 
             if (tableExists(db, table)) {
                 List<String> list = new ArrayList<>();
                 Set<String> uuids = new HashSet<String>();
 
-                JSONArray array = Serengeti.network.communicateQueryLogAllNodes(new JSONObject() {{
-                    put("type", "SelectRespond");
-                    put("selectWhat", selectWhat);
-                    put("db", db);
-                    put("table", table);
-                    put("col", col);
-                    put("val", val);
-                }}.toString());
+                try {
+                    // Try to get data from the network
+                    JSONArray array = Serengeti.network.communicateQueryLogAllNodes(new JSONObject() {{
+                        put("type", "SelectRespond");
+                        put("selectWhat", selectWhat);
+                        put("db", db);
+                        put("table", table);
+                        put("col", col);
+                        put("val", val);
+                    }}.toString());
 
-                for (int i = 0; i < array.length(); i++) {
-                    String arr = array.getString(i);
-                    if (!arr.equals("") && !arr.equals("POST")) {
-                        JSONArray selectList = new JSONArray(arr);
+                    for (int i = 0; i < array.length(); i++) {
+                        String arr = array.getString(i);
+                        if (!arr.equals("") && !arr.equals("POST")) {
+                            JSONArray selectList = new JSONArray(arr);
 
-                        for (int j = 0; j < selectList.length(); j++) {
-                            JSONObject row = (JSONObject) selectList.get(j);
-                            if ( !uuids.contains( row.getString("__uuid") ) ) {
-                                uuids.add( row.getString("__uuid") ); // make sure it's always unique
-                                list.add( row.toString() );
+                            for (int j = 0; j < selectList.length(); j++) {
+                                JSONObject row = (JSONObject) selectList.get(j);
+                                if (!uuids.contains(row.getString("__uuid"))) {
+                                    uuids.add(row.getString("__uuid")); // make sure it's always unique
+                                    list.add(row.toString());
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    // If network communication fails, try to get data from local storage
+                    TableStorageObject tso = tableStorageObjects.get(db + "#" + table);
+                    if (tso != null) {
+                        if (col.isEmpty() && val.isEmpty()) {
+                            // Return all rows
+                            for (String key : tso.rows.keySet()) {
+                                JSONObject json = new JSONObject(tso.rows.get(key));
+                                json.put("__uuid", key);
+                                list.add(json.toString());
+                            }
+                        } else {
+                            // Return rows matching the condition
+                            for (String key : tso.rows.keySet()) {
+                                JSONObject json = new JSONObject(tso.rows.get(key));
+                                if (json.has(col) && json.getString(col).equals(val)) {
+                                    json.put("__uuid", key);
+                                    list.add(json.toString());
+                                }
                             }
                         }
                     }
@@ -168,7 +191,7 @@ public class Storage {
         } catch (Exception e) {
             e.printStackTrace();
         }
-        return null;
+        return new ArrayList<>(); // Return empty list instead of null
     }
 
     /***
@@ -188,44 +211,69 @@ public class Storage {
             if (!tableExists(db, table)) createTable(db, table);
             createTablePathIfNotExists(db, table);
 
-            JSONObject _nodes = Serengeti.network.getPrimarySecondary();
-            String _node_primary_id = _nodes.getJSONObject("primary").getString("id");
-            String _node_primary_ip = _nodes.getJSONObject("primary").getString("ip");
-            String _node_secondary_id = _nodes.getJSONObject("secondary").getString("id");
-            String _node_secondary_ip = _nodes.getJSONObject("secondary").getString("ip");
+            try {
+                JSONObject _nodes = Serengeti.network.getPrimarySecondary();
+                
+                // Get primary node info with safe access
+                JSONObject primaryNode = _nodes.getJSONObject("primary");
+                String _node_primary_id = primaryNode.optString("id", "");
+                String _node_primary_ip = primaryNode.optString("ip", "127.0.0.1");
+                
+                // Get secondary node info with safe access
+                JSONObject secondaryNode = _nodes.getJSONObject("secondary");
+                String _node_secondary_id = secondaryNode.optString("id", "");
+                String _node_secondary_ip = secondaryNode.optString("ip", "");
+                
+                String row_id = UUID.randomUUID().toString();
+                
+                // Store the data locally first
+                TableStorageObject tso = tableStorageObjects.get(db+"#"+table);
+                if (tso != null) {
+                    json.put("__uuid", row_id);
+                    tso.insert(row_id, json);
+                }
+                
+                // store the data on `primary` and `secondary` nodes
+                String _jsonInsertReplicate = new JSONObject() {{
+                    put("db", db);
+                    put("table", table);
+                    put("row_id", row_id);
+                    put("json", json);
+                    put("type", "ReplicateInsertObject");
+                }}.toString();
+                
+                // Always communicate with primary node if it exists
+                if (!_node_primary_id.isEmpty() && !_node_primary_ip.isEmpty()) {
+                    Serengeti.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonInsertReplicate);
+                }
+                
+                // Only communicate with secondary node if it exists
+                if (!_node_secondary_id.isEmpty() && !_node_secondary_ip.isEmpty()) {
+                    Serengeti.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonInsertReplicate);
+                }
 
-            String row_id = UUID.randomUUID().toString();
 
-            // store the data on `primary` and `secondary` nodes
-            String _jsonInsertReplicate = new JSONObject() {{
-                put("db", db);
-                put("table", table);
-                put("row_id", row_id);
-                put("json", json);
-                put("type", "ReplicateInsertObject");
-            }}.toString();
-            Serengeti.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonInsertReplicate);
-            Serengeti.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonInsertReplicate);
-
-
-            // tell all nodes about where the replicated data is stored
-            Serengeti.network.communicateQueryLogAllNodes(new JSONObject() {{
-                put("type", "TableReplicaObjectInsertOrReplace");
-                put("db", db);
-                put("table", table);
-                put("row_id", row_id);
-                put("json", new JSONObject() {{
-                    put("primary", _node_primary_id);
-                    put("secondary", _node_secondary_id);
+                // tell all nodes about where the replicated data is stored
+                Serengeti.network.communicateQueryLogAllNodes(new JSONObject() {{
+                    put("type", "TableReplicaObjectInsertOrReplace");
+                    put("db", db);
+                    put("table", table);
+                    put("row_id", row_id);
+                    put("json", new JSONObject() {{
+                        put("primary", _node_primary_id);
+                        put("secondary", _node_secondary_id);
+                    }}.toString());
                 }}.toString());
-            }}.toString());
 
-            sro.rowId = row_id;
-            sro.success = true;
-            sro.primary = _node_primary_id;
-            sro.secondary = _node_secondary_id;
+                sro.rowId = row_id;
+                sro.success = true;
+                sro.primary = _node_primary_id;
+                sro.secondary = _node_secondary_id;
 
-            return sro;
+                return sro;
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -259,10 +307,10 @@ public class Storage {
                     // get nodes where replicas are stored
                     JSONObject _nodes = tro.getRowReplica(_row_id);
 
-                    String _node_primary_id = _nodes.getString("primary");
-                    String _node_primary_ip = Serengeti.network.getIPFromUUID(_node_primary_id);
-                    String _node_secondary_id = _nodes.getString("secondary");
-                    String _node_secondary_ip = Serengeti.network.getIPFromUUID(_node_secondary_id);
+                    String _node_primary_id = _nodes.optString("primary", "");
+                    String _node_primary_ip = !_node_primary_id.isEmpty() ? Serengeti.network.getIPFromUUID(_node_primary_id) : "";
+                    String _node_secondary_id = _nodes.optString("secondary", "");
+                    String _node_secondary_ip = !_node_secondary_id.isEmpty() ? Serengeti.network.getIPFromUUID(_node_secondary_id) : "";
 
                     JSONObject _json = new JSONObject() {{
                         put("update_key", update_key);
@@ -279,8 +327,15 @@ public class Storage {
                         put("json", _json);
                         put("type", "ReplicateUpdateObject");
                     }}.toString();
-                    Serengeti.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonUpdateReplicate);
-                    Serengeti.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonUpdateReplicate);
+                    
+                    // Only communicate with nodes that exist
+                    if (!_node_primary_id.isEmpty() && !_node_primary_ip.isEmpty()) {
+                        Serengeti.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonUpdateReplicate);
+                    }
+                    
+                    if (!_node_secondary_id.isEmpty() && !_node_secondary_ip.isEmpty()) {
+                        Serengeti.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonUpdateReplicate);
+                    }
 
                     return true;
                 }
@@ -316,10 +371,10 @@ public class Storage {
                     // get nodes where replicas are stored
                     JSONObject _nodes = tro.getRowReplica(_row_id);
 
-                    String _node_primary_id = _nodes.getString("primary");
-                    String _node_primary_ip = Serengeti.network.getIPFromUUID(_node_primary_id);
-                    String _node_secondary_id = _nodes.getString("secondary");
-                    String _node_secondary_ip = Serengeti.network.getIPFromUUID(_node_secondary_id);
+                    String _node_primary_id = _nodes.optString("primary", "");
+                    String _node_primary_ip = !_node_primary_id.isEmpty() ? Serengeti.network.getIPFromUUID(_node_primary_id) : "";
+                    String _node_secondary_id = _nodes.optString("secondary", "");
+                    String _node_secondary_ip = !_node_secondary_id.isEmpty() ? Serengeti.network.getIPFromUUID(_node_secondary_id) : "";
 
                     JSONObject _json = new JSONObject() {{
                         put("where_col", where_col);
@@ -334,8 +389,15 @@ public class Storage {
                         put("json", _json);
                         put("type", "ReplicateDeleteObject");
                     }}.toString();
-                    Serengeti.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonDeleteReplicate);
-                    Serengeti.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonDeleteReplicate);
+                    
+                    // Only communicate with nodes that exist
+                    if (!_node_primary_id.isEmpty() && !_node_primary_ip.isEmpty()) {
+                        Serengeti.network.communicateQueryLogSingleNode(_node_primary_id, _node_primary_ip, _jsonDeleteReplicate);
+                    }
+                    
+                    if (!_node_secondary_id.isEmpty() && !_node_secondary_ip.isEmpty()) {
+                        Serengeti.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonDeleteReplicate);
+                    }
 
                     // tell all nodes about where the replicated data is stored
                     Serengeti.network.communicateQueryLogAllNodes(new JSONObject() {{

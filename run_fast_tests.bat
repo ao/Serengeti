@@ -5,7 +5,7 @@ echo Running Serengeti Fast Tests...
 echo -----------------------------
 
 REM Run the fast tests using Maven
-call mvn test -Dtest=com.ataiva.serengeti.storage.lsm.*FastTest,com.ataiva.serengeti.network.NetworkFastTest,com.ataiva.serengeti.unit.query.QueryFastTest,com.ataiva.serengeti.unit.server.ServerFastTest
+call mvn test -Dtest=com.ataiva.serengeti.storage.lsm.*FastTest,com.ataiva.serengeti.network.NetworkFastTest,com.ataiva.serengeti.unit.query.QueryFastTest,com.ataiva.serengeti.unit.server.ServerFastTest -Djacoco.skip=true
 
 REM Check the exit code
 if %ERRORLEVEL% EQU 0 (

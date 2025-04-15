@@ -1,6 +1,6 @@
-package ms.ao.serengeti.helpers;
+package com.ataiva.serengeti.helpers;
 
-import ms.ao.serengeti.Serengeti;
+import com.ataiva.serengeti.Serengeti;
 
 public class ShutdownHandler {
 

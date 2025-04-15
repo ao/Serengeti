@@ -1,4 +1,4 @@
-package ms.ao.serengeti.storage.lsm;
+package com.ataiva.serengeti.storage.lsm;
 
 import java.util.Map;
 import java.util.NavigableMap;

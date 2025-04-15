@@ -1,8 +1,8 @@
-package ms.ao.serengeti.utils;
+package com.ataiva.serengeti.utils;
 
-import ms.ao.serengeti.Serengeti;
-import ms.ao.serengeti.mocks.MockNetwork;
-import ms.ao.serengeti.server.ServerConstants;
+import com.ataiva.serengeti.Serengeti;
+import com.ataiva.serengeti.mocks.MockNetwork;
+import com.ataiva.serengeti.server.ServerConstants;
 
 import java.util.UUID;
 
@@ -28,7 +28,7 @@ public class NetworkFastTestBase extends LightweightTestBase {
         // Set up minimal server constants
         ServerConstants serverConstants = new ServerConstants();
         serverConstants.id = UUID.randomUUID().toString();
-        Serengeti.server = new ms.ao.serengeti.mocks.MockServer();
+        Serengeti.server = new com.ataiva.serengeti.mocks.MockServer();
         Serengeti.server.server_constants = serverConstants;
     }
     

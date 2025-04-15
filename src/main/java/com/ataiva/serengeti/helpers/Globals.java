@@ -1,6 +1,6 @@
-package ms.ao.serengeti.helpers;
+package com.ataiva.serengeti.helpers;
 
-import ms.ao.serengeti.Serengeti;
+import com.ataiva.serengeti.Serengeti;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -70,7 +70,8 @@ public class Globals {
         } catch (EOFException eof) {
             eof.printStackTrace();
 //            System.out.println( new String(bytes) );
-            System.exit((-1));
+            // Don't exit the JVM, just return null to indicate an error
+            return null;
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -165,12 +166,22 @@ public class Globals {
 
     /**
      * Returns this host's first non-loopback IPv4 address string in textual
-     * representation.
+     * representation, preferring 192.168.x.x addresses.
      * @return String
      * @throws SocketException
      */
     public static String getHost4Address() throws SocketException {
         List<Inet4Address> inet4 = getInet4Addresses();
+        
+        // First, try to find a 192.168.x.x address
+        for (Inet4Address addr : inet4) {
+            String ip = addr.getHostAddress();
+            if (ip.startsWith("192.168.")) {
+                return ip;
+            }
+        }
+        
+        // If no 192.168.x.x address is found, return the first available address
         return !inet4.isEmpty()
                 ? inet4.get(0).getHostAddress()
                 : null;
@@ -196,26 +207,23 @@ public class Globals {
      * @return
      */
     public static double getProcessCpuLoad() {
-
         try {
-            MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
-            ObjectName name = ObjectName.getInstance("java.lang:type=OperatingSystem");
-            AttributeList list = mbs.getAttributes(name, new String[]{"SystemCpuLoad"});
-
-            if (list.isEmpty()) return Double.NaN;
-
-            Attribute att = (Attribute) list.get(0);
-            Double value = (Double) att.getValue();
-
-            // usually takes a couple of seconds before we get real values
-            if (value == -1.0) return Double.NaN;
-            // returns a percentage value with 1 decimal point precision
-            return ((int) (value * 1000) / 10.0);
+            com.sun.management.OperatingSystemMXBean osBean =
+                (com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+            
+            // Get system load average
+            double cpuLoad = osBean.getSystemLoadAverage();
+            
+            // Convert to percentage with 1 decimal point precision
+            if (cpuLoad >= 0) {
+                return ((int) (cpuLoad * 1000)) / 10.0;
+            } else {
+                return 0.0; // Return 0 instead of NaN for better display
+            }
         } catch (Exception e) {
-            e.printStackTrace();
+            System.out.println("Error getting CPU load: " + e.getMessage());
+            return 0.0; // Return 0 instead of NaN for better display
         }
-
-        return Double.NaN;
     }
 
     /***

@@ -1,4 +1,4 @@
-package ms.ao.serengeti.server;
+package com.ataiva.serengeti.server;
 
 import java.io.*;
 import java.lang.management.ManagementFactory;
@@ -16,13 +16,13 @@ import java.util.concurrent.Executors;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import ms.ao.serengeti.Serengeti;
-import ms.ao.serengeti.network.Network;
-import ms.ao.serengeti.ui.Dashboard;
-import ms.ao.serengeti.ui.Interactive;
-import ms.ao.serengeti.helpers.Globals;
-import ms.ao.serengeti.query.QueryEngine;
-import ms.ao.serengeti.query.QueryLog;
+import com.ataiva.serengeti.Serengeti;
+import com.ataiva.serengeti.network.Network;
+import com.ataiva.serengeti.ui.Dashboard;
+import com.ataiva.serengeti.ui.Interactive;
+import com.ataiva.serengeti.helpers.Globals;
+import com.ataiva.serengeti.query.QueryEngine;
+import com.ataiva.serengeti.query.QueryLog;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -33,22 +33,37 @@ public class Server {
     private Path server_constants_file = null;
 
     public void init() {
-
         try {
             File root_directory = new File(Globals.data_path);
             if (! root_directory.exists()) {
                 boolean mkdir = root_directory.mkdir();
             }
-
+            
             server_constants_file = Paths.get(server_constants_file_location);
             if (Files.exists(server_constants_file)) {
-                server_constants = (ServerConstants) Globals.convertFromBytes(Files.readAllBytes(server_constants_file));
+                try {
+                    server_constants = (ServerConstants) Globals.convertFromBytes(Files.readAllBytes(server_constants_file));
+                    // If deserialization returns null (due to package name change or other issues), create a new object
+                    if (server_constants == null) {
+                        System.out.println("Warning: Could not deserialize server constants. Creating new ones.");
+                        server_constants = new ServerConstants();
+                        server_constants.id = UUID.randomUUID().toString();
+                        saveServerConstants();
+                    }
+                } catch (Exception e) {
+                    System.out.println("Warning: Error deserializing server constants: " + e.getMessage());
+                    server_constants = new ServerConstants();
+                    server_constants.id = UUID.randomUUID().toString();
+                    saveServerConstants();
+                }
             } else {
                 server_constants = new ServerConstants();
                 server_constants.id = UUID.randomUUID().toString();
                 saveServerConstants();
             }
-        } catch (Exception ignore) {}
+        } catch (Exception e) {
+            System.out.println("Error initializing server: " + e.getMessage());
+        }
     }
 
     private void saveServerConstants() {
@@ -73,10 +88,10 @@ public class Server {
             server.start();
 
         } catch (BindException be) {
-            System.out.println("Bind Exception: "+be.getMessage());
-            System.exit(-1);
+            System.out.println("Warning: Port " + Globals.port_default + " is already in use. This node will operate in passive mode.");
+            // Don't exit, just continue without starting the HTTP server
         } catch (Exception e) {
-            e.printStackTrace();
+            System.out.println("Error starting server: " + e.getMessage());
         }
         try {
             System.out.printf("\nHTTP server started at http://%s:%d/%n",
@@ -128,40 +143,106 @@ public class Server {
 
             jsonObjThis.put("ip", Globals.getHost4Address());
 
-            //disk
+            // Get system information using OperatingSystemMXBean
+            com.sun.management.OperatingSystemMXBean osBean =
+                (com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+            
+            // Disk stats
             JSONObject jsonObjectThisDisk = new JSONObject();
             try {
-                File f = new File("/");
-                jsonObjectThisDisk.put("free", f.getFreeSpace());
-                jsonObjectThisDisk.put("free_human", f.getFreeSpace()/1024/1024/1024+"G");
-                jsonObjectThisDisk.put("usable", f.getUsableSpace());
-                jsonObjectThisDisk.put("usable_human", f.getUsableSpace()/1024/1024/1024+"G");
-                jsonObjectThisDisk.put("total", f.getTotalSpace());
-                jsonObjectThisDisk.put("total_human", f.getTotalSpace()/1024/1024/1024+"G");
+                // Use Java Runtime to execute df command to get accurate disk stats
+                Process process = Runtime.getRuntime().exec("df -k " + Globals.data_path);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                
+                // Skip header line
+                reader.readLine();
+                
+                // Read data line
+                String line = reader.readLine();
+                if (line != null) {
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length >= 6) {
+                        // Parse values (blocks are in KB)
+                        long totalSpace = Long.parseLong(parts[1]) * 1024;
+                        long usedSpace = Long.parseLong(parts[2]) * 1024;
+                        long freeSpace = Long.parseLong(parts[3]) * 1024;
+                        
+                        jsonObjectThisDisk.put("total", totalSpace);
+                        jsonObjectThisDisk.put("total_human", formatSize(totalSpace));
+                        jsonObjectThisDisk.put("used", usedSpace);
+                        jsonObjectThisDisk.put("used_human", formatSize(usedSpace));
+                        jsonObjectThisDisk.put("free", freeSpace);
+                        jsonObjectThisDisk.put("free_human", formatSize(freeSpace));
+                        jsonObjectThisDisk.put("used_percent", parts[4]);
+                    }
+                }
+                
+                process.waitFor();
+                reader.close();
             } catch (Exception e) {
-                e.printStackTrace();
+                System.out.println("Error getting disk stats: " + e.getMessage());
+                // Fallback to Java File API
+                try {
+                    File f = new File(Globals.data_path);
+                    if (!f.exists()) {
+                        f.mkdirs();
+                    }
+                    
+                    long totalSpace = f.getTotalSpace();
+                    long freeSpace = f.getFreeSpace();
+                    long usedSpace = totalSpace - freeSpace;
+                    
+                    jsonObjectThisDisk.put("total", totalSpace);
+                    jsonObjectThisDisk.put("total_human", formatSize(totalSpace));
+                    jsonObjectThisDisk.put("free", freeSpace);
+                    jsonObjectThisDisk.put("free_human", formatSize(freeSpace));
+                    jsonObjectThisDisk.put("used", usedSpace);
+                    jsonObjectThisDisk.put("used_human", formatSize(usedSpace));
+                    jsonObjectThisDisk.put("used_percent", Math.round((double)usedSpace / totalSpace * 100) + "%");
+                } catch (Exception ex) {
+                    System.out.println("Error with fallback disk stats: " + ex.getMessage());
+                }
             }
             jsonObjThis.put("disk", jsonObjectThisDisk);
 
-            //processors
+            // CPU stats
             JSONObject jsonObjectThisCPU = new JSONObject();
-            jsonObjectThisCPU.put("processors", Runtime.getRuntime().availableProcessors());
-            jsonObjectThisCPU.put("load", Globals.getProcessCpuLoad());
+            try {
+                int processors = Runtime.getRuntime().availableProcessors();
+                double cpuLoad = osBean.getSystemLoadAverage();
+                if (cpuLoad < 0) cpuLoad = 0;
+                
+                jsonObjectThisCPU.put("processors", processors);
+                jsonObjectThisCPU.put("load", Math.round(cpuLoad * 100) / 100.0);
+                jsonObjectThisCPU.put("load_percent", Math.round(cpuLoad * 100) + "%");
+            } catch (Exception e) {
+                System.out.println("Error getting CPU stats: " + e.getMessage());
+            }
             jsonObjThis.put("cpu", jsonObjectThisCPU);
 
-            //memory
+            // Memory stats
             JSONObject jsonObjectThisMemory = new JSONObject();
             try {
-                long memorySize = ((com.sun.management.OperatingSystemMXBean)
-                        ManagementFactory.getOperatingSystemMXBean()).getTotalPhysicalMemorySize();
-                long freeMemorySize = ((com.sun.management.OperatingSystemMXBean)
-                        ManagementFactory.getOperatingSystemMXBean()).getFreePhysicalMemorySize();
+                long memorySize = osBean.getTotalPhysicalMemorySize();
+                long freeMemorySize = osBean.getFreePhysicalMemorySize();
+                long usedMemorySize = memorySize - freeMemorySize;
+                
+                // Also include JVM memory stats
+                Runtime runtime = Runtime.getRuntime();
+                long jvmTotal = runtime.totalMemory();
+                long jvmFree = runtime.freeMemory();
+                long jvmUsed = jvmTotal - jvmFree;
+                long jvmMax = runtime.maxMemory();
+                
                 jsonObjectThisMemory.put("total", memorySize);
-                jsonObjectThisMemory.put("total_human", memorySize/1024/1024/1024+"G");
+                jsonObjectThisMemory.put("total_human", formatSize(memorySize));
                 jsonObjectThisMemory.put("free", freeMemorySize);
-                jsonObjectThisMemory.put("free_human", freeMemorySize/1024/1024/1024+"G");
+                jsonObjectThisMemory.put("free_human", formatSize(freeMemorySize));
+                jsonObjectThisMemory.put("used", usedMemorySize);
+                jsonObjectThisMemory.put("used_human", formatSize(usedMemorySize));
+                jsonObjectThisMemory.put("used_percent", Math.round((double)usedMemorySize / memorySize * 100) + "%");
             } catch (Exception e) {
-                e.printStackTrace();
+                System.out.println("Error getting memory stats: " + e.getMessage());
             }
             jsonObjThis.put("memory", jsonObjectThisMemory);
 
@@ -325,4 +406,25 @@ public class Server {
         return parameters;
     }
 
+    /**
+     * Format a size in bytes to a human-readable string with appropriate units
+     * @param size Size in bytes
+     * @return Formatted string with units
+     */
+    private static String formatSize(long size) {
+        if (size <= 0) return "0B";
+        
+        final String[] units = new String[] { "B", "KB", "MB", "GB", "TB", "PB", "EB" };
+        int digitGroups = (int) (Math.log10(size) / Math.log10(1024));
+        
+        // Limit to the largest unit we have
+        digitGroups = Math.min(digitGroups, units.length - 1);
+        
+        // Format with one decimal place for larger units
+        if (digitGroups > 1) {
+            return String.format("%.1f%s", size / Math.pow(1024, digitGroups), units[digitGroups]);
+        } else {
+            return String.format("%d%s", (int)(size / Math.pow(1024, digitGroups)), units[digitGroups]);
+        }
+    }
 }

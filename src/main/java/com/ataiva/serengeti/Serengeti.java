@@ -1,66 +1,37 @@
-package ms.ao.serengeti;
+ package com.ataiva.serengeti;
 
-import ms.ao.serengeti.helpers.Globals;
-import ms.ao.serengeti.helpers.ShutdownHandler;
-import ms.ao.serengeti.network.Network;
-import ms.ao.serengeti.server.Server;
-import ms.ao.serengeti.storage.Storage;
-import ms.ao.serengeti.storage.StorageReshuffle;
-import ms.ao.serengeti.storage.StorageScheduler;
-import ms.ao.serengeti.ui.Interactive;
+import com.ataiva.serengeti.network.Network;
+import com.ataiva.serengeti.server.Server;
+import com.ataiva.serengeti.storage.Storage;
+import com.ataiva.serengeti.storage.StorageReshuffle;
+import com.ataiva.serengeti.storage.StorageScheduler;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.Date;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 public class Serengeti {
-
-    public static Storage storage = null;
-    public static Server server = new Server();
+    public static Network network;
+    public static Server server;
+    public static Storage storage;
+    public static StorageReshuffle storageReshuffle;
+    public static StorageScheduler storageScheduler;
+    public static long startTime = System.currentTimeMillis();
     public static Date currentDate = new Date();
-    public static Network network = new Network();
-    public static StorageScheduler storageScheduler = new StorageScheduler();
-    public static StorageReshuffle storageReshuffle = new StorageReshuffle();
-    public Interactive interactive;
-    public Serengeti instance;
-
-    public static long startTime;
-
-    /***
-     * Main application entry point
-     * @param args
-     */
     public static void main(String[] args) {
-        new Serengeti();
-    }
-
-    /**
-     * Constructor
-     */
-    public Serengeti() {
-        interactive = new Interactive();
-        System.out.println(getBanner());
-        startTime = System.currentTimeMillis();
-        System.out.printf("Starting %s..%n", Globals.name);
-        instance = this;
-        server.init();
+        System.out.println("Serengeti Database System");
+        
+        // Initialize components
         storage = new Storage();
+        
+        network = new Network();
         network.init();
-
-        storageScheduler.init();
-        new ShutdownHandler();
+        
+        server = new Server();
+        server.init();
+        
+        storageReshuffle = new StorageReshuffle();
+        storageScheduler = new StorageScheduler();
+        
+        // Start the server
+        server.serve();
     }
-
-    private String getBanner() {
-        InputStream inputStream = getClass().getClassLoader().getResourceAsStream("banner.txt");
-        return String.format("\n%s", new BufferedReader(
-                new InputStreamReader(Objects.requireNonNull(inputStream), StandardCharsets.UTF_8))
-                .lines()
-                .collect(Collectors.joining("\n")));
-    }
-
 }

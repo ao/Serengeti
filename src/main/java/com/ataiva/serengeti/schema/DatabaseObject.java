@@ -1,6 +1,6 @@
-package ms.ao.serengeti.schema;
+package com.ataiva.serengeti.schema;
 
-import ms.ao.serengeti.helpers.Globals;
+import com.ataiva.serengeti.helpers.Globals;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -45,11 +45,23 @@ public class DatabaseObject implements Serializable {
     public DatabaseObject loadExisting(Path path) {
         try {
             Object dbmeta = Globals.convertFromBytes(Files.readAllBytes(path));
-            return (DatabaseObject) dbmeta;
+            if (dbmeta == null) {
+                System.out.println("Warning: Could not deserialize database object at " + path + ". Creating new one.");
+                return new DatabaseObject();
+            }
+            if (dbmeta instanceof DatabaseObject) {
+                return (DatabaseObject) dbmeta;
+            } else {
+                System.out.println("Warning: Deserialized object is not a DatabaseObject. Creating new one.");
+                return new DatabaseObject();
+            }
+        } catch (ClassCastException e) {
+            System.out.println("Warning: Class cast exception when deserializing database object: " + e.getMessage());
+            return new DatabaseObject();
         } catch (Exception e) {
-            e.printStackTrace();
+            System.out.println("Warning: Error deserializing database object: " + e.getMessage());
+            return new DatabaseObject();
         }
-        return new DatabaseObject();
     }
 
     /***
