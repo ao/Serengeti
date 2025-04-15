@@ -1,7 +1,8 @@
 package com.ataiva.serengeti.storage;
 
-import com.ataiva.serengeti.Serengeti;
 import org.json.JSONObject;
+
+import com.ataiva.serengeti.Serengeti;
 
 import java.util.Arrays;
 import java.util.List;

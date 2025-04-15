@@ -1,6 +1,6 @@
-package ms.ao.serengeti.schema;
+package com.ataiva.serengeti.schema;
 
-import ms.ao.serengeti.helpers.Globals;
+import com.ataiva.serengeti.helpers.Globals;
 import org.json.JSONObject;
 
 import java.io.*;
@@ -61,15 +61,31 @@ public class TableReplicaObject implements Serializable {
     public TableReplicaObject loadExisting() {
         try {
             Path path = Paths.get(Globals.data_path + databaseName + "/" + tableName + "/" + Globals.replica_filename);
-            TableReplicaObject tableMeta = (TableReplicaObject) Globals.convertFromBytes(Files.readAllBytes(path));
-            System.out.println("Loaded replica table \t\t: '"+databaseName+"#"+tableMeta.tableName+"' ("+tableMeta.row_replicas.size()+" rows)");
-            return tableMeta;
+            Object obj = Globals.convertFromBytes(Files.readAllBytes(path));
+            
+            if (obj == null) {
+                System.out.println("Warning: Could not deserialize table replica object. Creating new one for " + databaseName + "#" + tableName);
+                return new TableReplicaObject();
+            }
+            
+            if (obj instanceof TableReplicaObject) {
+                TableReplicaObject tableMeta = (TableReplicaObject) obj;
+                System.out.println("Loaded replica table \t\t: '"+databaseName+"#"+tableMeta.tableName+"' ("+tableMeta.row_replicas.size()+" rows)");
+                return tableMeta;
+            } else {
+                System.out.println("Warning: Deserialized object is not a TableReplicaObject. Creating new one for " + databaseName + "#" + tableName);
+                return new TableReplicaObject();
+            }
+        } catch (ClassCastException e) {
+            System.out.println("Warning: Class cast exception when deserializing table replica object: " + e.getMessage());
+            return new TableReplicaObject();
         } catch (StreamCorruptedException sce) {
-            System.out.println("Stream Corrupted Exception (TableReplicaObject): "+sce.getMessage()+" - Could not 'loadExisting'");
+            System.out.println("Warning: Stream Corrupted Exception (TableReplicaObject): "+sce.getMessage()+" - Could not 'loadExisting'");
+            return new TableReplicaObject();
         } catch (Exception e) {
-            e.printStackTrace();
+            System.out.println("Warning: Error deserializing table replica object: " + e.getMessage());
+            return new TableReplicaObject();
         }
-        return new TableReplicaObject();
     }
 
     public byte[] returnDBObytes() {

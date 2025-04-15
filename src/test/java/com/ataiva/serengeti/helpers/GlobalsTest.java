@@ -2,13 +2,14 @@ package com.ataiva.serengeti.helpers;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.Serializable;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class GlobalsTest {
 
-    static class TestObj {
+    static class TestObj implements Serializable {
         static final long serialVersionUID = 1L;
         public String data = "test";
     }

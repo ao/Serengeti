@@ -1,4 +1,4 @@
-package ms.ao.serengeti.storage.lsm;
+package com.ataiva.serengeti.storage.lsm;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

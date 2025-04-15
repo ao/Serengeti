@@ -1,8 +1,8 @@
-package ms.ao.serengeti.unit.server;
+package com.ataiva.serengeti.unit.server;
 
-import ms.ao.serengeti.mocks.MockServer;
-import ms.ao.serengeti.server.ServerConstants;
-import ms.ao.serengeti.utils.ServerFastTestBase;
+import com.ataiva.serengeti.mocks.MockServer;
+import com.ataiva.serengeti.server.ServerConstants;
+import com.ataiva.serengeti.utils.ServerFastTestBase;
 import org.junit.jupiter.api.*;
 
 import java.lang.reflect.Field;
@@ -92,8 +92,8 @@ class ServerFastTest extends ServerFastTestBase {
         constants.id = UUID.randomUUID().toString();
         
         // Serialize and deserialize
-        byte[] serialized = ms.ao.serengeti.helpers.Globals.convertToBytes(constants);
-        Object deserialized = ms.ao.serengeti.helpers.Globals.convertFromBytes(serialized);
+        byte[] serialized = com.ataiva.serengeti.helpers.Globals.convertToBytes(constants);
+        Object deserialized = com.ataiva.serengeti.helpers.Globals.convertFromBytes(serialized);
         
         // Verify the deserialized object is a ServerConstants
         assertTrue(deserialized instanceof ServerConstants);

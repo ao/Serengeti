@@ -1,8 +1,8 @@
-package ms.ao.serengeti.utils;
+package com.ataiva.serengeti.utils;
 
-import ms.ao.serengeti.storage.lsm.LSMStorageEngine;
-import ms.ao.serengeti.storage.lsm.MemTable;
-import ms.ao.serengeti.storage.lsm.SSTable;
+import com.ataiva.serengeti.storage.lsm.LSMStorageEngine;
+import com.ataiva.serengeti.storage.lsm.MemTable;
+import com.ataiva.serengeti.storage.lsm.SSTable;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

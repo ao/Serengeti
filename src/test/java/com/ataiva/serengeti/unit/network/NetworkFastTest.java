@@ -1,7 +1,7 @@
-package ms.ao.serengeti.unit.network;
+package com.ataiva.serengeti.unit.network;
 
-import ms.ao.serengeti.network.Network;
-import ms.ao.serengeti.utils.NetworkFastTestBase;
+import com.ataiva.serengeti.network.Network;
+import com.ataiva.serengeti.utils.NetworkFastTestBase;
 import org.json.JSONObject;
 import org.junit.jupiter.api.*;
 import org.mockito.Mockito;
@@ -25,10 +25,8 @@ class NetworkFastTest extends NetworkFastTestBase {
     @Test
     @DisplayName("Network initializes with online flag set to false")
     void testNetworkInitializesWithOnlineFlagSetToFalse() throws Exception {
-        // Access the online flag using reflection
-        Field onlineField = network.getClass().getDeclaredField("online");
-        onlineField.setAccessible(true);
-        boolean online = (boolean) onlineField.get(null);
+        // Access the online flag directly since it's a public static field
+        boolean online = Network.online;
         
         // Verify that online is false
         assertFalse(online);
@@ -43,17 +41,12 @@ class NetworkFastTest extends NetworkFastTestBase {
         nodeInfo.put("ip", "192.168.1.100");
         nodeInfo.put("last_checked", System.currentTimeMillis());
         
-        // Access the availableNodes map using reflection
-        Field availableNodesField = network.getClass().getDeclaredField("availableNodes");
-        availableNodesField.setAccessible(true);
-        Map<String, JSONObject> availableNodes = (Map<String, JSONObject>) availableNodesField.get(network);
-        
-        // Add the node to availableNodes
-        availableNodes.put("test-node", nodeInfo);
+        // Access the availableNodes map directly since it's a public field
+        network.availableNodes.put("test-node", nodeInfo);
         
         // Verify that the node was added
-        assertTrue(availableNodes.containsKey("test-node"));
-        assertEquals("192.168.1.100", availableNodes.get("test-node").getString("ip"));
+        assertTrue(network.availableNodes.containsKey("test-node"));
+        assertEquals("192.168.1.100", network.availableNodes.get("test-node").getString("ip"));
     }
     
     @Test
@@ -65,13 +58,8 @@ class NetworkFastTest extends NetworkFastTestBase {
         nodeInfo.put("ip", "192.168.1.100");
         nodeInfo.put("last_checked", System.currentTimeMillis());
         
-        // Access the availableNodes map using reflection
-        Field availableNodesField = network.getClass().getDeclaredField("availableNodes");
-        availableNodesField.setAccessible(true);
-        Map<String, JSONObject> availableNodes = (Map<String, JSONObject>) availableNodesField.get(network);
-        
-        // Add the node to availableNodes
-        availableNodes.put("test-node", nodeInfo);
+        // Add the node to availableNodes directly
+        network.availableNodes.put("test-node", nodeInfo);
         
         // Call getIPFromUUID
         String ip = network.getIPFromUUID("test-node");
@@ -104,12 +92,9 @@ class NetworkFastTest extends NetworkFastTestBase {
         primarySecondary.put("primary", primary);
         primarySecondary.put("secondary", secondary);
         
-        // Set the primary and secondary nodes using reflection
-        Field availableNodesField = network.getClass().getDeclaredField("availableNodes");
-        availableNodesField.setAccessible(true);
-        Map<String, JSONObject> availableNodes = (Map<String, JSONObject>) availableNodesField.get(network);
-        availableNodes.put("primary-node", primary);
-        availableNodes.put("secondary-node", secondary);
+        // Add nodes directly to availableNodes
+        network.availableNodes.put("primary-node", primary);
+        network.availableNodes.put("secondary-node", secondary);
         
         // Call getPrimarySecondary
         JSONObject result = network.getPrimarySecondary();
@@ -130,16 +115,13 @@ class NetworkFastTest extends NetworkFastTestBase {
     @Test
     @DisplayName("Network online flag can be set")
     void testNetworkOnlineFlagCanBeSet() throws Exception {
-        // Set the online flag to true using reflection
-        Field onlineField = Network.class.getDeclaredField("online");
-        onlineField.setAccessible(true);
-        onlineField.set(null, true);
+        // Set the online flag to true directly
+        Network.online = true;
         
         // Verify that online is true
-        boolean online = (boolean) onlineField.get(null);
-        assertTrue(online);
+        assertTrue(Network.online);
         
         // Set it back to false
-        onlineField.set(null, false);
+        Network.online = false;
     }
 }

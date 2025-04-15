@@ -1,17 +1,115 @@
 version: '3.8'
 
 services:
-  serengeti:
+  # Primary Serengeti node
+  serengeti-primary:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - SKIP_TESTS=true  # Skip tests during build
+    image: serengeti:latest
+    container_name: serengeti-primary
     ports:
-      - "1985:1985"
+      - "1985:1985"  # HTTP API port
     volumes:
-      - serengeti-data:/app/data
+      - serengeti-primary-data:/app/data
     environment:
-      - JAVA_OPTS=-Xmx512m
+      - JAVA_OPTS=-Xmx512m -Dserengeti.node.role=primary
+      - SERENGETI_NODE_ID=primary-node
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1985/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - serengeti-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 768M
+
+  # Secondary Serengeti node
+  serengeti-secondary:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: serengeti:latest
+    container_name: serengeti-secondary
+    ports:
+      - "1986:1985"  # Map to different host port
+    volumes:
+      - serengeti-secondary-data:/app/data
+    environment:
+      - JAVA_OPTS=-Xmx384m -Dserengeti.node.role=secondary
+      - SERENGETI_NODE_ID=secondary-node
+      - SERENGETI_PRIMARY_NODE=serengeti-primary:1985
+    restart: unless-stopped
+    depends_on:
+      serengeti-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1985/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - serengeti-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Optional monitoring service
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    restart: unless-stopped
+    networks:
+      - serengeti-network
+    profiles:
+      - monitoring
+
+  # Optional visualization service
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    networks:
+      - serengeti-network
+    profiles:
+      - monitoring
 
 volumes:
-  serengeti-data:
+  serengeti-primary-data:
+  serengeti-secondary-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  serengeti-network:
+    driver: bridge

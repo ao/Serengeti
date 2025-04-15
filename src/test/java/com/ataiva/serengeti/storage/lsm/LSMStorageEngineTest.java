@@ -1,4 +1,4 @@
-package ms.ao.serengeti.storage.lsm;
+package com.ataiva.serengeti.storage.lsm;
 
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
