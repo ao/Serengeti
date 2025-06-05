@@ -9,8 +9,13 @@ RUN_ALL=false
 RUN_FAST=false
 RUN_COMPREHENSIVE=false
 RUN_INTEGRATION=false
+RUN_PROPERTY=false
+RUN_BENCHMARK=false
+RUN_CHAOS=false
 WITH_COVERAGE=false
 WITH_MUTATION=false
+USE_CONTAINER=false
+PLATFORM="linux"
 SHOW_HELP=false
 
 # Parse command line arguments
@@ -31,6 +36,27 @@ while [[ $# -gt 0 ]]; do
             ;;
         -i|--integration)
             RUN_INTEGRATION=true
+            shift
+            ;;
+        -p|--property)
+            RUN_PROPERTY=true
+            shift
+            ;;
+        -x|--chaos)
+            RUN_CHAOS=true
+            shift
+            ;;
+        -b|--benchmark)
+            RUN_BENCHMARK=true
+            shift
+            ;;
+        --container)
+            USE_CONTAINER=true
+            shift
+            ;;
+        --platform)
+            PLATFORM="$2"
+            shift
             shift
             ;;
         --coverage)
@@ -54,7 +80,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Show help if requested or no options provided
-if [ "$SHOW_HELP" = true ] || [ "$RUN_ALL" = false ] && [ "$RUN_FAST" = false ] && [ "$RUN_COMPREHENSIVE" = false ] && [ "$RUN_INTEGRATION" = false ]; then
+if [ "$SHOW_HELP" = true ] || [ "$RUN_ALL" = false ] && [ "$RUN_FAST" = false ] && [ "$RUN_COMPREHENSIVE" = false ] && [ "$RUN_INTEGRATION" = false ] && [ "$RUN_PROPERTY" = false ] && [ "$RUN_BENCHMARK" = false ] && [ "$RUN_CHAOS" = false ]; then
     echo "Usage: ./run_storage_scheduler_tests.sh [OPTIONS]"
     echo ""
     echo "Options:"
@@ -62,8 +88,14 @@ if [ "$SHOW_HELP" = true ] || [ "$RUN_ALL" = false ] && [ "$RUN_FAST" = false ] 
     echo "  -f, --fast           Run only fast StorageScheduler tests"
     echo "  -c, --comprehensive  Run only comprehensive StorageScheduler tests"
     echo "  -i, --integration    Run only integration StorageScheduler tests"
+    echo "  -p, --property       Run only property-based StorageScheduler tests"
+    echo "  -b, --benchmark      Run only benchmark tests for StorageScheduler"
+    echo "  -x, --chaos          Run only chaos tests for StorageScheduler"
     echo "  --coverage           Run tests with code coverage analysis"
     echo "  --mutation           Run tests with mutation testing"
+    echo "  --container          Run tests in Docker container"
+    echo "  --platform PLATFORM  Platform to run tests on (linux, windows)"
+    echo "                       Only applicable with --container"
     echo "  -h, --help           Show this help message"
     echo ""
     echo "Examples:"
@@ -71,11 +103,17 @@ if [ "$SHOW_HELP" = true ] || [ "$RUN_ALL" = false ] && [ "$RUN_FAST" = false ] 
     echo "  ./run_storage_scheduler_tests.sh --fast"
     echo "  ./run_storage_scheduler_tests.sh --comprehensive"
     echo "  ./run_storage_scheduler_tests.sh --integration"
+    echo "  ./run_storage_scheduler_tests.sh --property"
+    echo "  ./run_storage_scheduler_tests.sh --benchmark"
+    echo "  ./run_storage_scheduler_tests.sh --chaos"
     echo "  ./run_storage_scheduler_tests.sh --all --coverage"
     echo "  ./run_storage_scheduler_tests.sh --fast --coverage"
     echo "  ./run_storage_scheduler_tests.sh --all --mutation"
     echo "  ./run_storage_scheduler_tests.sh --fast --mutation"
     echo "  ./run_storage_scheduler_tests.sh --all --coverage --mutation"
+    echo "  ./run_storage_scheduler_tests.sh --all --container"
+    echo "  ./run_storage_scheduler_tests.sh --fast --container"
+    echo "  ./run_storage_scheduler_tests.sh --all --container --platform windows"
     exit 0
 fi
 
@@ -109,6 +147,42 @@ display_summary() {
 
 # Record start time
 start_time=$(date +%s)
+
+# If using container, delegate to the containerized test script
+if [ "$USE_CONTAINER" = true ]; then
+    echo "Running tests in Docker container..."
+    
+    # Determine test type
+    TEST_TYPE="all"
+    if [ "$RUN_FAST" = true ]; then
+        TEST_TYPE="fast"
+    elif [ "$RUN_COMPREHENSIVE" = true ]; then
+        TEST_TYPE="unit"
+    elif [ "$RUN_INTEGRATION" = true ]; then
+        TEST_TYPE="integration"
+    elif [ "$RUN_PROPERTY" = true ]; then
+        TEST_TYPE="property"
+    elif [ "$RUN_BENCHMARK" = true ]; then
+        TEST_TYPE="benchmark"
+    elif [ "$RUN_CHAOS" = true ]; then
+        TEST_TYPE="chaos"
+    fi
+    
+    # Build additional options
+    CONTAINER_OPTS=""
+    if [ "$WITH_COVERAGE" = true ]; then
+        CONTAINER_OPTS="$CONTAINER_OPTS --preserve-results"
+    fi
+    if [ "$WITH_MUTATION" = true ]; then
+        TEST_TYPE="mutation"
+    fi
+    
+    # Run containerized tests
+    ./run_containerized_tests.sh --test-type $TEST_TYPE --platform $PLATFORM $CONTAINER_OPTS
+    
+    # Exit with the exit code from the containerized test script
+    exit $?
+fi
 
 # Run tests based on options
 if [ "$RUN_ALL" = true ] || [ "$RUN_COMPREHENSIVE" = true ]; then
@@ -162,6 +236,37 @@ if [ "$RUN_ALL" = true ] || [ "$RUN_FAST" = true ]; then
         fi
     else
         overall_status=$fast_status
+    fi
+fi
+
+# Run property tests if requested
+if [ "$RUN_ALL" = true ] || [ "$RUN_PROPERTY" = true ]; then
+    display_header "StorageScheduler Property Tests"
+    
+    # Run property tests
+    if [ "$WITH_COVERAGE" = true ] && [ "$WITH_MUTATION" = true ]; then
+        mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pjacoco,storage-scheduler-mutation
+    elif [ "$WITH_COVERAGE" = true ]; then
+        mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pjacoco
+    elif [ "$WITH_MUTATION" = true ]; then
+        mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pstorage-scheduler-mutation
+    else
+        mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest
+    fi
+    
+    # Store the exit code
+    property_status=$?
+    
+    # Display summary
+    display_summary $property_status
+    
+    # Update overall status
+    if [ "$RUN_ALL" = true ]; then
+        if [ $property_status -ne 0 ]; then
+            overall_status=$property_status
+        fi
+    else
+        overall_status=$property_status
     fi
 fi
 
@@ -228,6 +333,60 @@ if [ "$RUN_ALL" = true ]; then
         echo "Mutation test report generated at: target/pit-reports/YYYYMMDDHHMI/index.html"
         echo "You can open this file in a browser to view the detailed mutation test report."
         echo ""
+    fi
+fi
+
+# Run chaos tests if requested
+if [ "$RUN_ALL" = true ] || [ "$RUN_CHAOS" = true ]; then
+    display_header "StorageScheduler Chaos Tests"
+    
+    # Run chaos tests
+    if [ "$WITH_COVERAGE" = true ] && [ "$WITH_MUTATION" = true ]; then
+        mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,jacoco,storage-scheduler-mutation
+    elif [ "$WITH_COVERAGE" = true ]; then
+        mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,jacoco
+    elif [ "$WITH_MUTATION" = true ]; then
+        mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,storage-scheduler-mutation
+    else
+        mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing
+    fi
+    
+    # Store the exit code
+    chaos_status=$?
+    
+    # Display summary
+    display_summary $chaos_status
+    
+    # Update overall status
+    if [ "$RUN_ALL" = true ]; then
+        if [ $chaos_status -ne 0 ]; then
+            overall_status=$chaos_status
+        fi
+    else
+        overall_status=$chaos_status
+    fi
+fi
+
+# Run benchmark tests if requested
+if [ "$RUN_ALL" = true ] || [ "$RUN_BENCHMARK" = true ]; then
+    display_header "StorageScheduler Benchmark Tests"
+    
+    # Run benchmark tests
+    ./run_benchmarks.sh --component storage-scheduler
+    
+    # Store the exit code
+    benchmark_status=$?
+    
+    # Display summary
+    display_summary $benchmark_status
+    
+    # Update overall status
+    if [ "$RUN_ALL" = true ]; then
+        if [ $benchmark_status -ne 0 ]; then
+            overall_status=$benchmark_status
+        fi
+    else
+        overall_status=$benchmark_status
     fi
 fi
 

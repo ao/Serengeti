@@ -1,0 +1,129 @@
+name: StorageScheduler Multi-Platform Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    paths:
+      - 'src/main/java/com/ataiva/serengeti/storage/StorageScheduler.java'
+      - 'src/test/java/com/ataiva/serengeti/unit/storage/StorageSchedulerTest.java'
+  pull_request:
+    branches: [ main, master, develop ]
+    paths:
+      - 'src/main/java/com/ataiva/serengeti/storage/StorageScheduler.java'
+      - 'src/test/java/com/ataiva/serengeti/unit/storage/StorageSchedulerTest.java'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  matrix-tests:
+    name: StorageScheduler Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        test-type: [unit, fast]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+    
+    - name: Determine platform
+      id: platform
+      shell: bash
+      run: |
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          echo "platform=windows" >> $GITHUB_OUTPUT
+        else
+          echo "platform=linux" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Run StorageScheduler Tests in Container (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        chmod +x ./run_containerized_tests.sh
+        ./run_containerized_tests.sh --test-type ${{ matrix.test-type }} --platform ${{ steps.platform.outputs.platform }} --preserve-results
+    
+    - name: Run StorageScheduler Tests in Container (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        run_containerized_tests.bat --test-type ${{ matrix.test-type }} --platform ${{ steps.platform.outputs.platform }} --preserve-results
+    
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.test-type }}-${{ matrix.os }}-test-results
+        path: test-results/${{ matrix.test-type }}/
+    
+    - name: Upload Coverage Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.test-type }}-${{ matrix.os }}-coverage-report
+        path: test-results/coverage/${{ matrix.test-type }}/
+
+  merge-results:
+    name: Merge Test Results
+    needs: matrix-tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all test results
+      uses: actions/download-artifact@v4
+      with:
+        path: all-test-results
+    
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+    
+    - name: Merge Coverage Reports
+      run: |
+        mkdir -p merged-coverage
+        find all-test-results -name "*.xml" -type f -exec cp {} merged-coverage/ \;
+    
+    - name: Generate Combined Report
+      run: |
+        echo "# Multi-Platform Test Results" > report.md
+        echo "" >> report.md
+        echo "## Test Summary" >> report.md
+        echo "" >> report.md
+        echo "| Platform | Test Type | Status |" >> report.md
+        echo "|----------|-----------|--------|" >> report.md
+        
+        for dir in all-test-results/*; do
+          if [ -d "$dir" ]; then
+            name=$(basename "$dir")
+            if [[ $name == *-test-results ]]; then
+              platform=$(echo $name | cut -d'-' -f2)
+              test_type=$(echo $name | cut -d'-' -f1)
+              
+              if grep -q "failures=\"0\"" "$dir"/*.xml 2>/dev/null; then
+                status="✅ Pass"
+              else
+                status="❌ Fail"
+              fi
+              
+              echo "| $platform | $test_type | $status |" >> report.md
+            fi
+          fi
+        done
+    
+    - name: Upload Combined Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: multi-platform-test-report
+        path: report.md

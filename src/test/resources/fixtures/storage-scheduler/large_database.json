@@ -1,0 +1,109 @@
+{
+  "database": {
+    "name": "large_db",
+    "tables": ["table1", "table2", "table3", "table4", "table5", "table6", "table7", "table8", "table9", "table10"]
+  },
+  "tables": {
+    "table1": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000},
+        {"id": "row3", "value": "data3", "timestamp": 1622505800000},
+        {"id": "row4", "value": "data4", "timestamp": 1622505900000},
+        {"id": "row5", "value": "data5", "timestamp": 1622506000000},
+        {"id": "row6", "value": "data6", "timestamp": 1622506100000},
+        {"id": "row7", "value": "data7", "timestamp": 1622506200000},
+        {"id": "row8", "value": "data8", "timestamp": 1622506300000},
+        {"id": "row9", "value": "data9", "timestamp": 1622506400000},
+        {"id": "row10", "value": "data10", "timestamp": 1622506500000}
+      ]
+    },
+    "table2": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000},
+        {"id": "row3", "value": "data3", "timestamp": 1622505800000},
+        {"id": "row4", "value": "data4", "timestamp": 1622505900000},
+        {"id": "row5", "value": "data5", "timestamp": 1622506000000}
+      ]
+    },
+    "table3": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000},
+        {"id": "row3", "value": "data3", "timestamp": 1622505800000}
+      ]
+    },
+    "table4": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000}
+      ]
+    },
+    "table5": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000}
+      ]
+    },
+    "table6": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000},
+        {"id": "row3", "value": "data3", "timestamp": 1622505800000}
+      ]
+    },
+    "table7": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000}
+      ]
+    },
+    "table8": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000},
+        {"id": "row3", "value": "data3", "timestamp": 1622505800000},
+        {"id": "row4", "value": "data4", "timestamp": 1622505900000}
+      ]
+    },
+    "table9": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000},
+        {"id": "row3", "value": "data3", "timestamp": 1622505800000}
+      ]
+    },
+    "table10": {
+      "rows": [
+        {"id": "row1", "value": "data1", "timestamp": 1622505600000},
+        {"id": "row2", "value": "data2", "timestamp": 1622505700000}
+      ]
+    }
+  },
+  "replicas": {
+    "table1": {
+      "row1": {"primary": "node1", "secondary": "node2"},
+      "row2": {"primary": "node2", "secondary": "node3"},
+      "row3": {"primary": "node3", "secondary": "node4"},
+      "row4": {"primary": "node4", "secondary": "node5"},
+      "row5": {"primary": "node5", "secondary": "node1"},
+      "row6": {"primary": "node1", "secondary": "node3"},
+      "row7": {"primary": "node2", "secondary": "node4"},
+      "row8": {"primary": "node3", "secondary": "node5"},
+      "row9": {"primary": "node4", "secondary": "node1"},
+      "row10": {"primary": "node5", "secondary": "node2"}
+    },
+    "table2": {
+      "row1": {"primary": "node1", "secondary": "node2"},
+      "row2": {"primary": "node2", "secondary": "node3"},
+      "row3": {"primary": "node3", "secondary": "node4"},
+      "row4": {"primary": "node4", "secondary": "node5"},
+      "row5": {"primary": "node5", "secondary": "node1"}
+    },
+    "table3": {
+      "row1": {"primary": "node1", "secondary": "node2"},
+      "row2": {"primary": "node2", "secondary": "node3"},
+      "row3": {"primary": "node3", "secondary": "node4"}
+    }
+  }
+}

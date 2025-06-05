@@ -1,0 +1,88 @@
+{
+  "scenarios": [
+    {
+      "name": "small_database",
+      "description": "Small database with few tables and rows",
+      "database": {
+        "name": "perf_small_db",
+        "tables": ["table1", "table2"]
+      },
+      "row_counts": {
+        "table1": 10,
+        "table2": 10
+      },
+      "expected_time_ms": 100
+    },
+    {
+      "name": "medium_database",
+      "description": "Medium database with moderate tables and rows",
+      "database": {
+        "name": "perf_medium_db",
+        "tables": ["table1", "table2", "table3", "table4", "table5"]
+      },
+      "row_counts": {
+        "table1": 100,
+        "table2": 100,
+        "table3": 100,
+        "table4": 100,
+        "table5": 100
+      },
+      "expected_time_ms": 500
+    },
+    {
+      "name": "large_database",
+      "description": "Large database with many tables and rows",
+      "database": {
+        "name": "perf_large_db",
+        "tables": ["table1", "table2", "table3", "table4", "table5", "table6", "table7", "table8", "table9", "table10"]
+      },
+      "row_counts": {
+        "table1": 1000,
+        "table2": 1000,
+        "table3": 1000,
+        "table4": 1000,
+        "table5": 1000,
+        "table6": 1000,
+        "table7": 1000,
+        "table8": 1000,
+        "table9": 1000,
+        "table10": 1000
+      },
+      "expected_time_ms": 2000
+    },
+    {
+      "name": "mixed_database",
+      "description": "Database with varying table sizes",
+      "database": {
+        "name": "perf_mixed_db",
+        "tables": ["small_table", "medium_table", "large_table"]
+      },
+      "row_counts": {
+        "small_table": 10,
+        "medium_table": 100,
+        "large_table": 1000
+      },
+      "expected_time_ms": 1000
+    },
+    {
+      "name": "many_tables",
+      "description": "Database with many small tables",
+      "database": {
+        "name": "perf_many_tables_db",
+        "tables": [
+          "table1", "table2", "table3", "table4", "table5", 
+          "table6", "table7", "table8", "table9", "table10",
+          "table11", "table12", "table13", "table14", "table15",
+          "table16", "table17", "table18", "table19", "table20"
+        ]
+      },
+      "row_counts": {
+        "table1": 10, "table2": 10, "table3": 10, "table4": 10, "table5": 10,
+        "table6": 10, "table7": 10, "table8": 10, "table9": 10, "table10": 10,
+        "table11": 10, "table12": 10, "table13": 10, "table14": 10, "table15": 10,
+        "table16": 10, "table17": 10, "table18": 10, "table19": 10, "table20": 10
+      },
+      "expected_time_ms": 1500
+    }
+  ]
+}

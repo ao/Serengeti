@@ -1,0 +1,179 @@
+version: '3.8'
+
+services:
+  # Base test service with shared configuration
+  test-base:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: serengeti-test:latest
+    volumes:
+      - ./test-results:/app/test-results
+      - ~/.m2:/root/.m2
+    environment:
+      - JAVA_OPTS=-Xmx1024m -XX:+UseG1GC -XX:MaxGCPauseMillis=100
+      - MAVEN_OPTS=-Xmx1024m
+    networks:
+      - test-network
+
+  # Unit tests service
+  unit-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-unit-tests
+    command: >
+      mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest -Pjacoco
+    volumes:
+      - ./test-results/unit:/app/target/surefire-reports
+      - ./test-results/coverage/unit:/app/target/site/jacoco
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # Fast tests service
+  fast-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-fast-tests
+    command: >
+      mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest -Pjacoco
+    volumes:
+      - ./test-results/fast:/app/target/surefire-reports
+      - ./test-results/coverage/fast:/app/target/site/jacoco
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  # Integration tests service
+  integration-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-integration-tests
+    command: >
+      mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest -Pjacoco
+    volumes:
+      - ./test-results/integration:/app/target/surefire-reports
+      - ./test-results/coverage/integration:/app/target/site/jacoco
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # Property tests service
+  property-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-property-tests
+    command: >
+      mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pjacoco
+    volumes:
+      - ./test-results/property:/app/target/surefire-reports
+      - ./test-results/coverage/property:/app/target/site/jacoco
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # Benchmark tests service
+  benchmark-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-benchmark-tests
+    command: >
+      mvn test -Pbenchmark -Djmh.includes=StorageSchedulerBenchmark -Djmh.args="-wi 2 -i 3 -f 1 -rf json -rff /app/test-results/benchmark/results.json"
+    volumes:
+      - ./test-results/benchmark:/app/target/benchmarks
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+
+  # Chaos tests service
+  chaos-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-chaos-tests
+    command: >
+      mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,jacoco
+    volumes:
+      - ./test-results/chaos:/app/target/surefire-reports
+      - ./test-results/coverage/chaos:/app/target/site/jacoco
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # Mutation tests service
+  mutation-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-mutation-tests
+    command: >
+      mvn test -Pstorage-scheduler-mutation
+    volumes:
+      - ./test-results/mutation:/app/target/pit-reports
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3G
+
+  # All tests service
+  all-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-all-tests
+    command: >
+      bash -c "
+      mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest -Pjacoco &&
+      mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest -Pjacoco &&
+      mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest -Pjacoco &&
+      mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pjacoco &&
+      mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,jacoco &&
+      mvn test -Pbenchmark -Djmh.includes=StorageSchedulerBenchmark -Djmh.args='-wi 2 -i 3 -f 1 -rf json -rff /app/test-results/benchmark/results.json' &&
+      mvn test -Pstorage-scheduler-mutation
+      "
+    volumes:
+      - ./test-results:/app/test-results
+      - ./test-results/coverage:/app/target/site/jacoco
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+
+  # Windows-specific test service
+  windows-tests:
+    extends:
+      service: test-base
+    container_name: serengeti-windows-tests
+    image: mcr.microsoft.com/windows/servercore:ltsc2022
+    platform: windows/amd64
+    command: >
+      powershell -Command "
+      $env:JAVA_HOME = 'C:\\Program Files\\Eclipse Adoptium\\jdk-11.0.19.7-hotspot';
+      $env:PATH = \"$env:JAVA_HOME\\bin;$env:PATH\";
+      cd C:\\app;
+      .\\mvnw.cmd test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest
+      "
+    volumes:
+      - ./test-results/windows:/app/target/surefire-reports
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+    profiles:
+      - windows
+
+networks:
+  test-network:
+    driver: bridge

@@ -8,8 +8,13 @@ set RUN_ALL=false
 set RUN_FAST=false
 set RUN_COMPREHENSIVE=false
 set RUN_INTEGRATION=false
+set RUN_PROPERTY=false
+set RUN_BENCHMARK=false
+set RUN_CHAOS=false
 set WITH_COVERAGE=false
 set WITH_MUTATION=false
+set USE_CONTAINER=false
+set PLATFORM=linux
 set SHOW_HELP=false
 
 REM Parse command line arguments
@@ -23,8 +28,16 @@ if /i "%~1"=="-c" set RUN_COMPREHENSIVE=true & shift & goto parse_args
 if /i "%~1"=="--comprehensive" set RUN_COMPREHENSIVE=true & shift & goto parse_args
 if /i "%~1"=="-i" set RUN_INTEGRATION=true & shift & goto parse_args
 if /i "%~1"=="--integration" set RUN_INTEGRATION=true & shift & goto parse_args
+if /i "%~1"=="-p" set RUN_PROPERTY=true & shift & goto parse_args
+if /i "%~1"=="--property" set RUN_PROPERTY=true & shift & goto parse_args
+if /i "%~1"=="-b" set RUN_BENCHMARK=true & shift & goto parse_args
+if /i "%~1"=="--benchmark" set RUN_BENCHMARK=true & shift & goto parse_args
+if /i "%~1"=="-x" set RUN_CHAOS=true & shift & goto parse_args
+if /i "%~1"=="--chaos" set RUN_CHAOS=true & shift & goto parse_args
 if /i "%~1"=="--coverage" set WITH_COVERAGE=true & shift & goto parse_args
 if /i "%~1"=="--mutation" set WITH_MUTATION=true & shift & goto parse_args
+if /i "%~1"=="--container" set USE_CONTAINER=true & shift & goto parse_args
+if /i "%~1"=="--platform" set PLATFORM=%~2 & shift & shift & goto parse_args
 if /i "%~1"=="-h" set SHOW_HELP=true & shift & goto parse_args
 if /i "%~1"=="--help" set SHOW_HELP=true & shift & goto parse_args
 echo Unknown option: %~1
@@ -35,7 +48,7 @@ goto parse_args
 :check_args
 REM Show help if requested or no options provided
 if "%SHOW_HELP%"=="true" goto show_help
-if "%RUN_ALL%"=="false" if "%RUN_FAST%"=="false" if "%RUN_COMPREHENSIVE%"=="false" if "%RUN_INTEGRATION%"=="false" goto show_help
+if "%RUN_ALL%"=="false" if "%RUN_FAST%"=="false" if "%RUN_COMPREHENSIVE%"=="false" if "%RUN_INTEGRATION%"=="false" if "%RUN_PROPERTY%"=="false" if "%RUN_BENCHMARK%"=="false" if "%RUN_CHAOS%"=="false" goto show_help
 goto run_tests
 
 :show_help
@@ -46,6 +59,68 @@ echo   -a, --all            Run all StorageScheduler tests
 echo   -f, --fast           Run only fast StorageScheduler tests
 echo   -c, --comprehensive  Run only comprehensive StorageScheduler tests
 echo   -i, --integration    Run only integration StorageScheduler tests
+echo   -p, --property       Run only property-based StorageScheduler tests
+echo   -b, --benchmark      Run only benchmark tests for StorageScheduler
+echo   -x, --chaos          Run only chaos tests for StorageScheduler
+echo   --coverage           Run tests with code coverage analysis
+echo   --mutation           Run tests with mutation testing
+echo   --container          Run tests in Docker container
+echo   --platform PLATFORM  Platform to run tests on (linux, windows)
+echo                        Only applicable with --container
+echo   -h, --help           Show this help message
+echo.
+echo Examples:
+echo   run_storage_scheduler_tests.bat --all
+echo   run_storage_scheduler_tests.bat --fast
+echo   run_storage_scheduler_tests.bat --comprehensive
+echo   run_storage_scheduler_tests.bat --all --coverage
+echo   run_storage_scheduler_tests.bat --fast --coverage
+echo   run_storage_scheduler_tests.bat --all --mutation
+echo   run_storage_scheduler_tests.bat --fast --mutation
+echo   run_storage_scheduler_tests.bat --all --coverage --mutation
+echo   run_storage_scheduler_tests.bat --all --container
+echo   run_storage_scheduler_tests.bat --fast --container
+echo   run_storage_scheduler_tests.bat --all --container --platform windows
+exit /b 0
+
+:run_tests
+REM If using container, delegate to the containerized test script
+if "%USE_CONTAINER%"=="true" (
+    echo Running tests in Docker container...
+    
+    REM Determine test type
+    set TEST_TYPE=all
+    if "%RUN_FAST%"=="true" set TEST_TYPE=fast
+    if "%RUN_COMPREHENSIVE%"=="true" set TEST_TYPE=unit
+    if "%RUN_INTEGRATION%"=="true" set TEST_TYPE=integration
+    if "%RUN_PROPERTY%"=="true" set TEST_TYPE=property
+    if "%RUN_BENCHMARK%"=="true" set TEST_TYPE=benchmark
+    if "%RUN_CHAOS%"=="true" set TEST_TYPE=chaos
+    
+    REM Build additional options
+    set CONTAINER_OPTS=
+    if "%WITH_COVERAGE%"=="true" set CONTAINER_OPTS=%CONTAINER_OPTS% --preserve-results
+    if "%WITH_MUTATION%"=="true" set TEST_TYPE=mutation
+    
+    REM Run containerized tests
+    call run_containerized_tests.bat --test-type %TEST_TYPE% --platform %PLATFORM% %CONTAINER_OPTS%
+    
+    REM Exit with the exit code from the containerized test script
+    exit /b %ERRORLEVEL%
+)
+
+REM Record start time
+set START_TIME=%time%
+echo Usage: run_storage_scheduler_tests.bat [OPTIONS]
+echo.
+echo Options:
+echo   -a, --all            Run all StorageScheduler tests
+echo   -f, --fast           Run only fast StorageScheduler tests
+echo   -c, --comprehensive  Run only comprehensive StorageScheduler tests
+echo   -i, --integration    Run only integration StorageScheduler tests
+echo   -p, --property       Run only property-based StorageScheduler tests
+echo   -b, --benchmark      Run only benchmark tests for StorageScheduler
+echo   -x, --chaos          Run only chaos tests for StorageScheduler
 echo   --coverage           Run tests with code coverage analysis
 echo   --mutation           Run tests with mutation testing
 echo   -h, --help           Show this help message
@@ -55,6 +130,9 @@ echo   run_storage_scheduler_tests.bat --all
 echo   run_storage_scheduler_tests.bat --fast
 echo   run_storage_scheduler_tests.bat --comprehensive
 echo   run_storage_scheduler_tests.bat --integration
+echo   run_storage_scheduler_tests.bat --property
+echo   run_storage_scheduler_tests.bat --benchmark
+echo   run_storage_scheduler_tests.bat --chaos
 echo   run_storage_scheduler_tests.bat --all --coverage
 echo   run_storage_scheduler_tests.bat --fast --coverage
 echo   run_storage_scheduler_tests.bat --all --mutation
@@ -71,6 +149,9 @@ if "%RUN_ALL%"=="true" goto run_all
 if "%RUN_COMPREHENSIVE%"=="true" goto run_comprehensive
 if "%RUN_FAST%"=="true" goto run_fast
 if "%RUN_INTEGRATION%"=="true" goto run_integration
+if "%RUN_PROPERTY%"=="true" goto run_property
+if "%RUN_BENCHMARK%"=="true" goto run_benchmark
+if "%RUN_CHAOS%"=="true" goto run_chaos
 goto end
 
 :run_all
@@ -127,6 +208,49 @@ call :display_summary %integration_status%
 
 REM Update overall status
 if %integration_status% NEQ 0 set overall_status=%integration_status%
+
+REM Run property tests
+call :display_header "StorageScheduler Property Tests"
+if "%WITH_COVERAGE%"=="true" if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pjacoco,storage-scheduler-mutation
+) else if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pjacoco
+) else if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pstorage-scheduler-mutation
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest
+)
+set property_status=%ERRORLEVEL%
+call :display_summary %property_status%
+
+REM Update overall status
+if %property_status% NEQ 0 set overall_status=%property_status%
+
+REM Run chaos tests
+call :display_header "StorageScheduler Chaos Tests"
+if "%WITH_COVERAGE%"=="true" if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,jacoco,storage-scheduler-mutation
+) else if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,jacoco
+) else if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,storage-scheduler-mutation
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing
+)
+set chaos_status=%ERRORLEVEL%
+call :display_summary %chaos_status%
+
+REM Update overall status
+if %chaos_status% NEQ 0 set overall_status=%chaos_status%
+
+REM Run benchmark tests
+call :display_header "StorageScheduler Benchmark Tests"
+call run_benchmarks.bat --component storage-scheduler
+set benchmark_status=%ERRORLEVEL%
+call :display_summary %benchmark_status%
+
+REM Update overall status
+if %benchmark_status% NEQ 0 set overall_status=%benchmark_status%
 
 REM Display overall summary
 echo ========================================================
@@ -191,6 +315,35 @@ if "%WITH_COVERAGE%"=="true" (
 set integration_status=%ERRORLEVEL%
 call :display_summary %integration_status%
 exit /b %integration_status%
+
+:run_property
+call :display_header "StorageScheduler Property Tests"
+if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest -Pjacoco
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.property.StorageSchedulerPropertyTest
+)
+set property_status=%ERRORLEVEL%
+call :display_summary %property_status%
+exit /b %property_status%
+
+:run_benchmark
+call :display_header "StorageScheduler Benchmark Tests"
+call run_benchmarks.bat --component storage-scheduler
+set benchmark_status=%ERRORLEVEL%
+call :display_summary %benchmark_status%
+exit /b %benchmark_status%
+
+:run_chaos
+call :display_header "StorageScheduler Chaos Tests"
+if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing,jacoco
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.chaos.StorageSchedulerChaosTest -Pchaos-testing
+)
+set chaos_status=%ERRORLEVEL%
+call :display_summary %chaos_status%
+exit /b %chaos_status%
 
 :display_header
 echo ========================================================

@@ -1,0 +1,102 @@
+{
+  "database": {
+    "name": "test_db",
+    "tables": ["users", "products", "orders"]
+  },
+  "tables": {
+    "users": {
+      "rows": [
+        {
+          "id": "user1",
+          "name": "John Doe",
+          "email": "john@example.com",
+          "created_at": 1622505600000
+        },
+        {
+          "id": "user2",
+          "name": "Jane Smith",
+          "email": "jane@example.com",
+          "created_at": 1622592000000
+        },
+        {
+          "id": "user3",
+          "name": "Bob Johnson",
+          "email": "bob@example.com",
+          "created_at": 1622678400000
+        }
+      ]
+    },
+    "products": {
+      "rows": [
+        {
+          "id": "prod1",
+          "name": "Laptop",
+          "price": 999.99,
+          "stock": 50
+        },
+        {
+          "id": "prod2",
+          "name": "Smartphone",
+          "price": 499.99,
+          "stock": 100
+        }
+      ]
+    },
+    "orders": {
+      "rows": [
+        {
+          "id": "order1",
+          "user_id": "user1",
+          "product_id": "prod1",
+          "quantity": 1,
+          "total": 999.99,
+          "order_date": 1622764800000
+        },
+        {
+          "id": "order2",
+          "user_id": "user2",
+          "product_id": "prod2",
+          "quantity": 2,
+          "total": 999.98,
+          "order_date": 1622851200000
+        }
+      ]
+    }
+  },
+  "replicas": {
+    "users": {
+      "user1": {
+        "primary": "node1",
+        "secondary": "node2"
+      },
+      "user2": {
+        "primary": "node2",
+        "secondary": "node3"
+      },
+      "user3": {
+        "primary": "node3",
+        "secondary": "node1"
+      }
+    },
+    "products": {
+      "prod1": {
+        "primary": "node1",
+        "secondary": "node3"
+      },
+      "prod2": {
+        "primary": "node2",
+        "secondary": "node1"
+      }
+    },
+    "orders": {
+      "order1": {
+        "primary": "node1",
+        "secondary": "node2"
+      },
+      "order2": {
+        "primary": "node3",
+        "secondary": "node1"
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+<div class="test-details">
+  <h3>${testType}</h3>
+  <div class="accordion" id="accordion-${testTypeId}">
+    <!-- Test suite items will be inserted here -->
+    ${testSuiteItems}
+  </div>
+</div>
+
+<!-- Template for a test suite item -->
+<template id="test-suite-template">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="heading-${suiteId}">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" 
+              data-bs-target="#collapse-${suiteId}" aria-expanded="false" aria-controls="collapse-${suiteId}">
+        ${suiteName} (${tests} tests, ${failures} failures, ${skipped} skipped, ${time}s)
+      </button>
+    </h2>
+    <div id="collapse-${suiteId}" class="accordion-collapse collapse" 
+         aria-labelledby="heading-${suiteId}" data-bs-parent="#accordion-${testTypeId}">
+      <div class="accordion-body">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>Test</th>
+              <th>Status</th>
+              <th>Time</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Test case rows will be inserted here -->
+            ${testCaseRows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- Template for a test case row -->
+<template id="test-case-template">
+  <tr>
+    <td>${testName}</td>
+    <td class="${statusClass}">${status}</td>
+    <td>${time}s</td>
+    <td>${message}</td>
+  </tr>
+</template>

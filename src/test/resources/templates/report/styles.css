@@ -1,0 +1,131 @@
+/* Main styles for StorageScheduler Test Report */
+
+body {
+    padding: 20px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #333;
+    background-color: #f8f9fa;
+}
+
+.report-header {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.report-header h1 {
+    color: #0d6efd;
+    font-weight: 600;
+}
+
+.summary-card {
+    margin-bottom: 20px;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    border: none;
+}
+
+.card-header {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    color: #495057;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.test-details {
+    margin-top: 30px;
+}
+
+.test-details h3 {
+    color: #0d6efd;
+    margin-bottom: 15px;
+}
+
+.chart-container {
+    height: 300px;
+    margin-bottom: 30px;
+}
+
+/* Status colors */
+.status-passed {
+    color: #198754;
+}
+
+.status-failed {
+    color: #dc3545;
+}
+
+.status-skipped {
+    color: #ffc107;
+}
+
+.status-error {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+/* Coverage status colors */
+.coverage-good {
+    color: #198754;
+}
+
+.coverage-warning {
+    color: #ffc107;
+}
+
+.coverage-bad {
+    color: #dc3545;
+}
+
+/* Accordion styling */
+.accordion-button:not(.collapsed) {
+    background-color: #e7f1ff;
+    color: #0d6efd;
+}
+
+.accordion-button:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Table styling */
+.table {
+    font-size: 0.9rem;
+}
+
+.table th {
+    font-weight: 600;
+    background-color: #f8f9fa;
+}
+
+/* Footer styling */
+footer {
+    margin-top: 50px;
+    padding-top: 20px;
+    border-top: 1px solid #dee2e6;
+    color: #6c757d;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .chart-container {
+        height: 200px;
+    }
+}
+
+/* Print styles */
+@media print {
+    body {
+        padding: 0;
+    }
+    
+    .chart-container {
+        page-break-inside: avoid;
+    }
+    
+    .accordion-button::after {
+        display: none;
+    }
+    
+    .accordion-collapse {
+        display: block !important;
+    }
+}
