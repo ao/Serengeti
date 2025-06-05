@@ -1,0 +1,73 @@
+<div class="row">
+  <div class="col-md-6">
+    <div class="card summary-card">
+      <div class="card-header">Mutation Testing</div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <div class="card bg-light mb-3">
+              <div class="card-body text-center">
+                <h5 class="card-title">Mutation Score</h5>
+                <p class="display-4">${mutationScore}%</p>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="card bg-light mb-3">
+              <div class="card-body text-center">
+                <h5 class="card-title">Total Mutations</h5>
+                <p class="display-4">${totalMutations}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Count</th>
+              <th>Percentage</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Killed Mutations</td>
+              <td>${killedMutations}</td>
+              <td>${killedPercentage}%</td>
+            </tr>
+            <tr>
+              <td>Survived Mutations</td>
+              <td>${survivedMutations}</td>
+              <td>${survivedPercentage}%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card summary-card">
+      <div class="card-header">Benchmark Results</div>
+      <div class="card-body">
+        <div class="chart-container">
+          <canvas id="benchmarkChart"></canvas>
+        </div>
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>Benchmark</th>
+              <th>Mode</th>
+              <th>Score</th>
+              <th>Error</th>
+              <th>Units</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Benchmark rows will be inserted here -->
+            ${benchmarkRows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

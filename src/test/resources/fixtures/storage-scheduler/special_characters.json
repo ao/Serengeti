@@ -1,0 +1,104 @@
+{
+  "database": {
+    "name": "special#db$name",
+    "tables": ["special@table", "table-with-hyphens", "table_with_underscores", "table.with.dots"]
+  },
+  "tables": {
+    "special@table": {
+      "rows": [
+        {
+          "id": "row#1",
+          "name": "Special Name (with) [brackets]",
+          "value": "Value with & special % characters!",
+          "timestamp": 1622505600000
+        },
+        {
+          "id": "row$2",
+          "name": "Name with 'quotes' and \"double quotes\"",
+          "value": "Value with / slashes \\ and backslashes",
+          "timestamp": 1622505700000
+        },
+        {
+          "id": "row@3",
+          "name": "Name with + plus - minus",
+          "value": "Value with = equals * asterisk",
+          "timestamp": 1622505800000
+        }
+      ]
+    },
+    "table-with-hyphens": {
+      "rows": [
+        {
+          "id": "row-1",
+          "name": "Name with < less than > greater than",
+          "value": "Value with { curly } braces",
+          "timestamp": 1622505900000
+        },
+        {
+          "id": "row-2",
+          "name": "Name with | pipe ^ caret",
+          "value": "Value with ~ tilde ` backtick",
+          "timestamp": 1622506000000
+        }
+      ]
+    },
+    "table_with_underscores": {
+      "rows": [
+        {
+          "id": "row_1",
+          "name": "Name with ; semicolon : colon",
+          "value": "Value with ? question ! exclamation",
+          "timestamp": 1622506100000
+        }
+      ]
+    },
+    "table.with.dots": {
+      "rows": [
+        {
+          "id": "row.1",
+          "name": "Name with , comma . period",
+          "value": "Value with € euro £ pound ¥ yen",
+          "timestamp": 1622506200000
+        }
+      ]
+    }
+  },
+  "replicas": {
+    "special@table": {
+      "row#1": {
+        "primary": "node#1",
+        "secondary": "node$2"
+      },
+      "row$2": {
+        "primary": "node@3",
+        "secondary": "node#1"
+      },
+      "row@3": {
+        "primary": "node$2",
+        "secondary": "node@3"
+      }
+    },
+    "table-with-hyphens": {
+      "row-1": {
+        "primary": "node-1",
+        "secondary": "node-2"
+      },
+      "row-2": {
+        "primary": "node-3",
+        "secondary": "node-1"
+      }
+    },
+    "table_with_underscores": {
+      "row_1": {
+        "primary": "node_1",
+        "secondary": "node_2"
+      }
+    },
+    "table.with.dots": {
+      "row.1": {
+        "primary": "node.1",
+        "secondary": "node.2"
+      }
+    }
+  }
+}

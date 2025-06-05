@@ -1,0 +1,92 @@
+{
+  "scenarios": [
+    {
+      "name": "disk_write_failure",
+      "description": "Simulates a failure when writing to disk",
+      "database": {
+        "name": "error_db_1",
+        "tables": ["error_table_1"]
+      },
+      "error_type": "IOException",
+      "error_message": "Failed to write to disk: Permission denied",
+      "error_target": "Files.write"
+    },
+    {
+      "name": "table_save_failure",
+      "description": "Simulates a failure when saving a table",
+      "database": {
+        "name": "error_db_2",
+        "tables": ["error_table_2"]
+      },
+      "error_type": "IOException",
+      "error_message": "Failed to save table: Stream closed",
+      "error_target": "TableStorageObject.saveToDisk"
+    },
+    {
+      "name": "replica_save_failure",
+      "description": "Simulates a failure when saving a replica",
+      "database": {
+        "name": "error_db_3",
+        "tables": ["error_table_3"]
+      },
+      "error_type": "IOException",
+      "error_message": "Failed to save replica: Stream closed",
+      "error_target": "TableReplicaObject.saveToDisk"
+    },
+    {
+      "name": "serialization_failure",
+      "description": "Simulates a failure during object serialization",
+      "database": {
+        "name": "error_db_4",
+        "tables": ["error_table_4"]
+      },
+      "error_type": "NotSerializableException",
+      "error_message": "Failed to serialize object: Object is not serializable",
+      "error_target": "Globals.convertToBytes"
+    },
+    {
+      "name": "directory_creation_failure",
+      "description": "Simulates a failure when creating a directory",
+      "database": {
+        "name": "error_db_5",
+        "tables": ["error_table_5"]
+      },
+      "error_type": "IOException",
+      "error_message": "Failed to create directory: Permission denied",
+      "error_target": "Files.createDirectories"
+    },
+    {
+      "name": "out_of_memory",
+      "description": "Simulates an out of memory error during persistence",
+      "database": {
+        "name": "error_db_6",
+        "tables": ["error_table_6"]
+      },
+      "error_type": "OutOfMemoryError",
+      "error_message": "Java heap space",
+      "error_target": "StorageScheduler.performPersistToDisk"
+    },
+    {
+      "name": "thread_interruption",
+      "description": "Simulates a thread interruption during persistence",
+      "database": {
+        "name": "error_db_7",
+        "tables": ["error_table_7"]
+      },
+      "error_type": "InterruptedException",
+      "error_message": "Thread interrupted during persistence",
+      "error_target": "StorageScheduler.performPersistToDisk"
+    },
+    {
+      "name": "null_pointer",
+      "description": "Simulates a null pointer exception during persistence",
+      "database": {
+        "name": "error_db_8",
+        "tables": ["error_table_8"]
+      },
+      "error_type": "NullPointerException",
+      "error_message": "Null pointer encountered during persistence",
+      "error_target": "StorageScheduler.performPersistToDisk"
+    }
+  ]
+}

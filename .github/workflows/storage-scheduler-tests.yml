@@ -7,12 +7,16 @@ on:
       - 'src/main/java/com/ataiva/serengeti/storage/StorageScheduler.java'
       - 'src/test/java/com/ataiva/serengeti/unit/storage/StorageSchedulerTest.java'
       - 'src/test/java/com/ataiva/serengeti/integration/StorageSchedulerIntegrationTest.java'
+      - 'src/test/java/com/ataiva/serengeti/chaos/StorageSchedulerChaosTest.java'
+      - 'src/test/java/com/ataiva/serengeti/benchmark/StorageSchedulerBenchmark.java'
   pull_request:
     branches: [ main, master, develop ]
     paths:
       - 'src/main/java/com/ataiva/serengeti/storage/StorageScheduler.java'
       - 'src/test/java/com/ataiva/serengeti/unit/storage/StorageSchedulerTest.java'
       - 'src/test/java/com/ataiva/serengeti/integration/StorageSchedulerIntegrationTest.java'
+      - 'src/test/java/com/ataiva/serengeti/chaos/StorageSchedulerChaosTest.java'
+      - 'src/test/java/com/ataiva/serengeti/benchmark/StorageSchedulerBenchmark.java'
   workflow_dispatch:  # Allow manual triggering
 
 jobs:
@@ -21,103 +25,284 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up JDK 11
-      uses: actions/setup-java@v4
-      with:
-        java-version: '11'
-        distribution: 'temurin'
-        cache: maven
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
     
-    - name: Cache Maven packages
+    - name: Cache Docker layers
       uses: actions/cache@v3
       with:
-        path: ~/.m2
-        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-        restore-keys: ${{ runner.os }}-m2
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
     
-    - name: Run StorageScheduler Comprehensive Tests
-      run: mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest -Pjacoco
+    - name: Run StorageScheduler Comprehensive Tests in Container
+      run: ./run_containerized_tests.sh --test-type unit --preserve-results
     
     - name: Upload Test Results
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: comprehensive-test-results
-        path: target/surefire-reports/
+        path: test-results/unit/
     
     - name: Upload Coverage Report
       uses: actions/upload-artifact@v4
       with:
         name: comprehensive-coverage-report
-        path: target/site/jacoco/
+        path: test-results/coverage/unit/
   
   integration-tests:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up JDK 11
-      uses: actions/setup-java@v4
-      with:
-        java-version: '11'
-        distribution: 'temurin'
-        cache: maven
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
     
-    - name: Cache Maven packages
+    - name: Cache Docker layers
       uses: actions/cache@v3
       with:
-        path: ~/.m2
-        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-        restore-keys: ${{ runner.os }}-m2
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
     
-    - name: Run StorageScheduler Integration Tests
-      run: mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest -Pjacoco
+    - name: Run StorageScheduler Integration Tests in Container
+      run: ./run_containerized_tests.sh --test-type integration --preserve-results
     
     - name: Upload Test Results
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: integration-test-results
-        path: target/surefire-reports/
+        path: test-results/integration/
     
     - name: Upload Coverage Report
       uses: actions/upload-artifact@v4
       with:
         name: integration-coverage-report
-        path: target/site/jacoco/
+        path: test-results/coverage/integration/
   
-  mutation-tests:
+  chaos-tests:
     runs-on: ubuntu-latest
-    needs: [comprehensive-tests, integration-tests]
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up JDK 11
-      uses: actions/setup-java@v4
-      with:
-        java-version: '11'
-        distribution: 'temurin'
-        cache: maven
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
     
-    - name: Cache Maven packages
+    - name: Cache Docker layers
       uses: actions/cache@v3
       with:
-        path: ~/.m2
-        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-        restore-keys: ${{ runner.os }}-m2
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
     
-    - name: Run StorageScheduler Mutation Tests
-      run: mvn test -Pstorage-scheduler-mutation
+    - name: Run StorageScheduler Chaos Tests in Container
+      run: ./run_containerized_tests.sh --test-type chaos --preserve-results
+    
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: chaos-test-results
+        path: test-results/chaos/
+    
+    - name: Upload Coverage Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: chaos-coverage-report
+        path: test-results/coverage/chaos/
+    
+    - name: Check Chaos Resilience
+      run: |
+        echo "Checking chaos resilience metrics..."
+        # Extract recovery rate from test results
+        RECOVERY_RATE=$(grep -A1 "Recovery rate:" test-results/chaos/com.ataiva.serengeti.chaos.StorageSchedulerChaosTest.txt | tail -n1 | grep -o '[0-9.]*%' | tr -d '%')
+        echo "Recovery rate: $RECOVERY_RATE%"
+        
+        # Check if the recovery rate is above the threshold (90%)
+        if (( $(echo "$RECOVERY_RATE < 90" | bc -l) )); then
+          echo "Chaos recovery rate is below threshold of 90%"
+          exit 1
+        fi
+        
+        echo "All chaos resilience thresholds met"
+  
+  mutation-tests:
+    runs-on: ubuntu-latest
+    needs: [comprehensive-tests, integration-tests, chaos-tests]
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+    
+    - name: Run StorageScheduler Mutation Tests in Container
+      run: ./run_containerized_tests.sh --test-type mutation --preserve-results
     
     - name: Upload Mutation Test Results
       uses: actions/upload-artifact@v4
       with:
         name: mutation-test-results
-        path: target/pit-reports/
+        path: test-results/mutation/
+  
+  benchmark-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+    
+    - name: Run StorageScheduler Benchmark Tests in Container
+      run: ./run_containerized_tests.sh --test-type benchmark --preserve-results
+    
+    - name: Upload Benchmark Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: test-results/benchmark/
+    
+    - name: Generate Benchmark Report
+      run: |
+        mkdir -p target/benchmarks/report
+        cat > target/benchmarks/report/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>StorageScheduler Benchmark Results</title>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/react/15.4.1/react.min.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/react/15.4.1/react-dom.min.js"></script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.7/css/bootstrap.min.css">
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.7/js/bootstrap.min.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.2/lodash.min.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/4.4.0/d3.min.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/metrics-graphics/2.11.0/metricsgraphics.min.js"></script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/metrics-graphics/2.11.0/metricsgraphics.min.css">
+        </head>
+        <body>
+            <div class="container">
+                <h1>StorageScheduler Benchmark Results</h1>
+                <div id="results"></div>
+            </div>
+            <script>
+                fetch('../storage-scheduler-results.json')
+                    .then(response => response.json())
+                    .then(data => {
+                        const container = document.getElementById('results');
+                        
+                        // Group by benchmark name
+                        const benchmarks = {};
+                        data.forEach(result => {
+                            const name = result.benchmark.split('.').pop();
+                            if (!benchmarks[name]) {
+                                benchmarks[name] = [];
+                            }
+                            benchmarks[name].push(result);
+                        });
+                        
+                        // Create a table for each benchmark mode
+                        for (const mode of ['Throughput', 'AverageTime', 'SampleTime']) {
+                            const modeData = data.filter(r => r.mode.includes(mode));
+                            if (modeData.length === 0) continue;
+                            
+                            const modeDiv = document.createElement('div');
+                            container.appendChild(modeDiv);
+                            
+                            const modeTitle = document.createElement('h2');
+                            modeTitle.textContent = mode;
+                            modeDiv.appendChild(modeTitle);
+                            
+                            const table = document.createElement('table');
+                            table.className = 'table table-striped';
+                            modeDiv.appendChild(table);
+                            
+                            const thead = document.createElement('thead');
+                            table.appendChild(thead);
+                            const headerRow = document.createElement('tr');
+                            thead.appendChild(headerRow);
+                            
+                            ['Benchmark', 'Score', 'Error', 'Units'].forEach(text => {
+                                const th = document.createElement('th');
+                                th.textContent = text;
+                                headerRow.appendChild(th);
+                            });
+                            
+                            const tbody = document.createElement('tbody');
+                            table.appendChild(tbody);
+                            
+                            modeData.forEach(result => {
+                                const row = document.createElement('tr');
+                                tbody.appendChild(row);
+                                
+                                const cells = [
+                                    result.benchmark.split('.').pop(),
+                                    result.primaryMetric.score.toFixed(3),
+                                    result.primaryMetric.scoreError.toFixed(3),
+                                    result.primaryMetric.scoreUnit
+                                ];
+                                
+                                cells.forEach(text => {
+                                    const td = document.createElement('td');
+                                    td.textContent = text;
+                                    row.appendChild(td);
+                                });
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error loading benchmark results:', error);
+                        document.getElementById('results').textContent = 'Error loading benchmark results: ' + error.message;
+                    });
+            </script>
+        </body>
+        </html>
+        EOF
+    
+    - name: Upload Benchmark Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-report
+        path: target/benchmarks/report/
+    
+    - name: Check Performance Thresholds
+      run: |
+        echo "Checking performance thresholds..."
+        # Extract average time for basic persistence benchmark
+        BASIC_PERSISTENCE_TIME=$(cat test-results/benchmark/results.json | grep -A 20 '"benchmark" : ".*benchmarkBasicPersistence"' | grep -A 10 '"mode" : "avgt"' | grep -m 1 '"score"' | awk '{print $3}' | tr -d ',')
+        echo "Basic persistence average time: $BASIC_PERSISTENCE_TIME ms"
+        
+        # Check if the time is below the threshold (1000ms)
+        if (( $(echo "$BASIC_PERSISTENCE_TIME > 1000" | bc -l) )); then
+          echo "Basic persistence time exceeds threshold of 1000ms"
+          exit 1
+        fi
+        
+        echo "All performance thresholds met"
   
   coverage-check:
     runs-on: ubuntu-latest
-    needs: [comprehensive-tests, integration-tests]
+    needs: [comprehensive-tests, integration-tests, chaos-tests, benchmark-tests]
     steps:
     - uses: actions/checkout@v4
     
@@ -137,6 +322,7 @@ jobs:
         mkdir -p merged-coverage
         cp -r coverage-reports/comprehensive-coverage-report/* merged-coverage/
         cp -r coverage-reports/integration-coverage-report/* merged-coverage/
+        cp -r coverage-reports/chaos-coverage-report/* merged-coverage/
     
     - name: Check Line Coverage
       run: |
@@ -156,13 +342,23 @@ jobs:
           exit 1
         fi
     
+    - name: Check Chaos Resilience
+      run: |
+        CHAOS_RECOVERY_RATE=$(grep -A1 "Recovery rate:" coverage-reports/chaos-test-results/com.ataiva.serengeti.chaos.StorageSchedulerChaosTest.txt | tail -n1 | grep -o '[0-9.]*%' | head -1 | tr -d '%')
+        echo "Chaos recovery rate: $CHAOS_RECOVERY_RATE%"
+        if [ "$CHAOS_RECOVERY_RATE" -lt "90" ]; then
+          echo "Chaos recovery rate is below 90%"
+          exit 1
+        fi
+    
     - name: Publish Test Results
       uses: EnricoMi/publish-unit-test-result-action@v2
       if: always()
       with:
         files: |
-          coverage-reports/comprehensive-test-results/*.xml
-          coverage-reports/integration-test-results/*.xml
+          coverage-reports/unit/*.xml
+          coverage-reports/integration/*.xml
+          coverage-reports/chaos/*.xml
     
     - name: Upload Merged Coverage Report
       uses: actions/upload-artifact@v4

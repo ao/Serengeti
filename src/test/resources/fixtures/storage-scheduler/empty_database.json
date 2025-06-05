@@ -1,0 +1,8 @@
+{
+  "database": {
+    "name": "empty_db",
+    "tables": []
+  },
+  "tables": {},
+  "replicas": {}
+}
