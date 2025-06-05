@@ -25,6 +25,11 @@ public class LSMStorageEngine implements AutoCloseable {
     private final long memTableMaxSize;
     private final int maxImmutableMemTables;
     
+    // Compaction configuration
+    private final int compactionTriggerThreshold;
+    private final int compactionMaxSSTablesToMerge;
+    private final long compactionIntervalMs;
+    
     // Active MemTable for writes
     private volatile MemTable activeMemTable;
     
@@ -43,6 +48,7 @@ public class LSMStorageEngine implements AutoCloseable {
     
     // Control flags
     private volatile boolean running;
+    private volatile boolean compactionRunning;
     
     /**
      * Creates a new LSMStorageEngine.
@@ -53,9 +59,29 @@ public class LSMStorageEngine implements AutoCloseable {
      * @throws IOException If an I/O error occurs
      */
     public LSMStorageEngine(Path dataDirectory, long memTableMaxSize, int maxImmutableMemTables) throws IOException {
+        this(dataDirectory, memTableMaxSize, maxImmutableMemTables, 10, 4, 60000);
+    }
+    
+    /**
+     * Creates a new LSMStorageEngine with custom compaction settings.
+     *
+     * @param dataDirectory Directory to store SSTable files
+     * @param memTableMaxSize Maximum size of a MemTable before flushing
+     * @param maxImmutableMemTables Maximum number of immutable MemTables to keep in memory
+     * @param compactionTriggerThreshold Number of SSTables that triggers compaction
+     * @param compactionMaxSSTablesToMerge Maximum number of SSTables to merge in one compaction
+     * @param compactionIntervalMs Time between compaction checks in milliseconds
+     * @throws IOException If an I/O error occurs
+     */
+    public LSMStorageEngine(Path dataDirectory, long memTableMaxSize, int maxImmutableMemTables,
+                           int compactionTriggerThreshold, int compactionMaxSSTablesToMerge,
+                           long compactionIntervalMs) throws IOException {
         this.dataDirectory = dataDirectory;
         this.memTableMaxSize = memTableMaxSize;
         this.maxImmutableMemTables = maxImmutableMemTables;
+        this.compactionTriggerThreshold = compactionTriggerThreshold;
+        this.compactionMaxSSTablesToMerge = compactionMaxSSTablesToMerge;
+        this.compactionIntervalMs = compactionIntervalMs;
         
         // Create data directory if it doesn't exist
         Files.createDirectories(dataDirectory);
@@ -65,6 +91,7 @@ public class LSMStorageEngine implements AutoCloseable {
         this.immutableMemTables = new LinkedList<>();
         this.ssTables = new ArrayList<>();
         this.ssTableIdGenerator = new AtomicLong(System.currentTimeMillis());
+        this.compactionRunning = false;
         
         // Load existing SSTables
         loadExistingSSTables();
@@ -240,12 +267,30 @@ public class LSMStorageEngine implements AutoCloseable {
     /**
      * Background thread that compacts SSTables.
      */
+    /**
+     * Triggers a compaction check by notifying the compaction thread.
+     * This is called by the LSMStorageScheduler to suggest that compaction
+     * might be needed.
+     */
+    public void triggerCompactionCheck() {
+        synchronized (compactionThread) {
+            compactionThread.notify();
+        }
+        LOGGER.info("Compaction check triggered");
+    }
+    
+    /**
+     * Background thread that compacts SSTables.
+     * This implements a size-tiered compaction strategy where multiple SSTables
+     * are merged into a single larger SSTable when the number of SSTables exceeds
+     * a threshold.
+     */
     private void compactionLoop() {
         while (running) {
             try {
-                // Wait for a while
+                // Wait for a while or until notified
                 synchronized (compactionThread) {
-                    compactionThread.wait(60000); // 1 minute
+                    compactionThread.wait(compactionIntervalMs);
                 }
                 
                 if (!running) {
@@ -253,16 +298,139 @@ public class LSMStorageEngine implements AutoCloseable {
                 }
                 
                 // Check if compaction is needed
+                List<SSTable> tablesToCompact = null;
                 synchronized (ssTables) {
-                    if (ssTables.size() >= 10) { // Simple threshold for now
-                        // In a real implementation, we would use a more sophisticated compaction strategy
-                        LOGGER.info("Compaction needed, but not implemented yet");
+                    if (ssTables.size() >= compactionTriggerThreshold && !compactionRunning) {
+                        compactionRunning = true;
+                        
+                        // Select SSTables to compact - for now, just take the oldest ones
+                        // In a more sophisticated implementation, we would select based on size and overlap
+                        int numTablesToCompact = Math.min(compactionMaxSSTablesToMerge, ssTables.size());
+                        tablesToCompact = new ArrayList<>(ssTables.subList(0, numTablesToCompact));
+                        
+                        LOGGER.info("Starting compaction of " + numTablesToCompact + " SSTables");
+                    }
+                }
+                
+                // Perform compaction if needed
+                if (tablesToCompact != null && !tablesToCompact.isEmpty()) {
+                    try {
+                        compactSSTables(tablesToCompact);
+                    } finally {
+                        compactionRunning = false;
                     }
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Error in compaction thread", e);
+                compactionRunning = false;
             }
         }
+    }
+    
+    /**
+     * Compacts a list of SSTables into a single new SSTable.
+     *
+     * @param tablesToCompact List of SSTables to compact
+     * @throws IOException If an I/O error occurs
+     */
+    private void compactSSTables(List<SSTable> tablesToCompact) throws IOException {
+        if (tablesToCompact == null || tablesToCompact.isEmpty()) {
+            return;
+        }
+        
+        LOGGER.info("Compacting " + tablesToCompact.size() + " SSTables");
+        
+        // Create a map to hold the merged data
+        NavigableMap<byte[], byte[]> mergedData = new ConcurrentSkipListMap<>(new ByteArrayComparator());
+        
+        // Process each SSTable, newer tables overwrite older ones
+        for (SSTable ssTable : tablesToCompact) {
+            // Get all keys from this SSTable
+            for (byte[] key : ssTable.getIndex().keySet()) {
+                // Skip if we already have a newer version of this key
+                if (mergedData.containsKey(key)) {
+                    continue;
+                }
+                
+                // Read the value
+                byte[] value = ssTable.get(key);
+                
+                // Add to merged data if not a tombstone, or if it's the newest tombstone
+                if (value != null) {
+                    mergedData.put(key, value);
+                } else if (!keyExistsInNewerSSTables(key, tablesToCompact, ssTable)) {
+                    // This is a tombstone and there's no newer version of this key
+                    // We need to keep it to indicate deletion
+                    mergedData.put(key, new byte[0]);
+                }
+            }
+        }
+        
+        // Skip compaction if no data to write
+        if (mergedData.isEmpty()) {
+            LOGGER.info("No data to compact, skipping");
+            return;
+        }
+        
+        // Create a new MemTable with the merged data
+        MemTable compactionMemTable = new MemTable(Long.MAX_VALUE); // No size limit for compaction
+        for (Map.Entry<byte[], byte[]> entry : mergedData.entrySet()) {
+            compactionMemTable.put(entry.getKey(), entry.getValue());
+        }
+        
+        // Create a new SSTable with the merged data
+        String fileId = String.format("%016x", ssTableIdGenerator.incrementAndGet());
+        SSTable newSSTable = SSTable.create(compactionMemTable, dataDirectory, fileId);
+        
+        // Update the list of SSTables
+        synchronized (ssTables) {
+            // Remove the old SSTables
+            ssTables.removeAll(tablesToCompact);
+            
+            // Add the new SSTable
+            ssTables.add(newSSTable);
+            
+            // Close the old SSTables
+            for (SSTable ssTable : tablesToCompact) {
+                try {
+                    ssTable.close();
+                    
+                    // Delete the old SSTable file
+                    Files.deleteIfExists(ssTable.getFilePath());
+                } catch (IOException e) {
+                    LOGGER.log(Level.WARNING, "Failed to close or delete old SSTable", e);
+                }
+            }
+        }
+        
+        LOGGER.info("Compaction completed: " + tablesToCompact.size() +
+                   " SSTables merged into 1, " + mergedData.size() + " entries");
+    }
+    
+    /**
+     * Checks if a key exists in any SSTable that is newer than the specified SSTable.
+     *
+     * @param key The key to check
+     * @param allTables All tables being compacted
+     * @param currentTable The current table being processed
+     * @return true if the key exists in a newer table, false otherwise
+     * @throws IOException If an I/O error occurs
+     */
+    private boolean keyExistsInNewerSSTables(byte[] key, List<SSTable> allTables, SSTable currentTable) throws IOException {
+        int currentIndex = allTables.indexOf(currentTable);
+        
+        // Check all newer tables (higher index)
+        for (int i = currentIndex + 1; i < allTables.size(); i++) {
+            SSTable newerTable = allTables.get(i);
+            if (newerTable.mightContain(key)) {
+                byte[] value = newerTable.get(key);
+                if (value != null) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
     }
     
     /**
@@ -368,7 +536,7 @@ public class LSMStorageEngine implements AutoCloseable {
             Path tempDir = Files.createTempDirectory("lsm-demo");
             
             // Create the storage engine
-            try (LSMStorageEngine engine = new LSMStorageEngine(tempDir, 1024 * 1024, 2)) {
+            try (LSMStorageEngine engine = new LSMStorageEngine(tempDir, 1024 * 1024, 2, 5, 3, 30000)) {
                 System.out.println("LSM Storage Engine Demo");
                 System.out.println("======================");
                 System.out.println("Data directory: " + tempDir);

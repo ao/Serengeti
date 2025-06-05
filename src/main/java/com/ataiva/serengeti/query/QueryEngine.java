@@ -4,6 +4,10 @@ import org.json.JSONObject;
 
 import com.ataiva.serengeti.Serengeti;
 import com.ataiva.serengeti.storage.StorageResponseObject;
+import com.ataiva.serengeti.schema.TableStorageObject;
+
+import java.util.HashSet;
+import java.util.Set;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -274,8 +278,39 @@ public class QueryEngine {
                         String w1 = w.get(0).replaceAll("^\'|\'$", "").trim();
                         String w2 = w.get(1).replaceAll("^\'|\'$", "").trim();
 
-                        qro.list = Serengeti.storage.select(databaseName, tableName, selectWhat, w1, w2);
-                        qro.executed = true;
+                        // Check if we have an index for this column
+                        if (Serengeti.indexManager.hasIndex(databaseName, tableName, w1)) {
+                            // Use the index to find matching rows
+                            Set<String> rowIds = Serengeti.indexManager.findRows(databaseName, tableName, w1, w2);
+                            
+                            if (rowIds != null && !rowIds.isEmpty()) {
+                                // We found matching rows using the index
+                                List<String> results = new ArrayList<>();
+                                
+                                // Get the actual row data
+                                TableStorageObject tso = new TableStorageObject(databaseName, tableName);
+                                for (String rowId : rowIds) {
+                                    JSONObject json = tso.getJsonFromRowId(rowId);
+                                    if (json != null) {
+                                        json.put("__uuid", rowId);
+                                        results.add(json.toString());
+                                    }
+                                }
+                                
+                                qro.list = results;
+                                qro.executed = true;
+                                qro.explain = "Used index on " + w1;
+                            } else {
+                                // No matches found in the index
+                                qro.list = new ArrayList<>();
+                                qro.executed = true;
+                                qro.explain = "Used index on " + w1 + " (no matches)";
+                            }
+                        } else {
+                            // No index, use regular select
+                            qro.list = Serengeti.storage.select(databaseName, tableName, selectWhat, w1, w2);
+                            qro.executed = true;
+                        }
                     } else {
                         qro.error = "Invalid syntax: invalid size";
                     }
@@ -284,6 +319,152 @@ public class QueryEngine {
                 }
             }
 
+        } else if (query.startsWith("create index ")) {
+        // `create index on testdb.testtable(column)`
+            
+            String indexInfo = query.replace("create index on ", "");
+            int openParenIndex = indexInfo.indexOf('(');
+            int closeParenIndex = indexInfo.indexOf(')');
+            
+            if (openParenIndex > 0 && closeParenIndex > openParenIndex) {
+                String dbAndTable = indexInfo.substring(0, openParenIndex).trim();
+                String columnName = indexInfo.substring(openParenIndex + 1, closeParenIndex).trim();
+                
+                if (dbAndTable.contains(".")) {
+                    List<String> dbAndTableList = Arrays.asList(dbAndTable.split("\\."));
+                    if (dbAndTableList.size() == 2) {
+                        String databaseName = dbAndTableList.get(0);
+                        String tableName = dbAndTableList.get(1);
+                        
+                        if (Serengeti.storage.tableExists(databaseName, tableName)) {
+                            // Check if index already exists
+                            if (Serengeti.indexManager.hasIndex(databaseName, tableName, columnName)) {
+                                qro.error = "Index on '" + columnName + "' already exists";
+                            } else {
+                                // Get table data
+                                TableStorageObject tso = new TableStorageObject(databaseName, tableName);
+                                
+                                // Create the index
+                                boolean success = Serengeti.indexManager.createIndex(databaseName, tableName, columnName, tso.rows);
+                                
+                                if (success) {
+                                    qro.executed = true;
+                                    qro.explain = "Created index on " + databaseName + "." + tableName + "(" + columnName + ")";
+                                } else {
+                                    qro.error = "Failed to create index";
+                                }
+                            }
+                        } else {
+                            qro.error = "Table '" + tableName + "' does not exist";
+                        }
+                    } else {
+                        qro.error = "Invalid syntax: create index on <db>.<table>(column)";
+                    }
+                } else {
+                    qro.error = "Invalid syntax: create index on <db>.<table>(column)";
+                }
+            } else {
+                qro.error = "Invalid syntax: create index on <db>.<table>(column)";
+            }
+            
+        } else if (query.startsWith("drop index ")) {
+        // `drop index on testdb.testtable(column)`
+            
+            String indexInfo = query.replace("drop index on ", "");
+            int openParenIndex = indexInfo.indexOf('(');
+            int closeParenIndex = indexInfo.indexOf(')');
+            
+            if (openParenIndex > 0 && closeParenIndex > openParenIndex) {
+                String dbAndTable = indexInfo.substring(0, openParenIndex).trim();
+                String columnName = indexInfo.substring(openParenIndex + 1, closeParenIndex).trim();
+                
+                if (dbAndTable.contains(".")) {
+                    List<String> dbAndTableList = Arrays.asList(dbAndTable.split("\\."));
+                    if (dbAndTableList.size() == 2) {
+                        String databaseName = dbAndTableList.get(0);
+                        String tableName = dbAndTableList.get(1);
+                        
+                        if (Serengeti.storage.tableExists(databaseName, tableName)) {
+                            // Check if index exists
+                            if (Serengeti.indexManager.hasIndex(databaseName, tableName, columnName)) {
+                                // Drop the index
+                                boolean success = Serengeti.indexManager.dropIndex(databaseName, tableName, columnName);
+                                
+                                if (success) {
+                                    qro.executed = true;
+                                    qro.explain = "Dropped index on " + databaseName + "." + tableName + "(" + columnName + ")";
+                                } else {
+                                    qro.error = "Failed to drop index";
+                                }
+                            } else {
+                                qro.error = "Index on '" + columnName + "' does not exist";
+                            }
+                        } else {
+                            qro.error = "Table '" + tableName + "' does not exist";
+                        }
+                    } else {
+                        qro.error = "Invalid syntax: drop index on <db>.<table>(column)";
+                    }
+                } else {
+                    qro.error = "Invalid syntax: drop index on <db>.<table>(column)";
+                }
+            } else {
+                qro.error = "Invalid syntax: drop index on <db>.<table>(column)";
+            }
+            
+        } else if (query.equals("show indexes")) {
+        // `show indexes`
+            
+            List<Map<String, String>> indexes = Serengeti.indexManager.getAllIndexes();
+            List<String> indexList = new ArrayList<>();
+            
+            for (Map<String, String> index : indexes) {
+                JSONObject indexJson = new JSONObject();
+                indexJson.put("database", index.get("database"));
+                indexJson.put("table", index.get("table"));
+                indexJson.put("column", index.get("column"));
+                indexJson.put("size", index.get("size"));
+                indexList.add(indexJson.toString());
+            }
+            
+            qro.list = indexList;
+            qro.executed = true;
+            
+        } else if (query.startsWith("show indexes on ")) {
+        // `show indexes on testdb.testtable`
+            
+            String dbAndTable = query.replace("show indexes on ", "");
+            
+            if (dbAndTable.contains(".")) {
+                List<String> dbAndTableList = Arrays.asList(dbAndTable.split("\\."));
+                if (dbAndTableList.size() == 2) {
+                    String databaseName = dbAndTableList.get(0);
+                    String tableName = dbAndTableList.get(1);
+                    
+                    if (Serengeti.storage.tableExists(databaseName, tableName)) {
+                        List<String> columns = Serengeti.indexManager.getIndexedColumns(databaseName, tableName);
+                        List<String> indexList = new ArrayList<>();
+                        
+                        for (String column : columns) {
+                            JSONObject indexJson = new JSONObject();
+                            indexJson.put("database", databaseName);
+                            indexJson.put("table", tableName);
+                            indexJson.put("column", column);
+                            indexList.add(indexJson.toString());
+                        }
+                        
+                        qro.list = indexList;
+                        qro.executed = true;
+                    } else {
+                        qro.error = "Table '" + tableName + "' does not exist";
+                    }
+                } else {
+                    qro.error = "Invalid syntax: show indexes on <db>.<table>";
+                }
+            } else {
+                qro.error = "Invalid syntax: show indexes on <db>.<table>";
+            }
+            
         } else {
         // doesn't match anything
 

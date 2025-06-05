@@ -312,7 +312,7 @@ public class SSTable {
     
     /**
      * Gets the metadata for this SSTable.
-     * 
+     *
      * @return The metadata
      */
     public Metadata getMetadata() {
@@ -320,8 +320,27 @@ public class SSTable {
     }
     
     /**
+     * Gets the file path of this SSTable.
+     *
+     * @return The file path
+     */
+    public Path getFilePath() {
+        return filePath;
+    }
+    
+    /**
+     * Gets the in-memory index for this SSTable.
+     * This is used during compaction to efficiently access keys.
+     *
+     * @return The index map
+     */
+    public NavigableMap<byte[], IndexEntry> getIndex() {
+        return new ConcurrentSkipListMap<>(index);
+    }
+    
+    /**
      * Closes the SSTable, releasing any resources.
-     * 
+     *
      * @throws IOException If an I/O error occurs
      */
     public void close() throws IOException {
