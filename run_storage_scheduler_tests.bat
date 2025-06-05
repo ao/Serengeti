@@ -7,6 +7,9 @@ REM Default values
 set RUN_ALL=false
 set RUN_FAST=false
 set RUN_COMPREHENSIVE=false
+set RUN_INTEGRATION=false
+set WITH_COVERAGE=false
+set WITH_MUTATION=false
 set SHOW_HELP=false
 
 REM Parse command line arguments
@@ -18,6 +21,10 @@ if /i "%~1"=="-f" set RUN_FAST=true & shift & goto parse_args
 if /i "%~1"=="--fast" set RUN_FAST=true & shift & goto parse_args
 if /i "%~1"=="-c" set RUN_COMPREHENSIVE=true & shift & goto parse_args
 if /i "%~1"=="--comprehensive" set RUN_COMPREHENSIVE=true & shift & goto parse_args
+if /i "%~1"=="-i" set RUN_INTEGRATION=true & shift & goto parse_args
+if /i "%~1"=="--integration" set RUN_INTEGRATION=true & shift & goto parse_args
+if /i "%~1"=="--coverage" set WITH_COVERAGE=true & shift & goto parse_args
+if /i "%~1"=="--mutation" set WITH_MUTATION=true & shift & goto parse_args
 if /i "%~1"=="-h" set SHOW_HELP=true & shift & goto parse_args
 if /i "%~1"=="--help" set SHOW_HELP=true & shift & goto parse_args
 echo Unknown option: %~1
@@ -28,7 +35,7 @@ goto parse_args
 :check_args
 REM Show help if requested or no options provided
 if "%SHOW_HELP%"=="true" goto show_help
-if "%RUN_ALL%"=="false" if "%RUN_FAST%"=="false" if "%RUN_COMPREHENSIVE%"=="false" goto show_help
+if "%RUN_ALL%"=="false" if "%RUN_FAST%"=="false" if "%RUN_COMPREHENSIVE%"=="false" if "%RUN_INTEGRATION%"=="false" goto show_help
 goto run_tests
 
 :show_help
@@ -38,12 +45,21 @@ echo Options:
 echo   -a, --all            Run all StorageScheduler tests
 echo   -f, --fast           Run only fast StorageScheduler tests
 echo   -c, --comprehensive  Run only comprehensive StorageScheduler tests
+echo   -i, --integration    Run only integration StorageScheduler tests
+echo   --coverage           Run tests with code coverage analysis
+echo   --mutation           Run tests with mutation testing
 echo   -h, --help           Show this help message
 echo.
 echo Examples:
 echo   run_storage_scheduler_tests.bat --all
 echo   run_storage_scheduler_tests.bat --fast
 echo   run_storage_scheduler_tests.bat --comprehensive
+echo   run_storage_scheduler_tests.bat --integration
+echo   run_storage_scheduler_tests.bat --all --coverage
+echo   run_storage_scheduler_tests.bat --fast --coverage
+echo   run_storage_scheduler_tests.bat --all --mutation
+echo   run_storage_scheduler_tests.bat --fast --mutation
+echo   run_storage_scheduler_tests.bat --all --coverage --mutation
 exit /b 0
 
 :run_tests
@@ -54,6 +70,7 @@ REM Run tests based on options
 if "%RUN_ALL%"=="true" goto run_all
 if "%RUN_COMPREHENSIVE%"=="true" goto run_comprehensive
 if "%RUN_FAST%"=="true" goto run_fast
+if "%RUN_INTEGRATION%"=="true" goto run_integration
 goto end
 
 :run_all
@@ -62,7 +79,15 @@ set overall_status=0
 
 REM Run comprehensive tests
 call :display_header "StorageScheduler Comprehensive Tests"
-call mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest
+if "%WITH_COVERAGE%"=="true" if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest -Pjacoco,storage-scheduler-mutation
+) else if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest -Pjacoco
+) else if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest -Pstorage-scheduler-mutation
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest
+)
 set comprehensive_status=%ERRORLEVEL%
 call :display_summary %comprehensive_status%
 
@@ -71,12 +96,37 @@ if %comprehensive_status% NEQ 0 set overall_status=%comprehensive_status%
 
 REM Run fast tests
 call :display_header "StorageScheduler Fast Tests"
-call mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest
+if "%WITH_COVERAGE%"=="true" if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest -Pjacoco,storage-scheduler-mutation
+) else if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest -Pjacoco
+) else if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest -Pstorage-scheduler-mutation
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest
+)
 set fast_status=%ERRORLEVEL%
 call :display_summary %fast_status%
 
 REM Update overall status
 if %fast_status% NEQ 0 set overall_status=%fast_status%
+
+REM Run integration tests
+call :display_header "StorageScheduler Integration Tests"
+if "%WITH_COVERAGE%"=="true" if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest -Pjacoco,storage-scheduler-mutation
+) else if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest -Pjacoco
+) else if "%WITH_MUTATION%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest -Pstorage-scheduler-mutation
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest
+)
+set integration_status=%ERRORLEVEL%
+call :display_summary %integration_status%
+
+REM Update overall status
+if %integration_status% NEQ 0 set overall_status=%integration_status%
 
 REM Display overall summary
 echo ========================================================
@@ -91,21 +141,56 @@ if %overall_status% EQU 0 (
 )
 echo ========================================================
 
+REM Display coverage report location if coverage was enabled
+if "%WITH_COVERAGE%"=="true" (
+    echo.
+    echo Coverage report generated at: target\site\jacoco\index.html
+    echo You can open this file in a browser to view the detailed coverage report.
+    echo.
+)
+
+REM Display mutation report location if mutation testing was enabled
+if "%WITH_MUTATION%"=="true" (
+    echo.
+    echo Mutation test report generated at: target\pit-reports\YYYYMMDDHHMI\index.html
+    echo You can open this file in a browser to view the detailed mutation test report.
+    echo.
+)
+
 exit /b %overall_status%
 
 :run_comprehensive
 call :display_header "StorageScheduler Comprehensive Tests"
-call mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest
+if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest -Pjacoco
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.unit.storage.StorageSchedulerTest
+)
 set comprehensive_status=%ERRORLEVEL%
 call :display_summary %comprehensive_status%
 exit /b %comprehensive_status%
 
 :run_fast
 call :display_header "StorageScheduler Fast Tests"
-call mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest
+if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest -Pjacoco
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest
+)
 set fast_status=%ERRORLEVEL%
 call :display_summary %fast_status%
 exit /b %fast_status%
+
+:run_integration
+call :display_header "StorageScheduler Integration Tests"
+if "%WITH_COVERAGE%"=="true" (
+    call mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest -Pjacoco
+) else (
+    call mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest
+)
+set integration_status=%ERRORLEVEL%
+call :display_summary %integration_status%
+exit /b %integration_status%
 
 :display_header
 echo ========================================================

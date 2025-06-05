@@ -96,6 +96,9 @@
                         <goals>
                             <goal>report</goal>
                         </goals>
+                        <configuration>
+                            <outputDirectory>${project.reporting.outputDirectory}/jacoco</outputDirectory>
+                        </configuration>
                     </execution>
                     <execution>
                         <id>check</id>
@@ -104,6 +107,7 @@
                         </goals>
                         <configuration>
                             <rules>
+                                <!-- Global rule applied to all classes -->
                                 <rule>
                                     <element>BUNDLE</element>
                                     <limits>
@@ -114,8 +118,32 @@
                                         </limit>
                                     </limits>
                                 </rule>
+                                <!-- Specific rule for StorageScheduler class -->
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes>
+                                        <include>com.ataiva.serengeti.storage.StorageScheduler</include>
+                                    </includes>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.90</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.85</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>METHOD</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>1.00</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
                             </rules>
-                            <failOnViolation>false</failOnViolation>
+                            <failOnViolation>true</failOnViolation>
                             <excludes>
                                 <!-- Exclude UI classes from coverage check -->
                                 <exclude>com/ataiva/serengeti/ui/**/*</exclude>
@@ -157,6 +185,59 @@
                     <configLocation>google_checks.xml</configLocation>
                     <failOnViolation>false</failOnViolation>
                 </configuration>
+            </plugin>
+            <!-- PIT Mutation Testing plugin -->
+            <plugin>
+                <groupId>org.pitest</groupId>
+                <artifactId>pitest-maven</artifactId>
+                <version>1.15.3</version>
+                <configuration>
+                    <targetClasses>
+                        <param>com.ataiva.serengeti.storage.StorageScheduler</param>
+                    </targetClasses>
+                    <targetTests>
+                        <param>com.ataiva.serengeti.unit.storage.StorageSchedulerTest</param>
+                        <param>com.ataiva.serengeti.storage.StorageSchedulerFastTest</param>
+                        <param>com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest</param>
+                    </targetTests>
+                    <mutators>
+                        <!-- Default strong mutators -->
+                        <mutator>DEFAULTS</mutator>
+                        <!-- Additional mutators for more thorough testing -->
+                        <mutator>CONSTRUCTOR_CALLS</mutator>
+                        <mutator>NON_VOID_METHOD_CALLS</mutator>
+                        <mutator>REMOVE_CONDITIONALS</mutator>
+                    </mutators>
+                    <timeoutConstant>10000</timeoutConstant>
+                    <threads>4</threads>
+                    <outputFormats>
+                        <param>HTML</param>
+                        <param>XML</param>
+                    </outputFormats>
+                    <mutationThreshold>85</mutationThreshold>
+                    <coverageThreshold>90</coverageThreshold>
+                    <historyInputFile>${project.build.directory}/pit-history/history.bin</historyInputFile>
+                    <historyOutputFile>${project.build.directory}/pit-history/history.bin</historyOutputFile>
+                    <timestampedReports>false</timestampedReports>
+                    <excludedMethods>
+                        <param>toString</param>
+                        <param>hashCode</param>
+                        <param>equals</param>
+                    </excludedMethods>
+                    <avoidCallsTo>
+                        <avoidCallsTo>java.util.logging</avoidCallsTo>
+                        <avoidCallsTo>org.apache.log4j</avoidCallsTo>
+                        <avoidCallsTo>org.slf4j</avoidCallsTo>
+                        <avoidCallsTo>org.apache.commons.logging</avoidCallsTo>
+                    </avoidCallsTo>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-junit5-plugin</artifactId>
+                        <version>1.2.1</version>
+                    </dependency>
+                </dependencies>
             </plugin>
         </plugins>
     </build>
@@ -202,6 +283,137 @@
                 </plugins>
             </build>
         </profile>
+        
+        <!-- Profile for JaCoCo code coverage -->
+        <profile>
+            <id>jacoco</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>0.8.11</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-agent</id>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>report</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>report</goal>
+                                </goals>
+                                <configuration>
+                                    <formats>
+                                        <format>HTML</format>
+                                        <format>XML</format>
+                                        <format>CSV</format>
+                                    </formats>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>check</id>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <!-- Specific rule for StorageScheduler class -->
+                                        <rule>
+                                            <element>CLASS</element>
+                                            <includes>
+                                                <include>com.ataiva.serengeti.storage.StorageScheduler</include>
+                                            </includes>
+                                            <limits>
+                                                <limit>
+                                                    <counter>LINE</counter>
+                                                    <value>COVEREDRATIO</value>
+                                                    <minimum>0.90</minimum>
+                                                </limit>
+                                                <limit>
+                                                    <counter>BRANCH</counter>
+                                                    <value>COVEREDRATIO</value>
+                                                    <minimum>0.85</minimum>
+                                                </limit>
+                                                <limit>
+                                                    <counter>METHOD</counter>
+                                                    <value>COVEREDRATIO</value>
+                                                    <minimum>1.00</minimum>
+                                                </limit>
+                                            </limits>
+                                        </rule>
+                                    </rules>
+                                    <failOnViolation>true</failOnViolation>
+                                    <excludes>
+                                        <!-- Exclude UI classes from coverage check -->
+                                        <exclude>com/ataiva/serengeti/ui/**/*</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        
+        <!-- Profile for PIT Mutation Testing -->
+        <profile>
+            <id>mutation</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <version>1.15.3</version>
+                        <executions>
+                            <execution>
+                                <id>run-mutation-tests</id>
+                                <goals>
+                                    <goal>mutationCoverage</goal>
+                                </goals>
+                                <phase>test</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        
+        <!-- Profile for StorageScheduler Mutation Testing -->
+        <profile>
+            <id>storage-scheduler-mutation</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <version>1.15.3</version>
+                        <executions>
+                            <execution>
+                                <id>run-storage-scheduler-mutation-tests</id>
+                                <goals>
+                                    <goal>mutationCoverage</goal>
+                                </goals>
+                                <phase>test</phase>
+                                <configuration>
+                                    <targetClasses>
+                                        <param>com.ataiva.serengeti.storage.StorageScheduler</param>
+                                    </targetClasses>
+                                    <targetTests>
+                                        <param>com.ataiva.serengeti.unit.storage.StorageSchedulerTest</param>
+                                        <param>com.ataiva.serengeti.storage.StorageSchedulerFastTest</param>
+                                        <param>com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest</param>
+                                    </targetTests>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
     <dependencies>
         <dependency>
@@ -227,6 +439,14 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-params</artifactId>
             <version>5.9.2</version>
+            <scope>test</scope>
+        </dependency>
+        
+        <!-- PIT Mutation Testing Dependencies -->
+        <dependency>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-junit5-plugin</artifactId>
+            <version>1.2.1</version>
             <scope>test</scope>
         </dependency>
         

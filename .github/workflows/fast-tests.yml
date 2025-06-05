@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        component: [storage-lsm, network, query, server]
+        component: [storage-lsm, network, query, server, storage-scheduler]
       fail-fast: false
 
     steps:
@@ -34,6 +34,8 @@ jobs:
           mvn test -Dtest=com.ataiva.serengeti.unit.query.QueryFastTest -Djacoco.skip=true
         elif [ "${{ matrix.component }}" == "server" ]; then
           mvn test -Dtest=com.ataiva.serengeti.unit.server.ServerFastTest -Djacoco.skip=true
+        elif [ "${{ matrix.component }}" == "storage-scheduler" ]; then
+          mvn test -Dtest=com.ataiva.serengeti.storage.StorageSchedulerFastTest,com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest -Djacoco.skip=true
         fi
     
     - name: Upload Test Results

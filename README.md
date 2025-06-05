@@ -1,6 +1,9 @@
 # Serengeti - The Autonomous Distributed Database
 
 ![Java CI with Maven](https://github.com/ao/Serengeti/workflows/Java%20CI%20with%20Maven/badge.svg)
+![CI](https://github.com/ao/Serengeti/workflows/CI/badge.svg)
+![Fast Tests](https://github.com/ao/Serengeti/workflows/Fast%20Tests/badge.svg)
+![StorageScheduler Tests](https://github.com/ao/Serengeti/workflows/StorageScheduler%20Tests/badge.svg)
 
 ![Serengeti Dashboard](artwork/dash1.png?raw=true "Serengeti Dashboard")
 
@@ -106,6 +109,23 @@ run_storage_scheduler_tests.bat --comprehensive   # Run only comprehensive tests
 ```
 
 For detailed information about the StorageScheduler testing strategy, see [StorageScheduler Testing Strategy](docs/testing/StorageSchedulerTestingStrategy.md).
+
+#### CI/CD Integration
+
+StorageScheduler tests are fully integrated into the CI/CD pipeline:
+
+- **Fast Tests**: StorageScheduler fast tests run automatically as part of the Fast Tests workflow
+- **Comprehensive Tests**: A dedicated workflow runs comprehensive, integration, and mutation tests
+- **Quality Gates**: The pipeline enforces strict coverage thresholds (90% line, 85% branch, 100% method)
+- **Mutation Testing**: Ensures tests are effective at catching bugs by verifying they fail when code is mutated
+
+CI/CD workflows run automatically on:
+- Pushes to main, master, and develop branches
+- Pull requests to these branches
+- Changes to StorageScheduler code or tests
+- Manual triggers via GitHub Actions
+
+For more details on CI/CD integration, see the [CI/CD Integration](docs/testing/StorageSchedulerTestingStrategy.md#cicd-integration) section in the testing strategy document.
 
 ## Problems?
 [Create an issue](https://github.com/ao/serengeti/issues/new) if you need help
