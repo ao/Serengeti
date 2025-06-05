@@ -75,7 +75,37 @@ Or directly with Maven:
 mvn test -Pfast-tests
 ```
 
-For more information about the fast test suite, see [Fast Test Suite README](src/test/java/ms/ao/serengeti/fast/README.md).
+For more information about the fast test suite, see [Fast Test Suite README](src/test/java/com/ataiva/serengeti/fast/README.md).
+
+### StorageScheduler Tests
+
+The StorageScheduler is a critical component in Serengeti responsible for periodically persisting database state to disk. It ensures data durability by:
+- Running as a background thread that executes at regular intervals
+- Saving all database metadata to disk
+- Persisting table storage objects and table replica objects
+- Managing concurrent access to prevent data corruption
+
+The StorageScheduler testing is organized into two categories:
+- **Comprehensive Tests**: Thorough validation of all aspects of the component
+- **Fast Tests**: Quick feedback during development, focusing on core functionality
+
+#### Running StorageScheduler Tests
+
+Dedicated scripts are provided for running StorageScheduler tests:
+
+```bash
+# Linux/macOS
+./run_storage_scheduler_tests.sh --all       # Run all tests
+./run_storage_scheduler_tests.sh --fast      # Run only fast tests
+./run_storage_scheduler_tests.sh --comprehensive  # Run only comprehensive tests
+
+# Windows
+run_storage_scheduler_tests.bat --all        # Run all tests
+run_storage_scheduler_tests.bat --fast       # Run only fast tests
+run_storage_scheduler_tests.bat --comprehensive   # Run only comprehensive tests
+```
+
+For detailed information about the StorageScheduler testing strategy, see [StorageScheduler Testing Strategy](docs/testing/StorageSchedulerTestingStrategy.md).
 
 ## Problems?
 [Create an issue](https://github.com/ao/serengeti/issues/new) if you need help
