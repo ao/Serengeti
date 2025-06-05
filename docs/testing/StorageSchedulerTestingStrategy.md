@@ -24,6 +24,7 @@ The primary objectives of the StorageScheduler testing strategy are:
 4. **Performance Evaluation**: Measure execution time and resource usage to ensure acceptable performance
 5. **Edge Case Handling**: Test behavior with special characters, large data volumes, and unusual configurations
 6. **Resource Management**: Verify proper cleanup of resources after operations
+7. **Mutation Testing**: Ensure tests are effective at catching bugs by verifying they fail when code is mutated
 
 ### Test Coverage Targets
 
@@ -34,6 +35,9 @@ The testing strategy aims to achieve:
 - **Method Coverage**: 100% of public methods tested
 - **Scenario Coverage**: All identified use cases and edge cases tested
 - **Error Handling**: All error paths exercised
+- **Mutation Coverage**: >85% of code mutations detected by tests
+
+These coverage targets are enforced through JaCoCo and PIT configuration in the Maven build. The build will fail if the StorageScheduler class does not meet these coverage thresholds. JaCoCo is used for line, branch, and method coverage, while PIT is used for mutation coverage.
 
 ## Test Structure
 
@@ -179,6 +183,8 @@ Options:
   -a, --all            Run all StorageScheduler tests
   -f, --fast           Run only fast StorageScheduler tests
   -c, --comprehensive  Run only comprehensive StorageScheduler tests
+  --coverage           Run tests with code coverage analysis
+  --mutation           Run tests with mutation testing
   -h, --help           Show this help message
 ```
 
@@ -187,7 +193,44 @@ Examples:
 ./run_storage_scheduler_tests.sh --all
 ./run_storage_scheduler_tests.sh --fast
 ./run_storage_scheduler_tests.sh --comprehensive
+./run_storage_scheduler_tests.sh --all --coverage
+./run_storage_scheduler_tests.sh --fast --coverage
+./run_storage_scheduler_tests.sh --all --mutation
+./run_storage_scheduler_tests.sh --fast --mutation
+./run_storage_scheduler_tests.sh --all --coverage --mutation
 ```
+
+### Using the Coverage Report Scripts
+
+For detailed code coverage analysis, dedicated coverage report scripts are provided:
+
+- **Linux/macOS**: `generate_coverage_report.sh`
+- **Windows**: `generate_coverage_report.bat`
+
+These scripts offer several options:
+
+```
+Options:
+  -f, --format FORMAT    Report format: html, xml, csv (default: html)
+  -t, --test-type TYPE   Test type: all, fast, comprehensive (default: all)
+  -o, --open             Open the report after generation
+  -h, --help             Show this help message
+```
+
+Examples:
+```
+./generate_coverage_report.sh
+./generate_coverage_report.sh --format xml
+./generate_coverage_report.sh --test-type fast --open
+./generate_coverage_report.sh --format csv --test-type comprehensive
+```
+
+The coverage report scripts will:
+1. Run the specified tests with JaCoCo coverage instrumentation
+2. Generate coverage reports in the requested format
+3. Display a summary of coverage metrics
+4. Indicate whether coverage meets the defined targets
+5. Optionally open the HTML report in a browser
 
 ### Available Options and Parameters
 
@@ -306,6 +349,113 @@ The tests have the following external dependencies:
 - **Mockito**: Mocking framework for creating test doubles
 - **MockedStatic**: For mocking static methods in the Files and Paths classes
 
+## Code Coverage Analysis
+
+### Coverage Requirements
+
+The StorageScheduler component has the following coverage requirements:
+
+- **Line Coverage**: At least 90% of code lines must be executed during tests
+- **Branch Coverage**: At least 85% of conditional branches must be exercised
+- **Method Coverage**: 100% of public methods must be tested
+- **Mutation Coverage**: At least 85% of code mutations must be detected by tests
+
+The line, branch, and method coverage requirements are enforced through JaCoCo configuration in the Maven build. The mutation coverage requirement is enforced through PIT configuration. When running tests with the `--coverage` or `--mutation` options, the build will fail if these thresholds are not met.
+
+### Interpreting Coverage Reports
+
+The HTML coverage reports provide detailed information about code coverage:
+
+- **Green lines**: Fully covered code
+- **Yellow lines**: Partially covered branches
+- **Red lines**: Uncovered code
+
+The reports include:
+- Overall coverage metrics
+- Class-level coverage details
+- Method-level coverage details
+- Line-by-line coverage highlighting
+
+### Addressing Coverage Gaps
+
+When coverage gaps are identified:
+
+1. Analyze the uncovered code to understand what scenarios are not being tested
+2. Create new test cases that specifically target the uncovered code paths
+3. Focus on edge cases, error conditions, and boundary values
+4. Re-run the coverage analysis to verify the gaps have been addressed
+
+## Mutation Testing
+
+### What is Mutation Testing?
+
+Mutation testing is a technique to evaluate the quality of existing tests by introducing small changes (mutations) to the source code and verifying that the tests fail when these mutations are present. It helps identify weaknesses in the test suite and ensures that tests are effective at catching bugs.
+
+### Mutation Operators
+
+The StorageScheduler mutation testing uses the following mutation operators:
+
+- **Default Operators**: Standard PIT mutation operators including:
+  - Conditionals Boundary Mutator
+  - Increments Mutator
+  - Invert Negatives Mutator
+  - Math Mutator
+  - Negate Conditionals Mutator
+  - Return Values Mutator
+  - Void Method Calls Mutator
+- **Additional Operators**:
+  - Constructor Calls Mutator
+  - Non-Void Method Calls Mutator
+  - Remove Conditionals Mutator
+
+### Running Mutation Tests
+
+Mutation tests can be run using the dedicated scripts:
+
+```
+./run_mutation_tests.sh
+./run_mutation_tests.bat
+```
+
+These scripts provide several options:
+
+```
+Options:
+  -c, --component COMPONENT  Component to test (default: storage-scheduler)
+                             Available components: storage-scheduler, all
+  -f, --format FORMAT        Report format: HTML, XML (default: HTML)
+  -o, --open                 Open the HTML report after generation
+  -h, --help                 Show this help message
+```
+
+Mutation tests can also be run as part of the regular test execution by using the `--mutation` flag:
+
+```
+./run_storage_scheduler_tests.sh --all --mutation
+```
+
+### Interpreting Mutation Test Results
+
+The mutation test report provides the following information:
+
+- **Mutation Score**: The percentage of mutations that were detected (killed) by the tests
+- **Survived Mutations**: Mutations that were not detected by any test
+- **Killed Mutations**: Mutations that were detected by at least one test
+- **Mutation Details**: Information about each mutation, including:
+  - The mutated line of code
+  - The type of mutation
+  - Whether the mutation was killed or survived
+  - Which test killed the mutation (if any)
+
+### Improving Mutation Score
+
+When surviving mutations are identified:
+
+1. Analyze the surviving mutations to understand why they were not detected
+2. Create new test cases that specifically target the surviving mutations
+3. Improve existing tests to make them more sensitive to code changes
+4. Re-run the mutation tests to verify the improvements
+
 ## Performance Considerations
 
 ### Expected Performance Characteristics
@@ -345,3 +495,143 @@ Based on the test results, potential optimization areas include:
 6. **Prioritization**: Implement priority-based persistence for critical data
 
 Performance tests can be extended to measure the impact of these optimizations.
+
+## Integration Testing
+
+### Purpose of Integration Tests
+
+Integration tests for the StorageScheduler component verify that it works correctly in conjunction with other components it interacts with. While unit tests focus on isolated behavior, integration tests ensure that:
+
+1. **Component Interactions**: StorageScheduler correctly interacts with Storage, Network, DatabaseObject, TableStorageObject, and TableReplicaObject components
+2. **File System Integration**: Actual file system operations work as expected
+3. **Error Propagation**: Errors are properly propagated between components
+4. **End-to-End Workflows**: Complete persistence workflows function correctly
+
+### Integration Test Structure
+
+Integration tests are located in `src/test/java/com/ataiva/serengeti/integration/StorageSchedulerIntegrationTest.java` and extend the `TestBase` class. They use real (non-mocked) components to test actual interactions.
+
+#### Test Categories:
+
+- **Storage Integration Tests**: Verify that StorageScheduler correctly interacts with the Storage component
+- **Network Integration Tests**: Test that StorageScheduler respects the Network.online flag
+- **Schema Objects Integration Tests**: Verify correct persistence of DatabaseObject, TableStorageObject, and TableReplicaObject
+- **File System Integration Tests**: Test actual file system operations with different path configurations
+- **Concurrency Tests**: Verify proper handling of concurrent operations
+- **Error Handling Tests**: Test graceful handling of error conditions across component boundaries
+
+### Integration Test Environment
+
+Integration tests use a temporary directory for data storage to avoid interfering with the actual data directory. The test environment:
+
+1. Creates a unique database and table for each test
+2. Uses real Storage, Network, and other components
+3. Verifies actual file creation and content
+4. Cleans up all resources after each test
+
+### Running Integration Tests
+
+Integration tests can be run using Maven:
+
+```
+mvn test -Dtest=com.ataiva.serengeti.integration.StorageSchedulerIntegrationTest
+```
+
+Or using the provided scripts with a new integration option:
+
+```
+./run_storage_scheduler_tests.sh --integration
+```
+
+### Integration Test Best Practices
+
+When extending or modifying integration tests:
+
+1. **Use Real Components**: Avoid mocking components in integration tests
+2. **Test Complete Workflows**: Focus on end-to-end scenarios
+3. **Verify File System State**: Check that files are created with correct content
+4. **Test Error Conditions**: Verify proper error handling across component boundaries
+5. **Clean Up Resources**: Ensure all resources are properly cleaned up after tests
+6. **Isolate Tests**: Each test should be independent and not rely on state from other tests
+
+## CI/CD Integration
+
+### CI/CD Pipeline Configuration
+
+The StorageScheduler tests are fully integrated into the project's CI/CD pipeline to ensure code quality and prevent regressions. The integration includes:
+
+1. **Fast Tests in Fast Tests Workflow**:
+   - StorageScheduler fast tests are run as part of the `fast-tests.yml` workflow
+   - Tests run in parallel with other component tests
+   - Results are included in the overall coverage report
+
+2. **Dedicated StorageScheduler Tests Workflow**:
+   - Located in `.github/workflows/storage-scheduler-tests.yml`
+   - Triggered on changes to StorageScheduler code or tests
+   - Runs comprehensive, integration, and mutation tests
+   - Enforces coverage thresholds (90% line, 85% branch, 100% method)
+   - Publishes detailed test reports
+
+3. **Basic Tests in Main CI Workflow**:
+   - Fast StorageScheduler tests are run as part of the main CI workflow
+   - Ensures basic functionality is maintained with every commit
+
+### CI/CD Quality Gates
+
+The CI/CD pipeline enforces several quality gates for StorageScheduler tests:
+
+1. **Coverage Thresholds**:
+   - Line coverage: >90%
+   - Branch coverage: >85%
+   - Method coverage: 100%
+   - Mutation coverage: >85%
+
+2. **Test Success Rate**:
+   - All tests must pass for the workflow to succeed
+   - Test results are published for easy review
+
+3. **Static Analysis**:
+   - Code is checked with SpotBugs, PMD, and Checkstyle
+   - Must pass all static analysis checks
+
+### Interpreting CI/CD Test Results
+
+When a CI/CD workflow runs StorageScheduler tests, the following artifacts are produced:
+
+1. **Test Reports**:
+   - Located in the "Artifacts" section of the workflow run
+   - Contains detailed test execution results
+   - Shows which tests passed or failed
+
+2. **Coverage Reports**:
+   - HTML reports showing line-by-line coverage
+   - Summary metrics for line, branch, and method coverage
+   - Highlights uncovered code sections
+
+3. **Mutation Test Reports**:
+   - Shows which mutations were killed or survived
+   - Provides mutation score as a percentage
+   - Helps identify weaknesses in the test suite
+
+### Troubleshooting CI/CD Test Failures
+
+If StorageScheduler tests fail in the CI/CD pipeline:
+
+1. **Check Test Reports**:
+   - Download and review the test reports artifact
+   - Identify which specific tests failed
+   - Look for error messages and stack traces
+
+2. **Check Coverage Reports**:
+   - If tests pass but the workflow fails, it may be a coverage issue
+   - Review the coverage report to identify uncovered code
+   - Add tests for uncovered code paths
+
+3. **Check Mutation Reports**:
+   - If mutation testing fails, review surviving mutations
+   - Add or improve tests to kill surviving mutations
+
+4. **Local Reproduction**:
+   - Run the failing tests locally using the provided scripts
+   - Use the same command that the CI/CD workflow uses
+   - Debug and fix the issues locally before pushing changes

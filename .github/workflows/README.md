@@ -74,6 +74,25 @@ The workflow runs automatically after a successful Maven CI workflow run on the 
 - `DOCKERHUB_USERNAME`: Your DockerHub username
 - `DOCKERHUB_TOKEN`: Your DockerHub access token
 
+### 5. StorageScheduler Tests Workflow
+
+**File:** `storage-scheduler-tests.yml`
+
+This workflow runs comprehensive, integration, and mutation tests for the StorageScheduler component.
+
+#### Features:
+
+1. **Path-Based Triggering**: Runs automatically when StorageScheduler code or tests are modified.
+2. **Comprehensive Tests**: Runs thorough validation of all aspects of the StorageScheduler.
+3. **Integration Tests**: Verifies that StorageScheduler works correctly with other components.
+4. **Mutation Tests**: Ensures tests are effective at catching bugs by verifying they fail when code is mutated.
+5. **Coverage Checks**: Enforces strict coverage thresholds (90% line, 85% branch, 100% method).
+6. **Test Results Publishing**: Publishes detailed test results for easy review.
+
+#### How to Use:
+
+The workflow runs automatically when StorageScheduler code or tests are modified. You can also run it manually from the GitHub Actions tab.
+
 ## How to Add a New Component to Fast Tests:
 
 1. Add a new entry to the matrix in the `fast-tests.yml` file:
@@ -81,7 +100,7 @@ The workflow runs automatically after a successful Maven CI workflow run on the 
 ```yaml
 strategy:
   matrix:
-    component: [storage-lsm, network, query, server, your-new-component]
+    component: [storage-lsm, network, query, server, storage-scheduler, your-new-component]
 ```
 
 2. Add a new condition to the "Run Fast Tests" step:
@@ -96,7 +115,9 @@ fi
 
 1. **Keep Tests Fast**: Fast tests should run in under 2 seconds to provide quick feedback.
 2. **Run Tests in Parallel**: Use matrix strategy to run tests in parallel.
-3. **Monitor Coverage**: Keep code coverage above 80%.
+3. **Monitor Coverage**: Keep code coverage above 80% (90% for critical components like StorageScheduler).
 4. **Review Test Results**: Regularly review test results to identify flaky tests.
 5. **Use Consistent JDK**: Use JDK 11 for all workflows to ensure consistency.
 6. **Optimize Build Time**: Use caching to speed up builds.
+7. **Path-Based Triggering**: Use path filters to run specific workflows only when relevant files change.
+8. **Quality Gates**: Enforce strict quality gates for critical components.
