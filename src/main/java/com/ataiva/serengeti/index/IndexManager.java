@@ -272,15 +272,15 @@ public class IndexManager implements Serializable {
     
     /**
      * Finds row IDs with values in a range using an index
-     * 
+     *
      * @param databaseName The database name
      * @param tableName The table name
      * @param columnName The column name
-     * @param fromValue The lower bound (inclusive)
-     * @param toValue The upper bound (inclusive)
+     * @param fromValue The lower bound (can be null for unbounded)
+     * @param toValue The upper bound (can be null for unbounded)
      * @return Set of matching row IDs, or null if no index exists
      */
-    public Set<String> findRowsInRange(String databaseName, String tableName, String columnName, 
+    public Set<String> findRowsInRange(String databaseName, String tableName, String columnName,
                                       Object fromValue, Object toValue) {
         // Track query frequency for this column
         trackQueryFrequency(databaseName, tableName, columnName);
@@ -291,10 +291,30 @@ public class IndexManager implements Serializable {
         
         if (index != null) {
             // Use the index to find matching rows
-            if (fromValue instanceof Number && toValue instanceof Number) {
-                return index.findRange((Comparable) fromValue, (Comparable) toValue);
+            if (fromValue == null && toValue == null) {
+                // Return all values in the index
+                return index.findAll();
+            } else if (fromValue == null) {
+                // All values less than or equal to toValue
+                if (toValue instanceof Number) {
+                    return index.findLessThanOrEqual((Comparable) toValue);
+                } else {
+                    return index.findLessThanOrEqual(toValue.toString());
+                }
+            } else if (toValue == null) {
+                // All values greater than or equal to fromValue
+                if (fromValue instanceof Number) {
+                    return index.findGreaterThanOrEqual((Comparable) fromValue);
+                } else {
+                    return index.findGreaterThanOrEqual(fromValue.toString());
+                }
             } else {
-                return index.findRange(fromValue.toString(), toValue.toString());
+                // Values in range fromValue to toValue (inclusive)
+                if (fromValue instanceof Number && toValue instanceof Number) {
+                    return index.findRange((Comparable) fromValue, (Comparable) toValue);
+                } else {
+                    return index.findRange(fromValue.toString(), toValue.toString());
+                }
             }
         }
         

@@ -304,8 +304,188 @@ public class BTreeIndex implements Serializable {
     }
     
     /**
+     * Finds all row IDs in the index
+     *
+     * @return Set of all row IDs in the index
+     */
+    @SuppressWarnings("unchecked")
+    public Set<String> findAll() {
+        Set<String> result = new HashSet<>();
+        findAllRecursive(root, result);
+        return result;
+    }
+    
+    /**
+     * Helper method for finding all values
+     */
+    @SuppressWarnings("unchecked")
+    private void findAllRecursive(Node node, Set<String> result) {
+        if (node == null) {
+            return;
+        }
+        
+        if (node.isLeaf) {
+            // Collect all values in this leaf node
+            for (int i = 0; i < node.keyCount; i++) {
+                Set<String> rowIds = (Set<String>) node.values[i];
+                if (rowIds != null) {
+                    result.addAll(rowIds);
+                }
+            }
+        } else {
+            // Recurse on all children
+            for (int i = 0; i <= node.keyCount; i++) {
+                findAllRecursive(node.children[i], result);
+            }
+        }
+    }
+    
+    /**
+     * Finds all row IDs with values less than or equal to the given value
+     *
+     * @param value The upper bound (inclusive)
+     * @return Set of row IDs with values <= value
+     */
+    @SuppressWarnings("unchecked")
+    public Set<String> findLessThanOrEqual(Comparable value) {
+        if (value == null) {
+            return Collections.emptySet();
+        }
+        
+        Set<String> result = new HashSet<>();
+        findLessThanOrEqualRecursive(root, value, result);
+        return result;
+    }
+    
+    /**
+     * Helper method for finding values less than or equal to a given value
+     */
+    @SuppressWarnings("unchecked")
+    private void findLessThanOrEqualRecursive(Node node, Comparable value, Set<String> result) {
+        if (node == null) {
+            return;
+        }
+        
+        int i = 0;
+        
+        if (node.isLeaf) {
+            // Collect all keys <= value
+            while (i < node.keyCount && value.compareTo(node.keys[i]) >= 0) {
+                Set<String> rowIds = (Set<String>) node.values[i];
+                if (rowIds != null) {
+                    result.addAll(rowIds);
+                }
+                i++;
+            }
+        } else {
+            // Process all keys < value and recurse on their children
+            while (i < node.keyCount && value.compareTo(node.keys[i]) > 0) {
+                findLessThanOrEqualRecursive(node.children[i], value, result);
+                
+                Set<String> rowIds = (Set<String>) node.values[i];
+                if (rowIds != null) {
+                    result.addAll(rowIds);
+                }
+                
+                i++;
+            }
+            
+            // Process the key == value if it exists
+            if (i < node.keyCount && value.compareTo(node.keys[i]) == 0) {
+                Set<String> rowIds = (Set<String>) node.values[i];
+                if (rowIds != null) {
+                    result.addAll(rowIds);
+                }
+                i++;
+            }
+            
+            // Recurse on the last child if needed
+            if (i <= node.keyCount) {
+                findLessThanOrEqualRecursive(node.children[i - 1], value, result);
+            }
+        }
+    }
+    
+    /**
+     * Finds all row IDs with values greater than or equal to the given value
+     *
+     * @param value The lower bound (inclusive)
+     * @return Set of row IDs with values >= value
+     */
+    @SuppressWarnings("unchecked")
+    public Set<String> findGreaterThanOrEqual(Comparable value) {
+        if (value == null) {
+            return Collections.emptySet();
+        }
+        
+        Set<String> result = new HashSet<>();
+        findGreaterThanOrEqualRecursive(root, value, result);
+        return result;
+    }
+    
+    /**
+     * Helper method for finding values greater than or equal to a given value
+     */
+    @SuppressWarnings("unchecked")
+    private void findGreaterThanOrEqualRecursive(Node node, Comparable value, Set<String> result) {
+        if (node == null) {
+            return;
+        }
+        
+        int i = 0;
+        
+        // Find the first key >= value
+        while (i < node.keyCount && value.compareTo(node.keys[i]) > 0) {
+            i++;
+        }
+        
+        if (node.isLeaf) {
+            // Collect all keys >= value
+            while (i < node.keyCount) {
+                Set<String> rowIds = (Set<String>) node.values[i];
+                if (rowIds != null) {
+                    result.addAll(rowIds);
+                }
+                i++;
+            }
+        } else {
+            // If we found a key >= value, process it and all keys to the right
+            if (i < node.keyCount) {
+                // Recurse on the child that might contain values >= value
+                findGreaterThanOrEqualRecursive(node.children[i], value, result);
+                
+                // Add the current key's values
+                Set<String> rowIds = (Set<String>) node.values[i];
+                if (rowIds != null) {
+                    result.addAll(rowIds);
+                }
+                i++;
+                
+                // Add all keys to the right and their right subtrees
+                while (i < node.keyCount) {
+                    findAllRecursive(node.children[i], result);
+                    
+                    rowIds = (Set<String>) node.values[i];
+                    if (rowIds != null) {
+                        result.addAll(rowIds);
+                    }
+                    i++;
+                }
+                
+                // Add the rightmost subtree
+                if (i <= node.keyCount) {
+                    findAllRecursive(node.children[i], result);
+                }
+            } else if (i <= node.keyCount) {
+                // If all keys are < value, check the rightmost child
+                findGreaterThanOrEqualRecursive(node.children[i], value, result);
+            }
+        }
+    }
+    
+    /**
      * Finds all row IDs with values in the given range (inclusive)
-     * 
+     *
      * @param fromValue The lower bound (inclusive)
      * @param toValue The upper bound (inclusive)
      * @return Set of row IDs in the range

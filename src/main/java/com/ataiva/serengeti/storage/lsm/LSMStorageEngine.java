@@ -1,5 +1,7 @@
 package com.ataiva.serengeti.storage.lsm;
 
+import com.ataiva.serengeti.storage.wal.WALManager;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -30,6 +32,11 @@ public class LSMStorageEngine implements AutoCloseable {
     private final int compactionMaxSSTablesToMerge;
     private final long compactionIntervalMs;
     
+    // WAL configuration
+    private final WALManager walManager;
+    private final Path walDirectory;
+    private final WALManager.SyncMode walSyncMode;
+    
     // Active MemTable for writes
     private volatile MemTable activeMemTable;
     
@@ -49,6 +56,9 @@ public class LSMStorageEngine implements AutoCloseable {
     // Control flags
     private volatile boolean running;
     private volatile boolean compactionRunning;
+    
+    // List to track MemTables and their checkpoints
+    private final List<MemTableWithCheckpoint> memTablesWithCheckpoints = new ArrayList<>();
     
     /**
      * Creates a new LSMStorageEngine.
@@ -76,15 +86,40 @@ public class LSMStorageEngine implements AutoCloseable {
     public LSMStorageEngine(Path dataDirectory, long memTableMaxSize, int maxImmutableMemTables,
                            int compactionTriggerThreshold, int compactionMaxSSTablesToMerge,
                            long compactionIntervalMs) throws IOException {
+        this(dataDirectory, memTableMaxSize, maxImmutableMemTables, compactionTriggerThreshold, 
+             compactionMaxSSTablesToMerge, compactionIntervalMs, WALManager.SyncMode.GROUP);
+    }
+    
+    /**
+     * Creates a new LSMStorageEngine with custom compaction and WAL settings.
+     *
+     * @param dataDirectory Directory to store SSTable files
+     * @param memTableMaxSize Maximum size of a MemTable before flushing
+     * @param maxImmutableMemTables Maximum number of immutable MemTables to keep in memory
+     * @param compactionTriggerThreshold Number of SSTables that triggers compaction
+     * @param compactionMaxSSTablesToMerge Maximum number of SSTables to merge in one compaction
+     * @param compactionIntervalMs Time between compaction checks in milliseconds
+     * @param walSyncMode WAL sync mode (SYNC, ASYNC, GROUP)
+     * @throws IOException If an I/O error occurs
+     */
+    public LSMStorageEngine(Path dataDirectory, long memTableMaxSize, int maxImmutableMemTables,
+                           int compactionTriggerThreshold, int compactionMaxSSTablesToMerge,
+                           long compactionIntervalMs, WALManager.SyncMode walSyncMode) throws IOException {
         this.dataDirectory = dataDirectory;
         this.memTableMaxSize = memTableMaxSize;
         this.maxImmutableMemTables = maxImmutableMemTables;
         this.compactionTriggerThreshold = compactionTriggerThreshold;
         this.compactionMaxSSTablesToMerge = compactionMaxSSTablesToMerge;
         this.compactionIntervalMs = compactionIntervalMs;
+        this.walSyncMode = walSyncMode;
         
         // Create data directory if it doesn't exist
         Files.createDirectories(dataDirectory);
+        
+        // Initialize WAL
+        this.walDirectory = dataDirectory.resolve("wal");
+        Files.createDirectories(walDirectory);
+        this.walManager = new WALManager(walDirectory, 64 * 1024 * 1024, walSyncMode, 100, 1000);
         
         // Initialize data structures
         this.activeMemTable = new MemTable(memTableMaxSize);
@@ -92,6 +127,9 @@ public class LSMStorageEngine implements AutoCloseable {
         this.ssTables = new ArrayList<>();
         this.ssTableIdGenerator = new AtomicLong(System.currentTimeMillis());
         this.compactionRunning = false;
+        
+        // Recover from WAL if needed
+        recoverFromWAL();
         
         // Load existing SSTables
         loadExistingSSTables();
@@ -122,6 +160,9 @@ public class LSMStorageEngine implements AutoCloseable {
             return;
         }
         
+        // Log to WAL first
+        walManager.logPut(key, value);
+        
         // Put in active MemTable
         boolean shouldFlush = activeMemTable.put(key, value);
         
@@ -142,6 +183,9 @@ public class LSMStorageEngine implements AutoCloseable {
         if (key == null) {
             return;
         }
+        
+        // Log to WAL first
+        walManager.logDelete(key);
         
         // Mark as deleted in active MemTable
         boolean shouldFlush = activeMemTable.delete(key);
@@ -204,10 +248,18 @@ public class LSMStorageEngine implements AutoCloseable {
      * @throws IOException If an I/O error occurs
      */
     private synchronized void makeActiveMemTableImmutable() throws IOException {
-        // Add current active MemTable to immutable list
+        // Create a checkpoint in the WAL for this MemTable
+        String checkpointName = "memtable-" + System.currentTimeMillis();
+        long checkpointSeq = walManager.checkpoint(checkpointName);
+        
+        // Add current active MemTable to immutable list with its checkpoint info
+        MemTableWithCheckpoint memTableWithCheckpoint = new MemTableWithCheckpoint(activeMemTable, checkpointName, checkpointSeq);
         synchronized (immutableMemTables) {
             immutableMemTables.add(activeMemTable);
         }
+        
+        // Add to checkpoint tracking
+        memTablesWithCheckpoints.add(memTableWithCheckpoint);
         
         // Create a new active MemTable
         activeMemTable = new MemTable(memTableMaxSize);
@@ -237,8 +289,22 @@ public class LSMStorageEngine implements AutoCloseable {
                 
                 // Get the oldest immutable MemTable
                 MemTable memTableToFlush;
+                String checkpointName = null;
+                long checkpointSeq = -1;
+                
                 synchronized (immutableMemTables) {
                     memTableToFlush = immutableMemTables.poll();
+                    // Find the checkpoint info for this MemTable
+                    Iterator<MemTableWithCheckpoint> iterator = memTablesWithCheckpoints.iterator();
+                    while (iterator.hasNext()) {
+                        MemTableWithCheckpoint mtc = iterator.next();
+                        if (mtc.memTable == memTableToFlush) {
+                            checkpointName = mtc.checkpointName;
+                            checkpointSeq = mtc.checkpointSeq;
+                            iterator.remove();
+                            break;
+                        }
+                    }
                 }
                 
                 if (memTableToFlush != null && !memTableToFlush.isEmpty()) {
@@ -253,6 +319,12 @@ public class LSMStorageEngine implements AutoCloseable {
                     
                     LOGGER.info("Flushed MemTable to SSTable: " + fileId);
                     
+                    // Remove WAL checkpoint and clean up WAL files
+                    if (checkpointName != null) {
+                        walManager.removeCheckpoint(checkpointName);
+                        walManager.cleanupWAL(checkpointSeq);
+                    }
+                    
                     // Notify compaction thread
                     synchronized (compactionThread) {
                         compactionThread.notify();
@@ -264,9 +336,6 @@ public class LSMStorageEngine implements AutoCloseable {
         }
     }
     
-    /**
-     * Background thread that compacts SSTables.
-     */
     /**
      * Triggers a compaction check by notifying the compaction thread.
      * This is called by the LSMStorageScheduler to suggest that compaction
@@ -434,6 +503,44 @@ public class LSMStorageEngine implements AutoCloseable {
     }
     
     /**
+     * Recovers the state of the MemTable from the WAL.
+     * This is called during startup to recover from a crash.
+     * 
+     * @throws IOException If an I/O error occurs
+     */
+    private void recoverFromWAL() throws IOException {
+        LOGGER.info("Starting recovery from WAL");
+        
+        // Create a recovery consumer that applies operations to the active MemTable
+        WALManager.WALRecoveryConsumer recoveryConsumer = new WALManager.WALRecoveryConsumer() {
+            @Override
+            public void onPut(long sequenceNumber, byte[] key, byte[] value) {
+                try {
+                    activeMemTable.put(key, value);
+                    LOGGER.fine("Recovered PUT operation: seq=" + sequenceNumber);
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Error recovering PUT operation", e);
+                }
+            }
+            
+            @Override
+            public void onDelete(long sequenceNumber, byte[] key) {
+                try {
+                    activeMemTable.delete(key);
+                    LOGGER.fine("Recovered DELETE operation: seq=" + sequenceNumber);
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Error recovering DELETE operation", e);
+                }
+            }
+        };
+        
+        // Replay the WAL
+        walManager.recover(recoveryConsumer);
+        
+        LOGGER.info("WAL recovery completed");
+    }
+    
+    /**
      * Loads existing SSTables from the data directory.
      * 
      * @throws IOException If an I/O error occurs
@@ -521,6 +628,11 @@ public class LSMStorageEngine implements AutoCloseable {
                     }
                 }
                 ssTables.clear();
+            }
+            
+            // Close WAL manager
+            if (walManager != null) {
+                walManager.close();
             }
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error during storage engine shutdown", e);
@@ -625,6 +737,21 @@ public class LSMStorageEngine implements AutoCloseable {
         } catch (Exception e) {
             System.err.println("Error in demo: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+    
+    /**
+     * Class to track MemTables and their associated WAL checkpoints.
+     */
+    private static class MemTableWithCheckpoint {
+        final MemTable memTable;
+        final String checkpointName;
+        final long checkpointSeq;
+        
+        MemTableWithCheckpoint(MemTable memTable, String checkpointName, long checkpointSeq) {
+            this.memTable = memTable;
+            this.checkpointName = checkpointName;
+            this.checkpointSeq = checkpointSeq;
         }
     }
 }

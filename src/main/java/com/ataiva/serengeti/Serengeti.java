@@ -2,6 +2,7 @@
 
 import com.ataiva.serengeti.index.IndexManager;
 import com.ataiva.serengeti.network.Network;
+import com.ataiva.serengeti.search.FullTextSearch;
 import com.ataiva.serengeti.server.Server;
 import com.ataiva.serengeti.storage.Storage;
 import com.ataiva.serengeti.storage.StorageReshuffle;
@@ -16,6 +17,7 @@ public class Serengeti {
     public static StorageReshuffle storageReshuffle;
     public static StorageScheduler storageScheduler;
     public static IndexManager indexManager;
+    public static FullTextSearch fullTextSearch;
     public static long startTime = System.currentTimeMillis();
     public static Date currentDate = new Date();
     public static void main(String[] args) {
@@ -35,6 +37,9 @@ public class Serengeti {
         
         // Initialize the index manager
         indexManager = new IndexManager();
+        
+        // Initialize the full-text search
+        fullTextSearch = new FullTextSearch();
         
         // Start the server
         server.serve();

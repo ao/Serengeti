@@ -1,92 +1,211 @@
 {
   "scenarios": [
     {
-      "name": "disk_write_failure",
-      "description": "Simulates a failure when writing to disk",
-      "database": {
-        "name": "error_db_1",
-        "tables": ["error_table_1"]
-      },
-      "error_type": "IOException",
-      "error_message": "Failed to write to disk: Permission denied",
-      "error_target": "Files.write"
+      "name": "transient_io_error",
+      "description": "Simulates a transient I/O error that should be retried",
+      "errorType": "IOException",
+      "errorMessage": "Connection reset",
+      "isTransient": true,
+      "retryCount": 2,
+      "expectedOutcome": "success_after_retry"
     },
     {
-      "name": "table_save_failure",
-      "description": "Simulates a failure when saving a table",
-      "database": {
-        "name": "error_db_2",
-        "tables": ["error_table_2"]
-      },
-      "error_type": "IOException",
-      "error_message": "Failed to save table: Stream closed",
-      "error_target": "TableStorageObject.saveToDisk"
+      "name": "persistent_permission_error",
+      "description": "Simulates a persistent permission denied error",
+      "errorType": "AccessDeniedException",
+      "errorMessage": "Permission denied",
+      "isTransient": false,
+      "retryCount": 0,
+      "expectedOutcome": "failure"
     },
     {
-      "name": "replica_save_failure",
-      "description": "Simulates a failure when saving a replica",
-      "database": {
-        "name": "error_db_3",
-        "tables": ["error_table_3"]
-      },
-      "error_type": "IOException",
-      "error_message": "Failed to save replica: Stream closed",
-      "error_target": "TableReplicaObject.saveToDisk"
+      "name": "disk_full_error",
+      "description": "Simulates a disk full error",
+      "errorType": "IOException",
+      "errorMessage": "No space left on device",
+      "isTransient": true,
+      "retryCount": 3,
+      "expectedOutcome": "failure_after_retry"
     },
     {
-      "name": "serialization_failure",
-      "description": "Simulates a failure during object serialization",
-      "database": {
-        "name": "error_db_4",
-        "tables": ["error_table_4"]
-      },
-      "error_type": "NotSerializableException",
-      "error_message": "Failed to serialize object: Object is not serializable",
-      "error_target": "Globals.convertToBytes"
+      "name": "file_not_found_error",
+      "description": "Simulates a file not found error",
+      "errorType": "NoSuchFileException",
+      "errorMessage": "File not found",
+      "isTransient": false,
+      "retryCount": 0,
+      "expectedOutcome": "failure"
     },
     {
-      "name": "directory_creation_failure",
-      "description": "Simulates a failure when creating a directory",
-      "database": {
-        "name": "error_db_5",
-        "tables": ["error_table_5"]
-      },
-      "error_type": "IOException",
-      "error_message": "Failed to create directory: Permission denied",
-      "error_target": "Files.createDirectories"
+      "name": "out_of_memory_error",
+      "description": "Simulates an out of memory error",
+      "errorType": "OutOfMemoryError",
+      "errorMessage": "Java heap space",
+      "isTransient": false,
+      "retryCount": 0,
+      "expectedOutcome": "critical_failure"
     },
     {
-      "name": "out_of_memory",
-      "description": "Simulates an out of memory error during persistence",
-      "database": {
-        "name": "error_db_6",
-        "tables": ["error_table_6"]
-      },
-      "error_type": "OutOfMemoryError",
-      "error_message": "Java heap space",
-      "error_target": "StorageScheduler.performPersistToDisk"
+      "name": "intermittent_network_error",
+      "description": "Simulates intermittent network connectivity issues",
+      "errorType": "IOException",
+      "errorMessage": "Connection refused",
+      "isTransient": true,
+      "retryCount": 3,
+      "expectedOutcome": "success_after_retry"
     },
     {
-      "name": "thread_interruption",
-      "description": "Simulates a thread interruption during persistence",
-      "database": {
-        "name": "error_db_7",
-        "tables": ["error_table_7"]
-      },
-      "error_type": "InterruptedException",
-      "error_message": "Thread interrupted during persistence",
-      "error_target": "StorageScheduler.performPersistToDisk"
+      "name": "database_corruption",
+      "description": "Simulates database corruption",
+      "errorType": "IllegalArgumentException",
+      "errorMessage": "Invalid database format",
+      "isTransient": false,
+      "retryCount": 0,
+      "expectedOutcome": "failure"
     },
     {
-      "name": "null_pointer",
-      "description": "Simulates a null pointer exception during persistence",
-      "database": {
-        "name": "error_db_8",
-        "tables": ["error_table_8"]
-      },
-      "error_type": "NullPointerException",
-      "error_message": "Null pointer encountered during persistence",
-      "error_target": "StorageScheduler.performPersistToDisk"
+      "name": "concurrent_modification",
+      "description": "Simulates concurrent modification of database",
+      "errorType": "ConcurrentModificationException",
+      "errorMessage": "Database modified during operation",
+      "isTransient": true,
+      "retryCount": 2,
+      "expectedOutcome": "success_after_retry"
+    },
+    {
+      "name": "table_lock_timeout",
+      "description": "Simulates a timeout waiting for table lock",
+      "errorType": "TimeoutException",
+      "errorMessage": "Timeout waiting for table lock",
+      "isTransient": true,
+      "retryCount": 3,
+      "expectedOutcome": "failure_after_retry"
+    },
+    {
+      "name": "partial_write_failure",
+      "description": "Simulates a partial write failure requiring rollback",
+      "errorType": "IOException",
+      "errorMessage": "Write operation interrupted",
+      "isTransient": false,
+      "retryCount": 0,
+      "expectedOutcome": "rollback"
+    }
+  ],
+  "combinedScenarios": [
+    {
+      "name": "multiple_transient_errors",
+      "description": "Multiple transient errors across different operations",
+      "operations": [
+        {
+          "type": "DATABASE_METADATA",
+          "errorType": "IOException",
+          "errorMessage": "Connection reset",
+          "isTransient": true,
+          "attemptCount": 2,
+          "outcome": "success"
+        },
+        {
+          "type": "TABLE_STORAGE",
+          "errorType": "IOException",
+          "errorMessage": "Too many open files",
+          "isTransient": true,
+          "attemptCount": 3,
+          "outcome": "success"
+        },
+        {
+          "type": "TABLE_REPLICA",
+          "errorType": "IOException",
+          "errorMessage": "Connection refused",
+          "isTransient": true,
+          "attemptCount": 1,
+          "outcome": "success"
+        }
+      ],
+      "expectedOutcome": "overall_success"
+    },
+    {
+      "name": "mixed_error_types",
+      "description": "Mix of transient and persistent errors",
+      "operations": [
+        {
+          "type": "DATABASE_METADATA",
+          "errorType": "IOException",
+          "errorMessage": "Connection reset",
+          "isTransient": true,
+          "attemptCount": 2,
+          "outcome": "success"
+        },
+        {
+          "type": "TABLE_STORAGE",
+          "errorType": "AccessDeniedException",
+          "errorMessage": "Permission denied",
+          "isTransient": false,
+          "attemptCount": 1,
+          "outcome": "failure"
+        },
+        {
+          "type": "TABLE_REPLICA",
+          "errorType": null,
+          "errorMessage": null,
+          "isTransient": false,
+          "attemptCount": 1,
+          "outcome": "success"
+        }
+      ],
+      "expectedOutcome": "partial_success"
+    },
+    {
+      "name": "critical_failure_scenario",
+      "description": "Critical failure requiring immediate termination",
+      "operations": [
+        {
+          "type": "DATABASE_METADATA",
+          "errorType": "OutOfMemoryError",
+          "errorMessage": "Java heap space",
+          "isTransient": false,
+          "attemptCount": 1,
+          "outcome": "critical_failure"
+        },
+        {
+          "type": "TABLE_STORAGE",
+          "errorType": null,
+          "errorMessage": null,
+          "isTransient": false,
+          "attemptCount": 0,
+          "outcome": "skipped"
+        },
+        {
+          "type": "TABLE_REPLICA",
+          "errorType": null,
+          "errorMessage": null,
+          "isTransient": false,
+          "attemptCount": 0,
+          "outcome": "skipped"
+        }
+      ],
+      "expectedOutcome": "critical_failure"
+    }
+  ],
+  "resourceConstraints": [
+    {
+      "name": "low_disk_space",
+      "availableDiskSpace": "10MB",
+      "expectedBehavior": "warn_and_continue"
+    },
+    {
+      "name": "very_low_disk_space",
+      "availableDiskSpace": "1MB",
+      "expectedBehavior": "fail_gracefully"
+    },
+    {
+      "name": "low_memory",
+      "availableMemory": "50MB",
+      "expectedBehavior": "warn_and_continue"
+    },
+    {
+      "name": "high_cpu_load",
+      "cpuUsage": "90%",
+      "expectedBehavior": "slow_down_and_continue"
     }
   ]
 }
