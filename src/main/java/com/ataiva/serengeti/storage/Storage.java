@@ -269,6 +269,11 @@ public class Storage {
                 sro.success = true;
                 sro.primary = _node_primary_id;
                 sro.secondary = _node_secondary_id;
+                
+                // Update indexes if the insert was successful
+                if (sro.success) {
+                    Serengeti.indexManager.handleInsert(db, table, row_id, json);
+                }
 
                 return sro;
             } catch (Exception e) {
@@ -335,6 +340,20 @@ public class Storage {
                     
                     if (!_node_secondary_id.isEmpty() && !_node_secondary_ip.isEmpty()) {
                         Serengeti.network.communicateQueryLogSingleNode(_node_secondary_id, _node_secondary_ip, _jsonUpdateReplicate);
+                    }
+                    
+                    // Get the old JSON data for indexing
+                    TableStorageObject tso = tableStorageObjects.get(db+"#"+table);
+                    if (tso != null) {
+                        JSONObject oldJson = tso.getJsonFromRowId(_row_id);
+                        if (oldJson != null) {
+                            // Create the new JSON with the updated value
+                            JSONObject newJson = new JSONObject(oldJson.toString());
+                            newJson.put(update_key, update_val);
+                            
+                            // Update the indexes
+                            Serengeti.indexManager.handleUpdate(db, table, _row_id, oldJson, newJson);
+                        }
                     }
 
                     return true;
@@ -406,6 +425,16 @@ public class Storage {
                         put("table", table);
                         put("row_id", _row_id);
                     }}.toString());
+                    
+                    // Get the JSON data for indexing
+                    TableStorageObject tso = tableStorageObjects.get(db+"#"+table);
+                    if (tso != null) {
+                        JSONObject json = tso.getJsonFromRowId(_row_id);
+                        if (json != null) {
+                            // Update the indexes
+                            Serengeti.indexManager.handleDelete(db, table, _row_id, json);
+                        }
+                    }
 
                     return true;
                 }
