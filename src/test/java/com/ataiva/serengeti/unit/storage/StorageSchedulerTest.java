@@ -8,9 +8,13 @@ import com.ataiva.serengeti.schema.TableStorageObject;
 import com.ataiva.serengeti.storage.Storage;
 import com.ataiva.serengeti.storage.StorageScheduler;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -21,6 +25,8 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -32,6 +38,7 @@ import static org.mockito.Mockito.*;
  */
 @DisplayName("StorageScheduler Unit Tests")
 @Tag("unit")
+@ExtendWith(MockitoExtension.class)
 class StorageSchedulerTest {
 
     @Mock
@@ -429,6 +436,185 @@ class StorageSchedulerTest {
             assertTrue(output.contains("(3 rows)"), "Should log replica row count");
         }
     }
+    
+    @Test
+    @DisplayName("Should handle concurrent persistence operations")
+    void testConcurrentPersistOperations() throws Exception {
+        // Arrange
+        setupSuccessfulPersistenceScenario();
+        
+        // Create a custom scheduler that allows us to track concurrent access
+        final boolean[] concurrentAccess = {false};
+        final boolean[] firstThreadRunning = {false};
+        
+        StorageScheduler testScheduler = new StorageScheduler() {
+            @Override
+            public boolean performPersistToDisk() {
+                if (StorageScheduler.running && firstThreadRunning[0]) {
+                    concurrentAccess[0] = true;
+                }
+                firstThreadRunning[0] = true;
+                boolean result = super.performPersistToDisk();
+                firstThreadRunning[0] = false;
+                return result;
+            }
+        };
+        
+        // Act - Simulate concurrent access by forcing running flag to true
+        StorageScheduler.running = true;
+        boolean result = testScheduler.performPersistToDisk();
+        
+        // Assert
+        assertFalse(result, "Should return false when already running");
+        assertFalse(concurrentAccess[0], "Should prevent concurrent access");
+    }
+    
+    @Test
+    @DisplayName("Should handle database with empty tables list")
+    void testPerformPersistToDiskEmptyTablesList() throws Exception {
+        // Arrange
+        Network.online = true;
+        StorageScheduler.running = false;
+        
+        when(mockDatabaseObject.name).thenReturn("testdb");
+        when(mockDatabaseObject.tables).thenReturn(Collections.emptyList());
+        when(mockDatabaseObject.returnDBObytes()).thenReturn("test data".getBytes());
+        
+        Storage.databases.put("testdb", mockDatabaseObject);
+        
+        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class)) {
+            // Act
+            boolean result = storageScheduler.performPersistToDisk();
+            
+            // Assert
+            assertTrue(result, "Should return true with empty tables list");
+            
+            // Should write database but not attempt to write any tables
+            mockedFiles.verify(() -> Files.write(any(Path.class), any(byte[].class)), times(1));
+            verify(mockTableStorageObject, never()).saveToDisk();
+            verify(mockTableReplicaObject, never()).saveToDisk();
+        }
+    }
+    
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    @DisplayName("Should handle network online state correctly")
+    void testNetworkOnlineState(boolean networkOnline) {
+        // Arrange
+        Network.online = networkOnline;
+        StorageScheduler.running = false;
+        
+        // Act
+        boolean result = storageScheduler.performPersistToDisk();
+        
+        // Assert
+        assertEquals(networkOnline && Storage.databases.isEmpty(), result, "Result should match expected outcome based on network state");
+        assertFalse(StorageScheduler.running, "Running flag should be reset to false");
+    }
+    
+    @Test
+    @DisplayName("Should handle table save to disk failure")
+    void testTableSaveToDiskFailure() throws Exception {
+        // Arrange
+        setupSuccessfulPersistenceScenario();
+        
+        // Make the first save succeed but the second one fail
+        doNothing().when(mockTableStorageObject).saveToDisk();
+        doThrow(new IOException("Failed to save replica")).when(mockTableReplicaObject).saveToDisk();
+        
+        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class)) {
+            // Act
+            boolean result = storageScheduler.performPersistToDisk();
+            
+            // Assert
+            assertFalse(result, "Should return false when table replica save fails");
+            assertFalse(StorageScheduler.running, "Running flag should be reset to false");
+            
+            // Verify the database and table storage were saved but not the replica
+            mockedFiles.verify(() -> Files.write(any(Path.class), any(byte[].class)), times(1));
+            verify(mockTableStorageObject, times(1)).saveToDisk();
+            verify(mockTableReplicaObject, times(1)).saveToDisk();
+        }
+    }
+    
+    @Test
+    @DisplayName("Should handle database with very large number of tables")
+    void testPerformPersistToDiskLargeNumberOfTables() throws Exception {
+        // Arrange
+        Network.online = true;
+        StorageScheduler.running = false;
+        
+        // Create a database with a large number of tables
+        when(mockDatabaseObject.name).thenReturn("largedb");
+        List<String> manyTables = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            manyTables.add("table" + i);
+        }
+        when(mockDatabaseObject.tables).thenReturn(manyTables);
+        when(mockDatabaseObject.returnDBObytes()).thenReturn("large db data".getBytes());
+        
+        Storage.databases.put("largedb", mockDatabaseObject);
+        
+        // Setup mock tables
+        for (int i = 0; i < 100; i++) {
+            TableStorageObject mockStorage = mock(TableStorageObject.class);
+            TableReplicaObject mockReplica = mock(TableReplicaObject.class);
+            
+            when(mockStorage.rows).thenReturn(new HashMap<>());
+            when(mockReplica.row_replicas).thenReturn(new HashMap<>());
+            
+            Storage.tableStorageObjects.put("largedb#table" + i, mockStorage);
+            Storage.tableReplicaObjects.put("largedb#table" + i, mockReplica);
+        }
+        
+        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class)) {
+            // Act
+            boolean result = storageScheduler.performPersistToDisk();
+            
+            // Assert
+            assertTrue(result, "Should return true with large number of tables");
+            assertFalse(StorageScheduler.running, "Running flag should be reset to false");
+            
+            // Verify database was written once
+            mockedFiles.verify(() -> Files.write(any(Path.class), any(byte[].class)), times(1));
+        }
+    }
+    
+    @Test
+    @DisplayName("Should handle multiple threads trying to persist simultaneously")
+    void testMultipleThreadsPersisting() throws Exception {
+        // Arrange
+        setupSuccessfulPersistenceScenario();
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch completionLatch = new CountDownLatch(2);
+        AtomicInteger successCount = new AtomicInteger(0);
+        
+        // Act - Start two threads that try to persist simultaneously
+        for (int i = 0; i < 2; i++) {
+            new Thread(() -> {
+                try {
+                    startLatch.await(); // Wait for signal to start
+                    boolean result = storageScheduler.performPersistToDisk();
+                    if (result) {
+                        successCount.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    completionLatch.countDown();
+                }
+            }).start();
+        }
+        
+        // Signal threads to start
+        startLatch.countDown();
+        
+        // Wait for both threads to complete
+        completionLatch.await(2, TimeUnit.SECONDS);
+        
+        // Assert
+        assertEquals(1, successCount.get(), "Only one thread should succeed in persisting");
+    }
 
     // Helper methods
 
@@ -495,5 +681,102 @@ class StorageSchedulerTest {
         Field field = clazz.getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(null, value);
+    }
+    
+    @Test
+    @DisplayName("Should handle database with special characters in name")
+    void testDatabaseWithSpecialCharacters() throws Exception {
+        // Arrange
+        Network.online = true;
+        StorageScheduler.running = false;
+        
+        // Setup database with special characters in name
+        DatabaseObject specialDb = mock(DatabaseObject.class);
+        when(specialDb.name).thenReturn("special#db$name");
+        when(specialDb.tables).thenReturn(Arrays.asList("special@table"));
+        when(specialDb.returnDBObytes()).thenReturn("special data".getBytes());
+        
+        TableStorageObject specialTableStorage = mock(TableStorageObject.class);
+        TableReplicaObject specialTableReplica = mock(TableReplicaObject.class);
+        when(specialTableStorage.rows).thenReturn(new HashMap<>());
+        when(specialTableReplica.row_replicas).thenReturn(new HashMap<>());
+        
+        Storage.databases.put("special#db$name", specialDb);
+        Storage.tableStorageObjects.put("special#db$name#special@table", specialTableStorage);
+        Storage.tableReplicaObjects.put("special#db$name#special@table", specialTableReplica);
+        
+        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class);
+             MockedStatic<Paths> mockedPaths = mockStatic(Paths.class)) {
+            
+            Path mockPath = mock(Path.class);
+            mockedPaths.when(() -> Paths.get("./test-data/special#db$name.ddbm")).thenReturn(mockPath);
+            
+            // Act
+            boolean result = storageScheduler.performPersistToDisk();
+            
+            // Assert
+            assertTrue(result, "Should return true with special characters in names");
+            
+            // Verify correct path was used
+            mockedPaths.verify(() -> Paths.get("./test-data/special#db$name.ddbm"), times(1));
+            mockedFiles.verify(() -> Files.write(eq(mockPath), any(byte[].class)), times(1));
+        }
+    }
+    
+    @Test
+    @DisplayName("Should handle very large database objects")
+    void testVeryLargeDatabaseObject() throws Exception {
+        // Arrange
+        Network.online = true;
+        StorageScheduler.running = false;
+        
+        // Create a large byte array (1MB)
+        byte[] largeData = new byte[1024 * 1024];
+        Arrays.fill(largeData, (byte) 'X');
+        
+        when(mockDatabaseObject.name).thenReturn("largedb");
+        when(mockDatabaseObject.tables).thenReturn(Arrays.asList("largetable"));
+        when(mockDatabaseObject.returnDBObytes()).thenReturn(largeData);
+        
+        Storage.databases.put("largedb", mockDatabaseObject);
+        Storage.tableStorageObjects.put("largedb#largetable", mockTableStorageObject);
+        Storage.tableReplicaObjects.put("largedb#largetable", mockTableReplicaObject);
+        
+        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class)) {
+            // Act
+            boolean result = storageScheduler.performPersistToDisk();
+            
+            // Assert
+            assertTrue(result, "Should return true with large database object");
+            
+            // Verify large data was written
+            mockedFiles.verify(() -> Files.write(any(Path.class), eq(largeData)), times(1));
+        }
+    }
+    
+    @Test
+    @DisplayName("Should handle persistence during shutdown")
+    void testPersistenceDuringShutdown() throws Exception {
+        // Arrange
+        setupSuccessfulPersistenceScenario();
+        
+        // Simulate a shutdown hook by creating a custom thread
+        Thread shutdownThread = new Thread(() -> {
+            try {
+                storageScheduler.performPersistToDisk();
+            } catch (Exception e) {
+                fail("Should not throw exception during shutdown: " + e.getMessage());
+            }
+        });
+        
+        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class)) {
+            // Act
+            shutdownThread.start();
+            shutdownThread.join(1000); // Wait for thread to complete
+            
+            // Assert
+            assertFalse(shutdownThread.isAlive(), "Shutdown thread should complete");
+            mockedFiles.verify(() -> Files.write(any(Path.class), any(byte[].class)), times(1));
+        }
     }
 }
