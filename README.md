@@ -87,6 +87,7 @@ The StorageScheduler is a critical component in Serengeti responsible for period
 - Saving all database metadata to disk
 - Persisting table storage objects and table replica objects
 - Managing concurrent access to prevent data corruption
+- Using Write-Ahead Logging (WAL) for crash recovery
 
 The StorageScheduler testing is organized into two categories:
 - **Comprehensive Tests**: Thorough validation of all aspects of the component
@@ -127,6 +128,39 @@ CI/CD workflows run automatically on:
 
 For more details on CI/CD integration, see the [CI/CD Integration](docs/testing/StorageSchedulerTestingStrategy.md#cicd-integration) section in the testing strategy document.
 
+## Documentation
+
+Serengeti includes comprehensive documentation to help you understand, use, and contribute to the project:
+
+### User Guides
+
+- [Getting Started](docs/user-guides/GettingStarted.md) - Installation, configuration, and initial usage
+- [Basic Operations](docs/user-guides/BasicOperations.md) - Common database operations and queries
+- [Troubleshooting](docs/user-guides/Troubleshooting.md) - Solutions for common issues
+
+### Architecture Documentation
+
+- [System Architecture](docs/architecture/SystemArchitecture.md) - Overview of the Serengeti system architecture
+- [Component Interactions](docs/architecture/ComponentInteractions.md) - How components interact with each other
+- [Design Decisions](docs/architecture/DesignDecisions.md) - Key design decisions and trade-offs
+
+### Component Documentation
+
+- [Serengeti Core](docs/components/SerengetiCore.md) - The main Serengeti class and system initialization
+- [Storage System](docs/storage/StorageSystem.md) - Overview of the storage system
+- [Write-Ahead Logging](docs/storage/WriteAheadLogging.md) - Crash recovery using Write-Ahead Logging
+- [Query Engine](docs/components/QueryEngine.md) - How the query engine processes queries
+- [Network Component](docs/components/Network.md) - Network communication between nodes
+- [Server Component](docs/components/Server.md) - The server component that handles client requests
+- [Indexing System](docs/indexing/IndexingSystem.md) - Overview of the indexing system
+- [LSM Compaction](docs/lsm/compaction.md) - LSM storage engine compaction process
+
+### Contributing
+
+- [Contributing Guide](CONTRIBUTING.md) - How to contribute to Serengeti
+- [Changelog](CHANGELOG.md) - History of changes to the project
+
+For a complete list of documentation, see the [Documentation Index](docs/README.md).
+
 ## Problems?
 [Create an issue](https://github.com/ao/serengeti/issues/new) if you need help
-
