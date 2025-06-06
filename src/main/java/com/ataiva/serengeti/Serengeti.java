@@ -2,9 +2,13 @@
 
 import com.ataiva.serengeti.index.IndexManager;
 import com.ataiva.serengeti.network.Network;
+import com.ataiva.serengeti.network.NetworkFactory;
 import com.ataiva.serengeti.search.FullTextSearch;
-import com.ataiva.serengeti.server.Server;
 import com.ataiva.serengeti.storage.Storage;
+import com.ataiva.serengeti.storage.StorageFactory;
+import com.ataiva.serengeti.server.Server;
+import com.ataiva.serengeti.server.ServerFactory;
+import com.ataiva.serengeti.server.ServerImpl;
 import com.ataiva.serengeti.storage.StorageReshuffle;
 import com.ataiva.serengeti.storage.StorageScheduler;
 
@@ -24,12 +28,14 @@ public class Serengeti {
         System.out.println("Serengeti Database System");
         
         // Initialize components
-        storage = new Storage();
+        storage = StorageFactory.createStorage(StorageFactory.StorageType.REAL);
         
-        network = new Network();
+        // Create network using factory
+        network = NetworkFactory.createNetwork(NetworkFactory.NetworkType.REAL);
         network.init();
         
-        server = new Server();
+        // Create server using factory
+        server = ServerFactory.createServer(ServerFactory.ServerType.REAL);
         server.init();
         
         storageReshuffle = new StorageReshuffle();
@@ -43,5 +49,29 @@ public class Serengeti {
         
         // Start the server
         server.serve();
+        
+        System.out.println("Serengeti system initialized successfully");
+        
+        // Add shutdown hook to gracefully shutdown components
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("Shutting down Serengeti...");
+            
+            // Shutdown server if it's a ServerImpl
+            if (server instanceof ServerImpl) {
+                ((ServerImpl) server).shutdown();
+            }
+            
+            // Shutdown network
+            if (network != null) {
+                network.shutdown();
+            }
+            
+            // Shutdown storage
+            if (storage != null) {
+                storage.shutdown();
+            }
+            
+            System.out.println("Serengeti shutdown complete");
+        }));
     }
 }
