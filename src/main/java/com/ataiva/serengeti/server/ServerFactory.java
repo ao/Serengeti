@@ -1,6 +1,7 @@
 package com.ataiva.serengeti.server;
 
 import com.ataiva.serengeti.helpers.Globals;
+import com.ataiva.serengeti.security.SecurityManager;
 
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
@@ -31,7 +32,12 @@ public class ServerFactory {
         /**
          * A real Server implementation with enhanced features.
          */
-        REAL
+        REAL,
+        
+        /**
+         * A secure Server implementation with authentication and authorization.
+         */
+        SECURE
     }
     
     /**
@@ -59,6 +65,8 @@ public class ServerFactory {
                 return createMockServer();
             case REAL:
                 return createRealServer(port);
+            case SECURE:
+                return createSecureServer(port);
             case DEFAULT:
             default:
                 return createDefaultServer();
@@ -110,6 +118,33 @@ public class ServerFactory {
                                          long shutdownTimeout, TimeUnit shutdownTimeoutUnit) {
         LOGGER.info("Creating real server with custom configuration");
         return new ServerImpl(port, backlog, threadPoolSize, shutdownTimeout, shutdownTimeoutUnit);
+    }
+    
+    /**
+     * Creates a secure Server instance with authentication, authorization, and HTTPS.
+     *
+     * @param port The port for the server to listen on
+     * @return A SecureServerImpl instance with security configured
+     */
+    public static Server createSecureServer(int port) {
+        LOGGER.info("Creating secure server on port: " + port);
+        return new SecureServerImpl(port, 100, 50, 10, TimeUnit.SECONDS);
+    }
+    
+    /**
+     * Creates a secure Server instance with custom configuration.
+     *
+     * @param port The port for the server to listen on
+     * @param backlog The maximum number of queued incoming connections
+     * @param threadPoolSize The number of threads in the thread pool
+     * @param shutdownTimeout The timeout for graceful shutdown
+     * @param shutdownTimeoutUnit The time unit for the shutdown timeout
+     * @return A SecureServerImpl instance with security configured
+     */
+    public static Server createSecureServer(int port, int backlog, int threadPoolSize,
+                                           long shutdownTimeout, TimeUnit shutdownTimeoutUnit) {
+        LOGGER.info("Creating secure server with custom configuration");
+        return new SecureServerImpl(port, backlog, threadPoolSize, shutdownTimeout, shutdownTimeoutUnit);
     }
     
     /**

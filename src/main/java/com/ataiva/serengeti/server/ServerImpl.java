@@ -3,6 +3,7 @@ package com.ataiva.serengeti.server;
 import com.ataiva.serengeti.Serengeti;
 import com.ataiva.serengeti.helpers.Globals;
 import com.ataiva.serengeti.network.Network;
+import com.ataiva.serengeti.security.SecurityManager;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -41,6 +42,9 @@ public class ServerImpl extends Server {
     private final ConcurrentHashMap<String, Integer> activeConnections;
     private final ConcurrentHashMap<String, Long> lastRequestTimes;
     private boolean isRunning;
+    
+    // Security components
+    private SecurityManager securityManager;
     
     /**
      * Creates a new ServerImpl with default settings.
@@ -105,6 +109,9 @@ public class ServerImpl extends Server {
             // Set up request handlers
             setupRequestHandlers();
             
+            // Initialize security
+            initializeSecurity();
+            
             // Set the executor
             httpServer.setExecutor(threadPool);
             
@@ -154,6 +161,19 @@ public class ServerImpl extends Server {
     }
     
     /**
+     * Initializes security components.
+     */
+    private void initializeSecurity() {
+        // Create security manager
+        securityManager = new SecurityManager();
+        
+        // Configure security for the HTTP server
+        securityManager.configureHttpServer(httpServer);
+        
+        LOGGER.info("Security initialized");
+    }
+    
+    /**
      * Stops the server and releases all resources.
      */
     public void shutdown() {
@@ -174,6 +194,11 @@ public class ServerImpl extends Server {
                 if (!threadPool.awaitTermination(shutdownTimeout, shutdownTimeoutUnit)) {
                     LOGGER.severe("Thread pool did not terminate");
                 }
+            }
+            
+            // Shutdown security components
+            if (securityManager != null) {
+                securityManager.shutdown();
             }
             
             isRunning = false;
@@ -296,13 +321,7 @@ public class ServerImpl extends Server {
     private class AdminHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            // Check for admin authorization
-            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
-            if (authHeader == null || !isValidAdminAuth(authHeader)) {
-                exchange.sendResponseHeaders(401, 0);
-                exchange.close();
-                return;
-            }
+            // Authentication and authorization are now handled by filters
             
             String path = exchange.getRequestURI().getPath();
             String response;
@@ -356,12 +375,6 @@ public class ServerImpl extends Server {
             }
         }
         
-        private boolean isValidAdminAuth(String authHeader) {
-            // In a real implementation, this would validate against stored credentials
-            // For now, we'll use a simple check
-            return authHeader.startsWith("Bearer ") && 
-                   authHeader.substring(7).equals("admin-token");
-        }
     }
     
     /**
