@@ -63,6 +63,14 @@ public class QueryOperation {
     }
     
     /**
+     * Get the operation type (alias for getOperationType for compatibility)
+     * @return Operation type
+     */
+    public QueryOperationType getType() {
+        return operationType;
+    }
+    
+    /**
      * Set the operation type
      * @param operationType Operation type
      */

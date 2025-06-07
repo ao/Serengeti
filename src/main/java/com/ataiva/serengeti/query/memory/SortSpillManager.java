@@ -10,8 +10,7 @@ import java.util.PriorityQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.ataiva.serengeti.performance.PerformanceMetric;
-import com.ataiva.serengeti.performance.PerformanceDataCollector;
+import com.ataiva.serengeti.performance.PerformanceProfiler;
 
 /**
  * SortSpillManager is a concrete implementation of SpillManager
@@ -36,8 +35,8 @@ public class SortSpillManager extends SpillManager {
     // Current chunk being processed
     private int currentChunk;
     
-    // Performance data collector
-    private final PerformanceDataCollector performanceCollector;
+    // Performance profiler
+    private final PerformanceProfiler profiler;
     
     // Maximum number of rows per chunk
     private final int maxRowsPerChunk;
@@ -51,16 +50,16 @@ public class SortSpillManager extends SpillManager {
      * @param performanceCollector Performance data collector
      * @param maxRowsPerChunk Maximum number of rows per chunk
      */
-    public SortSpillManager(String queryId, String operationId, 
+    public SortSpillManager(String queryId, String operationId,
                            List<List<Object[]>> chunks,
                            Comparator<Object[]> comparator,
-                           PerformanceDataCollector performanceCollector,
+                           PerformanceProfiler profiler,
                            int maxRowsPerChunk) {
         super(queryId, operationId);
         this.chunks = chunks;
         this.comparator = comparator;
         this.currentChunk = 0;
-        this.performanceCollector = performanceCollector;
+        this.profiler = profiler != null ? profiler : PerformanceProfiler.getInstance();
         this.maxRowsPerChunk = maxRowsPerChunk;
     }
     
@@ -97,11 +96,7 @@ public class SortSpillManager extends SpillManager {
                 spillCount++;
                 
                 // Record performance metrics
-                if (performanceCollector != null) {
-                    performanceCollector.recordMetric(
-                        new PerformanceMetric(METRIC_SPILL_SIZE, queryId, operationId, chunkSize)
-                    );
-                }
+                profiler.recordMemoryUsage("query", "sort_spill", METRIC_SPILL_SIZE, chunkSize);
                 
                 LOGGER.fine("Spilled chunk " + currentChunk + " to " + spillFile + 
                            " (" + chunkSize + " bytes)");
@@ -119,11 +114,7 @@ public class SortSpillManager extends SpillManager {
             long endTime = System.nanoTime();
             
             // Record performance metrics
-            if (performanceCollector != null) {
-                performanceCollector.recordMetric(
-                    new PerformanceMetric(METRIC_SPILL_TIME, queryId, operationId, endTime - startTime)
-                );
-            }
+            profiler.recordLatency("query", "sort_spill", METRIC_SPILL_TIME, (endTime - startTime) / 1_000_000.0);
         }
     }
     
@@ -178,11 +169,7 @@ public class SortSpillManager extends SpillManager {
             long endTime = System.nanoTime();
             
             // Record performance metrics
-            if (performanceCollector != null) {
-                performanceCollector.recordMetric(
-                    new PerformanceMetric(METRIC_READ_TIME, queryId, operationId, endTime - startTime)
-                );
-            }
+            profiler.recordLatency("query", "sort_read", METRIC_READ_TIME, (endTime - startTime) / 1_000_000.0);
         }
     }
     
@@ -269,11 +256,7 @@ public class SortSpillManager extends SpillManager {
             long endTime = System.nanoTime();
             
             // Record performance metrics
-            if (performanceCollector != null) {
-                performanceCollector.recordMetric(
-                    new PerformanceMetric(METRIC_MERGE_TIME, queryId, operationId, endTime - startTime)
-                );
-            }
+            profiler.recordLatency("query", "sort_merge", METRIC_MERGE_TIME, (endTime - startTime) / 1_000_000.0);
         }
     }
     
@@ -340,11 +323,11 @@ public class SortSpillManager extends SpillManager {
         chunks.add(chunk);
         
         return new SortSpillManager(
-            queryId, 
-            operationId, 
-            chunks, 
+            queryId,
+            operationId,
+            chunks,
             (a, b) -> 0, // No-op comparator
-            null, 
+            PerformanceProfiler.getInstance(),
             1000
         );
     }

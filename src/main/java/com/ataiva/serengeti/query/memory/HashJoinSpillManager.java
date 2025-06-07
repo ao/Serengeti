@@ -10,8 +10,7 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.ataiva.serengeti.performance.PerformanceMetric;
-import com.ataiva.serengeti.performance.PerformanceDataCollector;
+import com.ataiva.serengeti.performance.PerformanceProfiler;
 
 /**
  * HashJoinSpillManager is a concrete implementation of SpillManager
@@ -31,8 +30,8 @@ public class HashJoinSpillManager extends SpillManager {
     // Current partition being processed
     private int currentPartition;
     
-    // Performance data collector
-    private final PerformanceDataCollector performanceCollector;
+    // Performance profiler
+    private final PerformanceProfiler profiler;
     
     /**
      * Constructor
@@ -41,13 +40,13 @@ public class HashJoinSpillManager extends SpillManager {
      * @param partitions Hash join partitions
      * @param performanceCollector Performance data collector
      */
-    public HashJoinSpillManager(String queryId, String operationId, 
+    public HashJoinSpillManager(String queryId, String operationId,
                                List<Map<Object, List<Object[]>>> partitions,
-                               PerformanceDataCollector performanceCollector) {
+                               PerformanceProfiler profiler) {
         super(queryId, operationId);
         this.partitions = partitions;
         this.currentPartition = 0;
-        this.performanceCollector = performanceCollector;
+        this.profiler = profiler != null ? profiler : PerformanceProfiler.getInstance();
     }
     
     /**
@@ -79,11 +78,7 @@ public class HashJoinSpillManager extends SpillManager {
                 spillCount++;
                 
                 // Record performance metrics
-                if (performanceCollector != null) {
-                    performanceCollector.recordMetric(
-                        new PerformanceMetric(METRIC_SPILL_SIZE, queryId, operationId, partitionSize)
-                    );
-                }
+                profiler.recordMemoryUsage("query", "hash_join_spill", METRIC_SPILL_SIZE, partitionSize);
                 
                 LOGGER.fine("Spilled partition " + currentPartition + " to " + spillFile + 
                            " (" + partitionSize + " bytes)");
@@ -101,11 +96,7 @@ public class HashJoinSpillManager extends SpillManager {
             long endTime = System.nanoTime();
             
             // Record performance metrics
-            if (performanceCollector != null) {
-                performanceCollector.recordMetric(
-                    new PerformanceMetric(METRIC_SPILL_TIME, queryId, operationId, endTime - startTime)
-                );
-            }
+            profiler.recordLatency("query", "hash_join_spill", METRIC_SPILL_TIME, (endTime - startTime) / 1_000_000.0);
         }
     }
     
@@ -160,11 +151,7 @@ public class HashJoinSpillManager extends SpillManager {
             long endTime = System.nanoTime();
             
             // Record performance metrics
-            if (performanceCollector != null) {
-                performanceCollector.recordMetric(
-                    new PerformanceMetric(METRIC_READ_TIME, queryId, operationId, endTime - startTime)
-                );
-            }
+            profiler.recordLatency("query", "hash_join_read", METRIC_READ_TIME, (endTime - startTime) / 1_000_000.0);
         }
     }
     
@@ -203,6 +190,6 @@ public class HashJoinSpillManager extends SpillManager {
         Map<Object, List<Object[]>> partition = new HashMap<>();
         partitions.add(partition);
         
-        return new HashJoinSpillManager(queryId, operationId, partitions, null);
+        return new HashJoinSpillManager(queryId, operationId, partitions, PerformanceProfiler.getInstance());
     }
 }

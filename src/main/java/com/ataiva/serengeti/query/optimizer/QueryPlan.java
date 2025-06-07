@@ -44,6 +44,9 @@ public class QueryPlan {
     // Explanation of the plan for debugging/logging
     private String explanation;
     
+    // Estimated memory usage in bytes
+    private long estimatedMemoryUsage;
+    
     /**
      * Default constructor
      */
@@ -60,6 +63,7 @@ public class QueryPlan {
         this.estimatedCost = 0;
         this.operations = new ArrayList<>();
         this.explanation = "";
+        this.estimatedMemoryUsage = 0;
     }
     
     /**
@@ -260,6 +264,22 @@ public class QueryPlan {
      */
     public void setExplanation(String explanation) {
         this.explanation = explanation;
+    }
+    
+    /**
+     * Get the estimated memory usage in bytes
+     * @return Estimated memory usage
+     */
+    public long getEstimatedMemoryUsage() {
+        return estimatedMemoryUsage;
+    }
+    
+    /**
+     * Set the estimated memory usage in bytes
+     * @param estimatedMemoryUsage Estimated memory usage
+     */
+    public void setEstimatedMemoryUsage(long estimatedMemoryUsage) {
+        this.estimatedMemoryUsage = estimatedMemoryUsage;
     }
     
     /**

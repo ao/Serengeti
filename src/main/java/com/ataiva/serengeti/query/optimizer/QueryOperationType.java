@@ -50,6 +50,11 @@ public enum QueryOperationType {
     HASH_JOIN_PROBE,
     
     /**
+     * Probe hash table - alias for HASH_JOIN_PROBE for backward compatibility
+     */
+    PROBE_HASH_TABLE,
+    
+    /**
      * Sort - sorts rows based on columns
      */
     SORT,
