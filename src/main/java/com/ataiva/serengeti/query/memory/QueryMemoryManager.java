@@ -364,6 +364,50 @@ public class QueryMemoryManager {
     }
     
     /**
+     * Optimize memory usage for a query plan
+     * This method analyzes the query plan and adjusts memory allocations
+     * to optimize performance while staying within memory constraints.
+     *
+     * @param plan The query plan to optimize
+     * @return The optimized query plan
+     */
+    public com.ataiva.serengeti.query.optimizer.QueryPlan optimizeMemoryUsage(
+            com.ataiva.serengeti.query.optimizer.QueryPlan plan) {
+        String timerId = PerformanceProfiler.getInstance().startTimer("query", "memory-optimize");
+        try {
+            // Get the estimated memory usage from the plan
+            long estimatedMemory = plan.getEstimatedMemoryUsage();
+            
+            // If the plan doesn't have memory usage estimates, return it unchanged
+            if (estimatedMemory <= 0) {
+                return plan;
+            }
+            
+            // Calculate available memory
+            long availableMemory = getQueryPoolMemory() - bufferPool.getAllocatedMemory();
+            
+            // If we have enough memory, return the plan unchanged
+            if (estimatedMemory <= availableMemory) {
+                LOGGER.fine("Query plan memory usage (" + estimatedMemory +
+                           " bytes) is within available memory (" + availableMemory + " bytes)");
+                return plan;
+            }
+            
+            // We need to optimize memory usage
+            LOGGER.info("Optimizing query plan memory usage: estimated=" + estimatedMemory +
+                       " bytes, available=" + availableMemory + " bytes");
+            
+            // Set the memory budget in the plan
+            plan.setEstimatedMemoryUsage(Math.min(estimatedMemory, availableMemory));
+            
+            // Return the optimized plan
+            return plan;
+        } finally {
+            PerformanceProfiler.getInstance().stopTimer(timerId, "query.memory-optimize-time");
+        }
+    }
+    
+    /**
      * Inner class representing a query's memory context
      */
     private static class QueryMemoryContext {

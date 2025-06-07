@@ -98,7 +98,7 @@ public class EnhancedQueryPlanGenerator {
                                        String selectColumns, String whereColumn, 
                                        String whereValue, String whereOperator) {
         String queryId = UUID.randomUUID().toString();
-        String timerId = profiler.startTimer("query", "optimize", queryId);
+        String timerId = profiler.startTimer("query", "optimize");
         
         try {
             List<QueryPlan> candidatePlans = new ArrayList<>();
@@ -178,7 +178,7 @@ public class EnhancedQueryPlanGenerator {
                                      Map<String, String> whereColumns,
                                      Map<String, String> whereValues) {
         String queryId = UUID.randomUUID().toString();
-        String timerId = profiler.startTimer("query", "optimize", queryId);
+        String timerId = profiler.startTimer("query", "optimize");
         
         try {
             List<QueryPlan> candidatePlans = new ArrayList<>();
