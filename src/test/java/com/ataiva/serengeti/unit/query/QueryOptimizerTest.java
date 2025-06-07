@@ -220,7 +220,7 @@ class QueryOptimizerTest extends TestBase {
      * Generate a random database name for testing
      * @return Random database name
      */
-    private String generateRandomDatabaseName() {
+    protected String generateRandomDatabaseName() {
         return "test_db_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
     }
     
@@ -228,7 +228,7 @@ class QueryOptimizerTest extends TestBase {
      * Generate a random table name for testing
      * @return Random table name
      */
-    private String generateRandomTableName() {
+    protected String generateRandomTableName() {
         return "test_table_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
     }
 }

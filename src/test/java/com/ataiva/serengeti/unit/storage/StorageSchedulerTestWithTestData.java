@@ -10,6 +10,8 @@ import com.ataiva.serengeti.storage.StorageScheduler;
 import com.ataiva.serengeti.testdata.StorageSchedulerTestData;
 import com.ataiva.serengeti.testdata.StorageSchedulerTestDataCleaner;
 import com.ataiva.serengeti.testdata.StorageSchedulerTestDataLoader;
+import com.ataiva.serengeti.testdata.StorageSchedulerTestDataLoader.ErrorScenario;
+import com.ataiva.serengeti.testdata.StorageSchedulerTestDataLoader.PerformanceScenario;
 import com.ataiva.serengeti.utils.TestBase;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +27,8 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -55,12 +59,11 @@ class StorageSchedulerTestWithTestData extends TestBase {
         storageScheduler = new StorageScheduler();
         
         // Save original state
-        originalStorageState = Map.of(
-            "databases", Storage.databases,
-            "tableStorageObjects", Storage.tableStorageObjects,
-            "tableReplicaObjects", Storage.tableReplicaObjects,
-            "networkOnline", Network.online
-        );
+        originalStorageState = new HashMap<>();
+        originalStorageState.put("databases", Storage.databases);
+        originalStorageState.put("tableStorageObjects", Storage.tableStorageObjects);
+        originalStorageState.put("tableReplicaObjects", Storage.tableReplicaObjects);
+        originalStorageState.put("networkOnline", Network.online);
         
         originalDataPath = Globals.data_path;
         
@@ -230,11 +233,11 @@ class StorageSchedulerTestWithTestData extends TestBase {
         @DisplayName("Should handle error scenarios from fixture")
         void testErrorScenarios() throws Exception {
             // Load error scenarios from fixture
-            var errorScenarios = StorageSchedulerTestDataLoader.loadErrorScenarios();
+            List<ErrorScenario> errorScenarios = StorageSchedulerTestDataLoader.loadErrorScenarios();
             assertFalse(errorScenarios.isEmpty(), "Should load error scenarios from fixture");
             
             // Test the first error scenario as an example
-            var scenario = errorScenarios.get(0);
+            ErrorScenario scenario = errorScenarios.get(0);
             assertEquals("disk_write_failure", scenario.name, "Should have correct scenario name");
             assertEquals("IOException", scenario.errorType, "Should have correct error type");
         }
@@ -251,18 +254,24 @@ class StorageSchedulerTestWithTestData extends TestBase {
         @DisplayName("Should measure persistence performance with different database sizes")
         void testPerformanceWithDifferentSizes() throws Exception {
             // Load performance scenarios from fixture
-            var performanceScenarios = StorageSchedulerTestDataLoader.loadPerformanceScenarios();
+            List<PerformanceScenario> performanceScenarios = StorageSchedulerTestDataLoader.loadPerformanceScenarios();
             assertFalse(performanceScenarios.isEmpty(), "Should load performance scenarios from fixture");
             
             // Test with small database scenario
-            var smallDbScenario = performanceScenarios.stream()
+            PerformanceScenario smallDbScenario = performanceScenarios.stream()
                 .filter(s -> s.name.equals("small_database"))
                 .findFirst()
                 .orElseThrow();
             
+            // Save original state
+            Map<String, Object> originalState = new HashMap<>();
+            originalState.put("databases", Storage.databases);
+            originalState.put("tableStorageObjects", Storage.tableStorageObjects);
+            originalState.put("tableReplicaObjects", Storage.tableReplicaObjects);
+            originalState.put("networkOnline", Network.online);
+            
             // Create test data for the scenario
             Map<String, Object> testEnv = StorageSchedulerTestDataLoader.createPerformanceTestData(smallDbScenario);
-            Map<String, Object> originalState = StorageSchedulerTestDataCleaner.restoreStorageState(null);
             
             try {
                 // Set up Storage with test data

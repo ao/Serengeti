@@ -211,4 +211,12 @@ public class BufferPool {
         
         return stats;
     }
+    
+    /**
+     * Get the total size (capacity) of the buffer pool
+     * @return Total size in bytes
+     */
+    public long getTotalSize() {
+        return capacity;
+    }
 }

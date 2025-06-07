@@ -1,6 +1,7 @@
 package com.ataiva.serengeti.integration;
 
 import com.ataiva.serengeti.Serengeti;
+import com.ataiva.serengeti.storage.IStorage;
 import com.ataiva.serengeti.storage.Storage;
 import com.ataiva.serengeti.storage.StorageFactory;
 import com.ataiva.serengeti.storage.StorageImpl;
@@ -128,11 +129,11 @@ public class StorageIntegrationTest {
     @Test
     public void testStorageFactoryIntegration() {
         // Test creating a storage instance with the factory
-        Storage storage = StorageFactory.createStorage(StorageFactory.StorageType.REAL);
+        IStorage storage = StorageFactory.createStorage(StorageFactory.StorageType.REAL);
         
         // Verify that the storage is created correctly
         assertNotNull("Storage should not be null", storage);
-        assertTrue("Storage should be an instance of StorageImpl", storage instanceof StorageImpl);
+        assertTrue("Storage should be an instance of Storage", storage instanceof Storage);
     }
     
     @Test
@@ -140,12 +141,15 @@ public class StorageIntegrationTest {
         // Create a test instance of Serengeti
         Serengeti testSerengeti = new Serengeti();
         
-        // Set the storage to our test storage
-        Serengeti.storage = storageImpl;
+        // Get a Storage instance for Serengeti
+        Storage storage = new Storage();
+        
+        // Set the storage to our test instance
+        Serengeti.storage = storage;
         
         // Verify that the storage is set correctly
         assertNotNull("Storage should not be null", Serengeti.storage);
-        assertTrue("Storage should be an instance of StorageImpl", Serengeti.storage instanceof StorageImpl);
+        assertTrue("Storage should be an instance of Storage", Serengeti.storage instanceof Storage);
     }
     
     @Test

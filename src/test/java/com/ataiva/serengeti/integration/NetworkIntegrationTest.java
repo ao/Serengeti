@@ -115,7 +115,7 @@ public class NetworkIntegrationTest {
         networkImpl.init();
         
         // Verify that the network is initialized
-        assertTrue("Network should be initialized", networkImpl.initialized);
+        assertTrue("Network should be initialized", networkImpl.isInitialized());
     }
     
     @Test

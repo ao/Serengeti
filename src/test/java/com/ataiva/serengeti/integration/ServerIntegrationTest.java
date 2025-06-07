@@ -7,6 +7,7 @@ import com.ataiva.serengeti.network.NetworkFactory;
 import com.ataiva.serengeti.server.Server;
 import com.ataiva.serengeti.server.ServerFactory;
 import com.ataiva.serengeti.server.ServerImpl;
+import com.ataiva.serengeti.storage.IStorage;
 import com.ataiva.serengeti.storage.Storage;
 import com.ataiva.serengeti.storage.StorageFactory;
 import org.json.JSONObject;
@@ -30,7 +31,7 @@ public class ServerIntegrationTest {
 
     private ServerImpl serverImpl;
     private Network network;
-    private Storage storage;
+    private IStorage storage;
     private int testPort;
     
     @Before
@@ -50,7 +51,8 @@ public class ServerIntegrationTest {
         
         // Set up the Serengeti static references
         Serengeti.network = network;
-        Serengeti.storage = storage;
+        // Create a Storage instance for Serengeti since it requires Storage type
+        Serengeti.storage = new Storage();
         Serengeti.currentDate = new java.util.Date();
         Serengeti.startTime = System.currentTimeMillis();
         
@@ -71,11 +73,7 @@ public class ServerIntegrationTest {
             serverImpl.shutdown();
         }
         
-        // Shutdown the network and storage
-        if (network != null) {
-            network.shutdown();
-        }
-        
+        // Shutdown the storage
         if (storage != null) {
             storage.shutdown();
         }

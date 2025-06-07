@@ -5,6 +5,7 @@ import com.ataiva.serengeti.query.QueryEngine;
 import com.ataiva.serengeti.utils.TestBase;
 import org.json.JSONObject;
 import org.junit.jupiter.api.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.ArrayList;
 import java.util.List;

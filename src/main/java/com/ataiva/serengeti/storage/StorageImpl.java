@@ -16,7 +16,7 @@ import java.util.stream.Stream;
  * A robust implementation of the Storage interface for the Serengeti distributed database system.
  * This class provides persistent storage using a Log-Structured Merge (LSM) tree approach.
  */
-public class StorageImpl implements Storage {
+public class StorageImpl implements IStorage {
 
     private static final Logger LOGGER = Logger.getLogger(StorageImpl.class.getName());
     
@@ -160,7 +160,9 @@ public class StorageImpl implements Storage {
      * Schedules periodic compaction of the storage files.
      */
     private void scheduleCompaction() {
-        executor.scheduleWithFixedDelay(() -> {
+        // Use ScheduledExecutorService for scheduling tasks
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+        scheduler.scheduleWithFixedDelay(() -> {
             try {
                 compact();
             } catch (Exception e) {
@@ -350,7 +352,11 @@ public class StorageImpl implements Storage {
      * 
      * @return A list of database names
      */
-    @Override
+    /**
+     * Lists all databases.
+     *
+     * @return A list of database names
+     */
     public List<String> listDatabases() {
         checkInitialized();
         
@@ -492,7 +498,12 @@ public class StorageImpl implements Storage {
      * @param database The database name
      * @return A list of table names
      */
-    @Override
+    /**
+     * Lists all tables in a database.
+     *
+     * @param database The database name
+     * @return A list of table names
+     */
     public List<String> listTables(String database) {
         checkInitialized();
         
@@ -835,66 +846,206 @@ public class StorageImpl implements Storage {
      * 
      * @return A JSONObject containing metadata about all databases and tables
      */
+    /**
+     * Gets metadata about all databases and tables.
+     *
+     * @return A Map containing metadata about all databases and tables
+     */
     @Override
-    public JSONObject getDatabasesTablesMeta() {
+    public Map<String, List<String>> getDatabasesTablesMeta() {
         checkInitialized();
         
-        JSONObject meta = new JSONObject();
-        JSONObject databases = new JSONObject();
+        Map<String, List<String>> result = new HashMap<>();
         
         try {
             // Get all databases
             List<String> databaseList = listDatabases();
             
             for (String database : databaseList) {
-                JSONObject databaseMeta = new JSONObject();
-                JSONObject tables = new JSONObject();
-                
                 // Get all tables in the database
                 List<String> tableList = listTables(database);
-                
-                for (String table : tableList) {
-                    JSONObject tableMeta = new JSONObject();
-                    
-                    // Get table metadata
-                    Path tablePath = getTablePath(database, table);
-                    Path metaFile = tablePath.resolve("meta.json");
-                    
-                    if (Files.exists(metaFile)) {
-                        try (BufferedReader reader = Files.newBufferedReader(metaFile)) {
-                            String line = reader.readLine();
-                            if (line != null) {
-                                tableMeta = new JSONObject(line);
-                            }
-                        }
-                    }
-                    
-                    // Count records in the table
-                    Path dataFile = tablePath.resolve("data.lsm");
-                    long recordCount = 0;
-                    
-                    if (Files.exists(dataFile)) {
-                        try (BufferedReader reader = Files.newBufferedReader(dataFile)) {
-                            while (reader.readLine() != null) {
-                                recordCount++;
-                            }
-                        }
-                    }
-                    
-                    tableMeta.put("recordCount", recordCount);
-                    tables.put(table, tableMeta);
-                }
-                
-                databaseMeta.put("tables", tables);
-                databases.put(database, databaseMeta);
+                result.put(database, tableList);
             }
             
-            meta.put("databases", databases);
-            return meta;
+            return result;
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error getting databases and tables metadata", e);
-            return new JSONObject();
+            return Collections.emptyMap();
         }
+    }
+    
+    /**
+     * Get a List of existing Databases
+     * @return List of database names
+     */
+    @Override
+    public List<String> getDatabases() {
+        return listDatabases();
+    }
+    
+    /**
+     * Get Databases from file system
+     * @param getFromFileSystem Whether to get from file system
+     * @return List of database names
+     */
+    @Override
+    public List<String> getDatabases(boolean getFromFileSystem) {
+        if (getFromFileSystem) {
+            // Force reading from file system
+            try {
+                File dir = new File(Globals.data_path);
+                File[] files = dir.listFiles((dir1, name) -> name.endsWith(".meta"));
+                
+                List<String> databases = new ArrayList<>();
+                if (files != null) {
+                    for (File file : files) {
+                        databases.add(file.getName().replace(".meta", ""));
+                    }
+                }
+                return databases;
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "Error listing databases from file system", e);
+                return Collections.emptyList();
+            }
+        } else {
+            // Use in-memory list
+            return listDatabases();
+        }
+    }
+    
+    /**
+     * Get a list of tables in a database
+     * @param db Database name
+     * @return List of table names
+     */
+    @Override
+    public List<String> getTables(String db) {
+        return listTables(db);
+    }
+    
+    /**
+     * Insert data into a table with replication flag
+     * @param db Database name
+     * @param table Table name
+     * @param json Data to insert
+     * @param isReplicationAction Whether this is a replication action
+     * @return Storage response object
+     */
+    @Override
+    public StorageResponseObject insert(String db, String table, JSONObject json, boolean isReplicationAction) {
+        // For now, ignore the replication flag and use the standard insert
+        return insert(db, table, json);
+    }
+    
+    /**
+     * Update data in a table with replication flag
+     * @param db Database name
+     * @param table Table name
+     * @param update_key Update key
+     * @param update_val Update value
+     * @param where_col Where column
+     * @param where_val Where value
+     * @param isReplicationAction Whether this is a replication action
+     * @return Whether the update was successful
+     */
+    @Override
+    public boolean update(String db, String table, String update_key, String update_val, String where_col, String where_val, boolean isReplicationAction) {
+        // For now, ignore the replication flag and use the standard update
+        return update(db, table, update_key, update_val, where_col, where_val);
+    }
+    
+    /**
+     * Delete data from a table with replication flag
+     * @param db Database name
+     * @param table Table name
+     * @param where_col Where column
+     * @param where_val Where value
+     * @param isReplicationAction Whether this is a replication action
+     * @return Whether the delete was successful
+     */
+    @Override
+    public boolean delete(String db, String table, String where_col, String where_val, boolean isReplicationAction) {
+        // For now, ignore the replication flag and use the standard delete
+        return delete(db, table, where_col, where_val);
+    }
+    
+    /**
+     * Create a new database with replication flag
+     * @param db Database name
+     * @param isReplicationAction Whether this is a replication action
+     * @return Whether the database was created
+     */
+    @Override
+    public boolean createDatabase(String db, boolean isReplicationAction) {
+        // For now, ignore the replication flag and use the standard createDatabase
+        return createDatabase(db);
+    }
+    
+    /**
+     * Create a new table with replication flag
+     * @param db Database name
+     * @param table Table name
+     * @param isReplicationAction Whether this is a replication action
+     * @return Whether the table was created
+     */
+    @Override
+    public boolean createTable(String db, String table, boolean isReplicationAction) {
+        // For now, ignore the replication flag and use the standard createTable
+        return createTable(db, table);
+    }
+    
+    /**
+     * Delete everything in the storage
+     */
+    @Override
+    public void deleteEverything() {
+        try {
+            // Delete all files in the data directory
+            Files.walk(dataDirectory)
+                .sorted(Comparator.reverseOrder())
+                .map(Path::toFile)
+                .forEach(File::delete);
+            
+            // Recreate the data directory
+            Files.createDirectories(dataDirectory);
+            
+            // Clear the cache
+            if (enableCache) {
+                cache.clear();
+                cacheAccessTimes.clear();
+            }
+            
+            LOGGER.info("Deleted everything in storage");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error deleting everything", e);
+        }
+    }
+    
+    /**
+     * Load Meta Databases to Memory
+     */
+    @Override
+    public void loadMetaDatabasesToMemory() {
+        // This is a stub implementation
+        LOGGER.info("loadMetaDatabasesToMemory called - stub implementation");
+    }
+    
+    /**
+     * Load All Storage Objects to Memory
+     */
+    @Override
+    public void loadAllStorageObjectsToMemory() {
+        // This is a stub implementation
+        LOGGER.info("loadAllStorageObjectsToMemory called - stub implementation");
+    }
+    
+    /**
+     * Load All Replica Objects to Memory
+     */
+    @Override
+    public void loadAllReplicaObjectsToMemory() {
+        // This is a stub implementation
+        LOGGER.info("loadAllReplicaObjectsToMemory called - stub implementation");
     }
     
     /**
