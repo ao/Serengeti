@@ -70,7 +70,7 @@ public class StorageSchedulerPropertyTest extends TestBase {
     private PrintStream originalOut;
 
     @BeforeProperty
-    void setUp() throws Exception {
+    public void setUp() throws Exception {
         super.setUp(); // Initialize TestBase components
         mockCloseable = MockitoAnnotations.openMocks(this);
         storageScheduler = new StorageScheduler();
@@ -98,7 +98,7 @@ public class StorageSchedulerPropertyTest extends TestBase {
     }
 
     @AfterProperty
-    void tearDown() throws Exception {
+    public void tearDown() throws Exception {
         // Restore original static state
         Storage.databases = originalDatabases;
         Storage.tableStorageObjects = originalTableStorageObjects;

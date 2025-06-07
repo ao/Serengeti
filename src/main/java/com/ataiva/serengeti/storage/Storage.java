@@ -16,7 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 
-public class Storage {
+public class Storage implements IStorage {
 
     public static Map<String, DatabaseObject> databases = new HashMap<>();
     public static Map<String, TableStorageObject> tableStorageObjects = new HashMap<>();
@@ -31,6 +31,7 @@ public class Storage {
     /***
      * Load Meta Databases to Memory
      */
+    @Override
     public void loadMetaDatabasesToMemory() {
         List<String> dbs = getDatabases(true);
 
@@ -48,6 +49,7 @@ public class Storage {
      * Load All Storage Objects to Memory
      * Requires the `databases` variable to be populated
      */
+    @Override
     public void loadAllStorageObjectsToMemory() {
         for (String key: databases.keySet()) {
             String dbName = databases.get(key).name;
@@ -63,6 +65,7 @@ public class Storage {
      * Load All Replica Objects to Memory
      * Requires the `databases` variable to be populated
      */
+    @Override
     public void loadAllReplicaObjectsToMemory() {
         for (String key: databases.keySet()) {
             String dbName = databases.get(key).name;
@@ -79,6 +82,7 @@ public class Storage {
      * Get a List of existing Databases (use in-memory)
      * @return List
      */
+    @Override
     public List<String> getDatabases() {
         return getDatabases(false);
     }
@@ -88,6 +92,7 @@ public class Storage {
      * @param getFromFileSystem
      * @return
      */
+    @Override
     public List<String> getDatabases(boolean getFromFileSystem) {
         File dir = new File(Globals.data_path);
         File[] files = dir.listFiles((dir1, name) -> name.endsWith(Globals.meta_extention));
@@ -105,6 +110,7 @@ public class Storage {
      * Scan meta information and return a list of Databases and Tables included
      * @return
      */
+    @Override
     public Map<String, List<String>> getDatabasesTablesMeta() {
         File dir = new File(Globals.data_path);
         File[] files = dir.listFiles((dir1, name) -> name.endsWith(Globals.meta_extention));
@@ -129,6 +135,7 @@ public class Storage {
      * @param val
      * @return
      */
+    @Override
     public List<String> select(String db, String table, String selectWhat, String col, String val) {
         try {
             DatabaseObject dbo = databases.get(db);
@@ -201,9 +208,12 @@ public class Storage {
      * @param json
      * @return StorageResponseObject
      */
+    @Override
     public StorageResponseObject insert(String db, String table, JSONObject json) {
         return insert(db, table, json, false);
     }
+    
+    @Override
     public StorageResponseObject insert(String db, String table, JSONObject json, boolean isReplicationAction) {
         StorageResponseObject sro = new StorageResponseObject();
 
@@ -296,9 +306,12 @@ public class Storage {
      * @param where_val
      * @return boolean
      */
+    @Override
     public boolean update(String db, String table, String update_key, String update_val, String where_col, String where_val) {
         return update(db, table, update_key, update_val, where_col, where_val, false);
     }
+    
+    @Override
     public boolean update(String db, String table, String update_key, String update_val, String where_col, String where_val, boolean isReplicationAction) {
         try {
             if (tableExists(db, table)) {
@@ -373,9 +386,12 @@ public class Storage {
      * @param where_val
      * @return boolean
      */
+    @Override
     public boolean delete(String db, String table, String where_col, String where_val) {
         return delete(db, table, where_col, where_val, false);
     }
+    
+    @Override
     public boolean delete(String db, String table, String where_col, String where_val, boolean isReplicationAction) {
         try {
 
@@ -453,6 +469,7 @@ public class Storage {
      * @param db
      * @return boolean
      */
+    @Override
     public boolean databaseExists(String db) {
         File f = new File(Globals.data_path + db + Globals.meta_extention);
         return f.exists();
@@ -463,9 +480,12 @@ public class Storage {
      * @param db
      * @return boolean
      */
+    @Override
     public boolean createDatabase(String db) {
         return createDatabase(db, false);
     }
+    
+    @Override
     public boolean createDatabase(String db, boolean isReplicationAction) {
         try {
             DatabaseObject dbo = new DatabaseObject();
@@ -495,23 +515,33 @@ public class Storage {
      * @param db
      * @return boolean
      */
+    @Override
     public boolean dropDatabase(String db) {
         return dropDatabase(db, false);
     }
+    
     public boolean dropDatabase(String db, boolean isReplicationAction) {
         try {
-            Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-            boolean deleted = Files.deleteIfExists(file);
+            if (databaseExists(db)) {
+                File f = new File(Globals.data_path + db + Globals.meta_extention);
+                f.delete();
 
-            File _db_dir = new File(Globals.data_path + db);
-            if (_db_dir.exists()) Globals.deleteDirectory(_db_dir);
+                File dir = new File(Globals.data_path + db);
+                if (dir.exists() && dir.isDirectory()) {
+                    File[] files = dir.listFiles();
+                    for (File file : files) {
+                        file.delete();
+                    }
+                    dir.delete();
+                }
 
-            loadMetaDatabasesToMemory();
+                loadMetaDatabasesToMemory();
 
-            if (!isReplicationAction)
-                QueryLog.localAppend(new JSONObject().put("type", "dropDatabase").put("db", db).toString());
+                if (!isReplicationAction)
+                    QueryLog.localAppend(new JSONObject().put("type", "dropDatabase").put("db", db).toString());
 
-            return deleted;
+                return true;
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -524,32 +554,38 @@ public class Storage {
      * @param table
      * @return boolean
      */
+    @Override
     public boolean createTable(String db, String table) {
         return createTable(db, table, false);
     }
+    
+    @Override
     public boolean createTable(String db, String table, boolean isReplicationAction) {
         try {
-            Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-//            DatabaseObject dbo = new DatabaseObject().loadExisting(file);
+            if (!databaseExists(db)) {
+                createDatabase(db);
+            }
+
             DatabaseObject dbo = databases.get(db);
+            if (dbo != null) {
+                if (!dbo.tables.contains(table)) {
+                    dbo.tables.add(table);
+                    byte[] data = dbo.returnDBObytes();
+                    Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
+                    Files.write(file, data);
 
-            Serengeti.storage.createTablePathIfNotExists(db, table);
+                    //create directory path if not exists
+                    createTablePathIfNotExists(db, table);
 
-            if (tableExists(db, table)) {
-                return false;
-            } else {
-                dbo.createTable(table);
+                    loadMetaDatabasesToMemory();
+                    loadAllStorageObjectsToMemory();
+                    loadAllReplicaObjectsToMemory();
 
-                byte[] data = dbo.returnDBObytes();
-                Files.write(file, data);
-                loadMetaDatabasesToMemory();
-                loadAllStorageObjectsToMemory();
-                loadAllReplicaObjectsToMemory();
+                    if (!isReplicationAction)
+                        QueryLog.localAppend(new JSONObject().put("type", "createTable").put("db", db).put("table", table).toString());
 
-                if (!isReplicationAction)
-                    QueryLog.localAppend(new JSONObject().put("type", "createTable").put("table", table).put("db", db).toString());
-
-                return true;
+                    return true;
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -558,24 +594,24 @@ public class Storage {
     }
 
     /***
-     * Does a Table Exist?
+     * Does Table Exist?
      * @param db
      * @param table
      * @return boolean
      */
+    @Override
     public boolean tableExists(String db, String table) {
-//        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-//        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
-        if (databases.containsKey(db)) {
+        if (databaseExists(db)) {
             DatabaseObject dbo = databases.get(db);
-            if (dbo.tables != null && dbo.tables.size() > 0)
+            if (dbo != null) {
                 return dbo.tables.contains(table);
+            }
         }
         return false;
     }
 
     /***
-     * Drop a Table
+     * Drop an existing Table
      * @param db
      * @param table
      * @return boolean
@@ -583,111 +619,70 @@ public class Storage {
     public boolean dropTable(String db, String table) {
         return dropTable(db, table, false);
     }
+    
     public boolean dropTable(String db, String table, boolean isReplicationAction) {
-        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-//        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
-        DatabaseObject dbo = databases.get(db);
+        try {
+            if (tableExists(db, table)) {
+                DatabaseObject dbo = databases.get(db);
+                if (dbo != null) {
+                    dbo.tables.remove(table);
+                    byte[] data = dbo.returnDBObytes();
+                    Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
+                    Files.write(file, data);
 
-        List<String> removeMe = new LinkedList<>();
-
-        if (dbo.tables.size()>0) {
-            for (int i=0; i<dbo.tables.size(); i++) {
-                String t = dbo.tables.get(0).toString();
-                if (t.equals(table)) {
-                    // We do this to avoid a ConcurrentModificationException..
-                    removeMe.add(t);
-                }
-            }
-
-            if (removeMe.size()>0) {
-                for (String t: removeMe) {
-                    dbo.tables.remove(t);
+                    //delete directory path if exists
                     deleteTablePathIfExists(db, table);
 
-                    byte[] data = dbo.returnDBObytes();
-                    try {
-                        Files.write(file, data);
+                    loadMetaDatabasesToMemory();
+                    loadAllStorageObjectsToMemory();
+                    loadAllReplicaObjectsToMemory();
 
-                        if (!isReplicationAction)
-                            QueryLog.localAppend(new JSONObject().put("type", "dropTable").put("table", table).put("db", db).toString());
+                    if (!isReplicationAction)
+                        QueryLog.localAppend(new JSONObject().put("type", "dropTable").put("db", db).put("table", table).toString());
 
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
+                    return true;
                 }
-            }
-        }
-        loadMetaDatabasesToMemory();
-        loadAllStorageObjectsToMemory();
-        loadAllReplicaObjectsToMemory();
-        return true;
-    }
-
-
-
-    /***
-     * Get a List of existing Tables
-     * @param db
-     * @return List
-     */
-    public List<String> getTables(String db) {
-//        Path file = Paths.get(Globals.data_path + db + Globals.meta_extention);
-//        DatabaseObject dbo = new DatabaseObject().loadExisting(file);
-        DatabaseObject dbo = databases.get(db);
-        if (dbo.tables == null) return null;
-        else if (dbo.tables.size()>0) return dbo.tables;
-        else return new ArrayList<String>();
-    }
-
-    /***
-     * Create Table Path if not exists
-     * @param db
-     * @param table
-     * @return boolean
-     */
-    public boolean createTablePathIfNotExists(String db, String table) {
-        try {
-            // make sure `data` directory exists
-            File _data_dir = new File(Globals.data_path);
-            if (!_data_dir.exists()) _data_dir.mkdir();
-            // make sure `database` directory exists
-            File _db_dir = new File(Globals.data_path + db + "/");
-            if (!_db_dir.exists()) _db_dir.mkdir();
-            // make sure `table` directory exists
-            File _table_dir = new File(Globals.data_path + db + "/" + table + "/");
-            if (!_table_dir.exists()) {
-                _table_dir.mkdir();
-
-                TableStorageObject tso = new TableStorageObject();
-                Path _tso_file = Paths.get(Globals.data_path + db + "/" + table + "/"+ Globals.storage_filename);
-                byte[] _tso_data = tso.returnDBObytes();
-                Files.write(_tso_file, _tso_data);
-
-                TableReplicaObject tro = new TableReplicaObject();
-                Path _tro_file = Paths.get(Globals.data_path + db + "/" + table + "/"+ Globals.replica_filename);
-                byte[] _tro_data = tro.returnDBObytes();
-                Files.write(_tro_file, _tro_data);
-
-                return true;
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
         return false;
     }
+
     /***
-     * Create Database Path if not exists
+     * Get a List of Tables in a Database
      * @param db
+     * @return List
+     */
+    @Override
+    public List<String> getTables(String db) {
+        if (databaseExists(db)) {
+            DatabaseObject dbo = databases.get(db);
+            if (dbo != null) {
+                return dbo.tables;
+            }
+        }
+        return new ArrayList<>();
+    }
+
+    /***
+     * Create Table Path If Not Exists
+     * @param db
+     * @param table
      * @return boolean
      */
-    public boolean createDatabasePathIfNotExists(String db) {
+    public boolean createTablePathIfNotExists(String db, String table) {
         try {
-            // make sure `data` directory exists
-            File _data_dir = new File(Globals.data_path);
-            if (!_data_dir.exists()) _data_dir.mkdir();
-            // make sure `database` directory exists
-            File _db_dir = new File(Globals.data_path + db + "/");
-            if (!_db_dir.exists()) _db_dir.mkdir();
+            File dir = new File(Globals.data_path + db);
+            if (!dir.exists()) {
+                dir.mkdir();
+            }
+
+            File tableDir = new File(Globals.data_path + db + "/" + table);
+            if (!tableDir.exists()) {
+                tableDir.mkdir();
+            }
+
             return true;
         } catch (Exception e) {
             e.printStackTrace();
@@ -696,19 +691,17 @@ public class Storage {
     }
 
     /***
-     * Deleted the Table path and all table data
+     * Create Database Path If Not Exists
      * @param db
-     * @param table
      * @return boolean
      */
-    public boolean deleteTablePathIfExists(String db, String table) {
+    public boolean createDatabasePathIfNotExists(String db) {
         try {
-            // make sure `table` directory exists
-            File _table_dir = new File(Globals.data_path + db + "/" + table + "/");
-            if (_table_dir.exists()) {
-                Globals.deleteDirectory(_table_dir);
-                return true;
+            File dir = new File(Globals.data_path + db);
+            if (!dir.exists()) {
+                dir.mkdir();
             }
+            return true;
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -716,15 +709,51 @@ public class Storage {
     }
 
     /***
-     * Delete all data objects in one fell swoop
+     * Delete Table Path If Exists
+     * @param db
+     * @param table
+     * @return boolean
      */
-    public void deleteEverything() {
-        List<String> dbs = getDatabases();
-        for (String db: dbs) {
-            try {
-                dropDatabase(db);
-            } catch (Exception ignored) {}
+    public boolean deleteTablePathIfExists(String db, String table) {
+        try {
+            File tableDir = new File(Globals.data_path + db + "/" + table);
+            if (tableDir.exists() && tableDir.isDirectory()) {
+                File[] files = tableDir.listFiles();
+                for (File file : files) {
+                    file.delete();
+                }
+                tableDir.delete();
+            }
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
         }
+        return false;
     }
 
+    /***
+     * Delete Everything
+     */
+    @Override
+    public void deleteEverything() {
+        databases = new HashMap<>();
+        tableStorageObjects = new HashMap<>();
+        tableReplicaObjects = new HashMap<>();
+    }
+    
+    /**
+     * Initialize the storage system.
+     */
+    @Override
+    public void init() {
+        // Storage is initialized in the constructor
+    }
+    
+    /**
+     * Shutdown the storage system.
+     */
+    @Override
+    public void shutdown() {
+        // No specific shutdown actions needed
+    }
 }

@@ -897,4 +897,12 @@ public class NetworkImpl extends Network {
         
         LOGGER.info("Network component shutdown complete");
     }
+    
+    /**
+     * Check if the network is initialized
+     * @return true if the network is initialized, false otherwise
+     */
+    public boolean isInitialized() {
+        return initialized;
+    }
 }

@@ -1,6 +1,8 @@
 package com.ataiva.serengeti.integration;
 
+import com.ataiva.serengeti.storage.IStorage;
 import com.ataiva.serengeti.storage.Storage;
+import com.ataiva.serengeti.storage.StorageFactory;
 import com.ataiva.serengeti.storage.StorageImpl;
 import com.ataiva.serengeti.storage.compression.StorageCompressor;
 import org.junit.After;
@@ -29,7 +31,7 @@ public class StorageCompressionIntegrationTest {
     private static final String TEST_TABLE_NAME = "test_compression_table";
     private static final String TEST_DATA_DIR = "test_data";
     
-    private Storage storage;
+    private StorageImpl storage;
     private Path testDataPath;
     
     @Before
@@ -39,7 +41,7 @@ public class StorageCompressionIntegrationTest {
         Files.createDirectories(testDataPath);
         
         // Initialize storage with different compression algorithms
-        storage = new StorageImpl(TEST_DATA_DIR);
+        storage = (StorageImpl) StorageFactory.createStorage(StorageFactory.StorageType.LSM);
         
         // Create test database and table
         storage.createDatabase(TEST_DB_NAME);
@@ -50,7 +52,7 @@ public class StorageCompressionIntegrationTest {
         schema.put("name", "STRING");
         schema.put("data", "STRING");
         
-        storage.createTable(TEST_DB_NAME, TEST_TABLE_NAME, schema);
+        storage.createTable(TEST_DB_NAME, TEST_TABLE_NAME);
     }
     
     @After
@@ -65,7 +67,7 @@ public class StorageCompressionIntegrationTest {
     @Test
     public void testStorageWithGzipCompression() throws Exception {
         // Configure storage to use GZIP compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.GZIP));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.GZIP));
         
         // Insert test data
         Map<String, Object> record = createLargeRecord("gzip_test");
@@ -89,7 +91,7 @@ public class StorageCompressionIntegrationTest {
     @Test
     public void testStorageWithLz4Compression() throws Exception {
         // Configure storage to use LZ4 compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.LZ4));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.LZ4));
         
         // Insert test data
         Map<String, Object> record = createLargeRecord("lz4_test");
@@ -113,7 +115,7 @@ public class StorageCompressionIntegrationTest {
     @Test
     public void testStorageWithSnappyCompression() throws Exception {
         // Configure storage to use Snappy compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.SNAPPY));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.SNAPPY));
         
         // Insert test data
         Map<String, Object> record = createLargeRecord("snappy_test");
@@ -137,7 +139,7 @@ public class StorageCompressionIntegrationTest {
     @Test
     public void testStorageWithNoCompression() throws Exception {
         // Configure storage to use no compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.NONE));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.NONE));
         
         // Insert test data
         Map<String, Object> record = createLargeRecord("no_compression_test");
@@ -165,22 +167,22 @@ public class StorageCompressionIntegrationTest {
         String id = (String) record.get("id");
         
         // Test with no compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.NONE));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.NONE));
         storage.insertRecord(TEST_DB_NAME, TEST_TABLE_NAME + "_none", record);
         long noCompressionSize = getTableSize(TEST_DB_NAME, TEST_TABLE_NAME + "_none");
         
         // Test with GZIP compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.GZIP));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.GZIP));
         storage.insertRecord(TEST_DB_NAME, TEST_TABLE_NAME + "_gzip", record);
         long gzipSize = getTableSize(TEST_DB_NAME, TEST_TABLE_NAME + "_gzip");
         
         // Test with LZ4 compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.LZ4));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.LZ4));
         storage.insertRecord(TEST_DB_NAME, TEST_TABLE_NAME + "_lz4", record);
         long lz4Size = getTableSize(TEST_DB_NAME, TEST_TABLE_NAME + "_lz4");
         
         // Test with Snappy compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.SNAPPY));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.SNAPPY));
         storage.insertRecord(TEST_DB_NAME, TEST_TABLE_NAME + "_snappy", record);
         long snappySize = getTableSize(TEST_DB_NAME, TEST_TABLE_NAME + "_snappy");
         
@@ -206,14 +208,14 @@ public class StorageCompressionIntegrationTest {
     @Test
     public void testChangingCompressionAlgorithm() throws Exception {
         // Insert data with GZIP compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.GZIP));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.GZIP));
         Map<String, Object> record = createLargeRecord("changing_compression");
         String id = (String) record.get("id");
         
         storage.insertRecord(TEST_DB_NAME, TEST_TABLE_NAME, record);
         
         // Change to LZ4 compression
-        ((StorageImpl) storage).setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.LZ4));
+        storage.setCompressor(new StorageCompressor(StorageCompressor.CompressionAlgorithm.LZ4));
         
         // Retrieve the record (should still work even though it was compressed with GZIP)
         Map<String, Object> retrievedRecord = storage.getRecord(TEST_DB_NAME, TEST_TABLE_NAME, "id", id);

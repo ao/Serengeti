@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -56,6 +57,7 @@ public class StorageSchedulerFastTest extends StorageFastTestBase {
     private TableReplicaObject mockTableReplicaObject;
 
     private StorageScheduler storageScheduler;
+    private IStorage storageInstance;
     private Map<String, DatabaseObject> originalDatabases;
     private Map<String, TableStorageObject> originalTableStorageObjects;
     private Map<String, TableReplicaObject> originalTableReplicaObjects;
@@ -70,6 +72,9 @@ public class StorageSchedulerFastTest extends StorageFastTestBase {
     public void setUp() throws Exception {
         super.setUp(); // Initialize StorageFastTestBase components
         mockCloseable = MockitoAnnotations.openMocks(this);
+        
+        // Initialize storage instance
+        storageInstance = StorageFactory.createStorage(StorageFactory.StorageType.REAL);
         storageScheduler = new StorageScheduler();
         
         // Backup original static state
@@ -269,9 +274,13 @@ public class StorageSchedulerFastTest extends StorageFastTestBase {
         when(mockTableStorageObject.rows).thenReturn(new HashMap<>());
         when(mockTableReplicaObject.row_replicas).thenReturn(new HashMap<>());
         
-        // Add to storage maps
+        // Add to storage maps - still need to use static fields since StorageScheduler uses them directly
         Storage.databases.put("testdb", mockDatabaseObject);
         Storage.tableStorageObjects.put("testdb#testtable", mockTableStorageObject);
         Storage.tableReplicaObjects.put("testdb#testtable", mockTableReplicaObject);
+        
+        // If StorageScheduler were updated to use IStorage, we would use:
+        // storageInstance.createDatabase("testdb");
+        // storageInstance.createTable("testdb", "testtable");
     }
 }
