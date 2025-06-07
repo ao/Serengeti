@@ -1199,3 +1199,4 @@ public class StorageImpl implements Storage {
             LOGGER.info("Recovery from WAL complete");
         }
     }
+}

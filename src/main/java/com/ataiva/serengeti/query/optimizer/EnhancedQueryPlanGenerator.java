@@ -731,7 +731,6 @@ public class EnhancedQueryPlanGenerator {
         HIGH,    // Advanced optimizations including memory management
         EXTREME  // All optimizations, may take longer to generate plans
     }
-}
     
     /**
      * Create a hash join plan
@@ -1019,3 +1018,4 @@ public class EnhancedQueryPlanGenerator {
         
         return plan;
     }
+}

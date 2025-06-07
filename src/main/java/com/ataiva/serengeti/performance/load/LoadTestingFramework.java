@@ -914,4 +914,51 @@ public class LoadTestingFramework {
         private final Map<Integer, Double> stepResults = new HashMap<>();
         
         public LocalDateTime getStartTime() {
-            return startTime
+            return startTime;
+        }
+        
+        public void setStartTime(LocalDateTime startTime) {
+            this.startTime = startTime;
+        }
+        
+        public LocalDateTime getEndTime() {
+            return endTime;
+        }
+        
+        public void setEndTime(LocalDateTime endTime) {
+            this.endTime = endTime;
+        }
+        
+        public int getSystemLimit() {
+            return systemLimit;
+        }
+        
+        public void setSystemLimit(int systemLimit) {
+            this.systemLimit = systemLimit;
+        }
+        
+        public String getLimitingFactor() {
+            return limitingFactor;
+        }
+        
+        public void setLimitingFactor(String limitingFactor) {
+            this.limitingFactor = limitingFactor;
+        }
+        
+        public double getLimitingThreshold() {
+            return limitingThreshold;
+        }
+        
+        public void setLimitingThreshold(double limitingThreshold) {
+            this.limitingThreshold = limitingThreshold;
+        }
+        
+        public Map<Integer, Double> getStepResults() {
+            return stepResults;
+        }
+        
+        public void addStepResult(int rate, double metricValue) {
+            stepResults.put(rate, metricValue);
+        }
+    }
+}
