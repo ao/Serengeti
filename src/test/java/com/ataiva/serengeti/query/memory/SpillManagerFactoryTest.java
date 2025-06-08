@@ -17,7 +17,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import com.ataiva.serengeti.performance.PerformanceDataCollector;
+import com.ataiva.serengeti.performance.PerformanceProfiler;
 
 /**
  * Test class for SpillManagerFactory
@@ -28,7 +28,7 @@ public class SpillManagerFactoryTest {
     private static final String TEST_OPERATION_ID = "test-operation";
     
     private SpillManagerFactory factory;
-    private PerformanceDataCollector mockCollector;
+    private PerformanceProfiler mockCollector;
     private Path testSpillDir;
     
     @Before
@@ -37,8 +37,8 @@ public class SpillManagerFactoryTest {
         testSpillDir = Files.createTempDirectory("spill-factory-test");
         SpillManager.setDefaultSpillDirectory(testSpillDir.toString());
         
-        // Create mock performance collector
-        mockCollector = mock(PerformanceDataCollector.class);
+        // Create mock performance profiler
+        mockCollector = mock(PerformanceProfiler.class);
         
         // Create the factory
         factory = new SpillManagerFactory(mockCollector);
