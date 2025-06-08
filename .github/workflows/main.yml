@@ -117,15 +117,15 @@ jobs:
         with:
           path: test-results
       
-      - name: Generate Test Reports
-        run: |
-          chmod +x ./generate_test_report.sh
-          ./generate_test_report.sh --format html --publish ${{ github.workspace }}/reports
-          ./generate_test_report.sh --format xml --output-dir ${{ github.workspace }}/reports/xml
-          ./generate_test_report.sh --format json --output-dir ${{ github.workspace }}/reports/json
+      # - name: Generate Test Reports
+      #   run: |
+      #     chmod +x ./generate_test_report.sh
+      #     ./generate_test_report.sh --format html --publish ${{ github.workspace }}/reports
+      #     ./generate_test_report.sh --format xml --output-dir ${{ github.workspace }}/reports/xml
+      #     ./generate_test_report.sh --format json --output-dir ${{ github.workspace }}/reports/json
       
-      - name: Upload Test Reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: storage-scheduler-test-reports
-          path: reports/
+      # - name: Upload Test Reports
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: storage-scheduler-test-reports
+      #     path: reports/
