@@ -1,0 +1,110 @@
+graph TB
+    %% Client and External Interfaces
+    Client[Client Applications]
+    WebUI[Web UI<br/>Dashboard & Interactive]
+    
+    %% Main Components
+    subgraph "Serengeti Node"
+        Core[Serengeti Core<br/>System Initialization & Coordination]
+        
+        subgraph "Server Layer"
+            Server[Server<br/>HTTP Interface & Request Handling]
+        end
+        
+        subgraph "Query Layer"
+            QueryEngine[Query Engine<br/>Query Processing & Optimization]
+            QueryParser[Query Parser]
+            QueryOptimizer[Query Optimizer]
+            QueryExecutor[Query Executor]
+            QueryCache[Query Cache]
+        end
+        
+        subgraph "Storage Layer"
+            Storage[Storage<br/>Data Management]
+            StorageScheduler[Storage Scheduler<br/>Periodic Persistence]
+            LSMEngine[LSM Storage Engine<br/>MemTable & SSTable]
+            WAL[Write-Ahead Log]
+        end
+        
+        subgraph "Index Layer"
+            IndexManager[Index Manager]
+            BTreeIndex[B-Tree Index]
+        end
+        
+        subgraph "Network Layer"
+            Network[Network<br/>Node Communication]
+            NodeDiscovery[Node Discovery]
+            FailureDetector[Failure Detector]
+            Replication[Data Replication]
+        end
+    end
+    
+    %% Other Nodes
+    Node2[Serengeti Node 2]
+    Node3[Serengeti Node 3]
+    NodeN[Serengeti Node N]
+    
+    %% External Connections
+    Client -->|HTTP Requests| Server
+    WebUI -->|HTTP Interface| Server
+    
+    %% Server Layer Connections
+    Server -->|Forwards Queries| QueryEngine
+    Server -->|Serves UI| WebUI
+    
+    %% Query Layer Connections
+    QueryEngine -->|Parses| QueryParser
+    QueryEngine -->|Optimizes| QueryOptimizer
+    QueryEngine -->|Executes| QueryExecutor
+    QueryEngine <-->|Caches| QueryCache
+    QueryEngine -->|Retrieves/Updates Data| Storage
+    QueryEngine -->|Uses| IndexManager
+    
+    %% Storage Layer Connections
+    Storage -->|Schedules Persistence| StorageScheduler
+    Storage -->|Stores Data| LSMEngine
+    StorageScheduler -->|Writes| WAL
+    LSMEngine -->|Logs Changes| WAL
+    
+    %% Index Layer Connections
+    IndexManager -->|Manages| BTreeIndex
+    Storage <-->|Updates| IndexManager
+    
+    %% Network Layer Connections
+    Network -->|Discovers| NodeDiscovery
+    Network -->|Detects Failures| FailureDetector
+    Network -->|Replicates Data| Replication
+    Storage <-->|Replicates| Network
+    QueryEngine <-->|Distributed Queries| Network
+    
+    %% Core Connections
+    Core -->|Initializes & Manages| Server
+    Core -->|Initializes & Manages| QueryEngine
+    Core -->|Initializes & Manages| Storage
+    Core -->|Initializes & Manages| Network
+    Core -->|Initializes & Manages| IndexManager
+    
+    %% Node Connections
+    Network <-->|Communicates| Node2
+    Network <-->|Communicates| Node3
+    Network <-->|Communicates| NodeN
+    
+    %% Styles
+    classDef client fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef ui fill:#bbf,stroke:#333,stroke-width:1px;
+    classDef core fill:#fbb,stroke:#333,stroke-width:2px;
+    classDef server fill:#bfb,stroke:#333,stroke-width:1px;
+    classDef query fill:#fbf,stroke:#333,stroke-width:1px;
+    classDef storage fill:#bff,stroke:#333,stroke-width:1px;
+    classDef index fill:#ffb,stroke:#333,stroke-width:1px;
+    classDef network fill:#fbb,stroke:#333,stroke-width:1px;
+    classDef node fill:#ddd,stroke:#333,stroke-width:1px;
+    
+    class Client,WebUI ui;
+    class Core core;
+    class Server server;
+    class QueryEngine,QueryParser,QueryOptimizer,QueryExecutor,QueryCache query;
+    class Storage,StorageScheduler,LSMEngine,WAL storage;
+    class IndexManager,BTreeIndex index;
+    class Network,NodeDiscovery,FailureDetector,Replication network;
+    class Node2,Node3,NodeN node;

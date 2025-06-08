@@ -6,8 +6,6 @@ This document provides an overview of the Serengeti distributed database system 
 
 Serengeti is an autonomous distributed database system that runs on the Java Virtual Machine (JVM). It is designed to require zero configuration or management to set up or maintain. Instances automatically connect to each other on the same subnet to create a distributed database with data replication.
 
-![System Architecture Diagram](../../artwork/system_architecture.png)
-
 ## Core Components
 
 The Serengeti system consists of the following core components:

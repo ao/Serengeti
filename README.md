@@ -7,67 +7,104 @@
 
 ![Serengeti Dashboard](artwork/dash1.png?raw=true "Serengeti Dashboard")
 
-This software application proves the potential for an autonomous distributed database system.
+## Overview
 
-Serengeti runs on any machine through the JVM and requires zero configuration or management to setup or maintain.
+Serengeti is a next-generation autonomous distributed database system designed for modern applications that demand high availability, scalability, and zero-configuration management. Built on the JVM, Serengeti brings enterprise-grade distributed database capabilities with unprecedented ease of deployment and maintenance.
 
-Simply start Serengeti on any number of machines on a controlled network where each machine is a member of the same subnet. Each instance will automatically connect to each other and create a distributed database. 
+### Key Features
 
-Data will be replicated across the network and when a new node joins, it will automatically be given the existing databases and tables layout along with all replication information.
+- **Zero Configuration**: Deploy and forget - no complex setup or ongoing maintenance required
+- **Autonomous Operation**: Self-organizing, self-healing distributed architecture
+- **Automatic Node Discovery**: Nodes automatically find each other on the same subnet
+- **Seamless Scaling**: Add or remove nodes without downtime or manual data redistribution
+- **Fault Tolerance**: Automatic data replication and recovery from node failures
+- **SQL-like Query Interface**: Familiar query language for easy data manipulation
+- **Web-based Dashboard**: Intuitive interface for monitoring and management
+- **High Performance**: Optimized storage engine and query processing
 
-If one of the instances dies, the other nodes will check back and wait for a short recovery before reallocating the database pieces that were on that node to other nodes across the network.  
+Simply start Serengeti on any number of machines on a controlled network where each machine is a member of the same subnet. Each instance will automatically connect to each other and create a distributed database.
 
-## How do I interact with it?
-Once Serengeti is running, you simply connect to `http://<localhost_or_node_ip>:1985/dashboard` to get going.
+Data is replicated across the network for redundancy, and when a new node joins, it automatically receives the existing database structure and replication information. If a node fails, the system automatically detects the failure and redistributes the data to maintain availability and redundancy.
 
-## Requirements
-This project was built on IntelliJ IDEA under JDK 11 runtime.
+## System Architecture
 
-## Is there a JAR available?
-Yes, take a look at the [release page](https://github.com/ao/serengeti/releases)
+Serengeti's architecture consists of several key components working together to provide a robust, distributed database system:
 
-Currently version 0.0.1 is the only version, so [grab it here](https://github.com/ao/serengeti/releases/download/0.0.1/ADD_0.0.1.zip)
+![Serengeti Architecture](artwork/serengeti_architecture.svg)
 
-Unzip it and then simply run `java -jar serengeti.jar`
+### Core Components
 
-## Build it yourself?
-Yes, of course you can!
+- **Serengeti Core**: System initialization and component lifecycle management
+- **Server**: Handles client connections and provides web interfaces
+- **Query Engine**: Processes and optimizes database queries
+- **Storage System**: Manages data persistence with an LSM storage engine
+- **Indexing System**: Provides efficient data access through B-tree indexes
+- **Network System**: Enables communication between nodes in the distributed system
 
-`git clone https://github.com/ao/serengeti.git`
+For a detailed architectural overview, see the [Architectural Diagram](docs/architecture/ArchitecturalDiagram.md) and [System Architecture](docs/architecture/SystemArchitecture.md) documentation.
 
-### Using IntelliJ?
+## Getting Started
 
-`Open in IntelliJ IDEA.`
+### Quick Start with Docker
 
-`Edit configurations..`
+The fastest way to get started with Serengeti is using Docker:
 
-`+ Application`
+```bash
+docker pull ataiva/serengeti:latest
+docker run -p 1985:1985 ataiva/serengeti:latest
+```
 
-Set the `classpath` to `Serengeti` and the `Main class` to `Serengeti`
+Then access the dashboard at `http://localhost:1985/dashboard`
 
-`Run the application!`
+### Using Pre-built JAR
 
-### Using Maven on the commandline?
+1. Download the latest release from the [releases page](https://github.com/ao/serengeti/releases)
+2. Unzip the package
+3. Run the application:
+   ```bash
+   java -jar serengeti.jar
+   ```
 
-`mvn clean install`
+### Building from Source
 
-`java -jar target/serengeti-<version>.jar`
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/ao/serengeti.git
+   ```
 
-Where `<version>` is the current version of the project. The current version can be found in the `version.txt` file in the project root directory.
+2. Build with Maven:
+   ```bash
+   mvn clean install
+   ```
+
+3. Run the application:
+   ```bash
+   java -jar target/serengeti-<version>.jar
+   ```
+
+Where `<version>` is the current version of the project.
+
+## Interacting with Serengeti
+
+Once Serengeti is running, you can interact with it through:
+
+- **Dashboard**: Access the administrative dashboard at `http://<host>:1985/dashboard`
+- **Interactive Console**: Execute queries through the interactive console at `http://<host>:1985/interactive`
+- **REST API**: Programmatically interact with the database through the REST API
 
 ## Testing
 
-### Running the Comprehensive Test Suite
+Serengeti includes comprehensive testing frameworks to ensure reliability and performance:
 
-To run the comprehensive test suite:
+### Comprehensive Test Suite
 
 ```bash
 mvn test
 ```
 
-### Running the Fast Test Suite
+### Fast Test Suite
 
-For rapid feedback during development, use the fast test suite which completes in under 2 minutes:
+For rapid feedback during development:
 
 ```bash
 ./run_fast_tests.sh  # On Linux/Mac
@@ -80,55 +117,23 @@ Or directly with Maven:
 mvn test -Pfast-tests
 ```
 
-For more information about the fast test suite, see [Fast Test Suite README](src/test/java/com/ataiva/serengeti/fast/README.md).
-
 ### StorageScheduler Tests
 
-The StorageScheduler is a critical component in Serengeti responsible for periodically persisting database state to disk. It ensures data durability by:
-- Running as a background thread that executes at regular intervals
-- Saving all database metadata to disk
-- Persisting table storage objects and table replica objects
-- Managing concurrent access to prevent data corruption
-- Using Write-Ahead Logging (WAL) for crash recovery
-
-The StorageScheduler testing is organized into two categories:
-- **Comprehensive Tests**: Thorough validation of all aspects of the component
-- **Fast Tests**: Quick feedback during development, focusing on core functionality
-
-#### Running StorageScheduler Tests
-
-Dedicated scripts are provided for running StorageScheduler tests:
+The StorageScheduler is a critical component responsible for data durability. Dedicated scripts are provided for testing:
 
 ```bash
 # Linux/macOS
-./run_storage_scheduler_tests.sh --all       # Run all tests
-./run_storage_scheduler_tests.sh --fast      # Run only fast tests
+./run_storage_scheduler_tests.sh --all            # Run all tests
+./run_storage_scheduler_tests.sh --fast           # Run only fast tests
 ./run_storage_scheduler_tests.sh --comprehensive  # Run only comprehensive tests
 
 # Windows
-run_storage_scheduler_tests.bat --all        # Run all tests
-run_storage_scheduler_tests.bat --fast       # Run only fast tests
+run_storage_scheduler_tests.bat --all             # Run all tests
+run_storage_scheduler_tests.bat --fast            # Run only fast tests
 run_storage_scheduler_tests.bat --comprehensive   # Run only comprehensive tests
 ```
 
-For detailed information about the StorageScheduler testing strategy, see [StorageScheduler Testing Strategy](docs/testing/StorageSchedulerTestingStrategy.md).
-
-#### CI/CD Integration
-
-StorageScheduler tests are fully integrated into the CI/CD pipeline:
-
-- **Fast Tests**: StorageScheduler fast tests run automatically as part of the Fast Tests workflow
-- **Comprehensive Tests**: A dedicated workflow runs comprehensive, integration, and mutation tests
-- **Quality Gates**: The pipeline enforces strict coverage thresholds (90% line, 85% branch, 100% method)
-- **Mutation Testing**: Ensures tests are effective at catching bugs by verifying they fail when code is mutated
-
-CI/CD workflows run automatically on:
-- Pushes to main, master, and develop branches
-- Pull requests to these branches
-- Changes to StorageScheduler code or tests
-- Manual triggers via GitHub Actions
-
-For more details on CI/CD integration, see the [CI/CD Integration](docs/testing/StorageSchedulerTestingStrategy.md#cicd-integration) section in the testing strategy document.
+For detailed information about the testing strategy, see [StorageScheduler Testing Strategy](docs/testing/StorageSchedulerTestingStrategy.md).
 
 ## Documentation
 
@@ -143,6 +148,7 @@ Serengeti includes comprehensive documentation to help you understand, use, and 
 ### Architecture Documentation
 
 - [System Architecture](docs/architecture/SystemArchitecture.md) - Overview of the Serengeti system architecture
+- [Architectural Diagram](docs/architecture/ArchitecturalDiagram.md) - Visual representation of the system architecture
 - [Component Interactions](docs/architecture/ComponentInteractions.md) - How components interact with each other
 - [Design Decisions](docs/architecture/DesignDecisions.md) - Key design decisions and trade-offs
 
@@ -164,5 +170,28 @@ Serengeti includes comprehensive documentation to help you understand, use, and 
 
 For a complete list of documentation, see the [Documentation Index](docs/README.md).
 
-## Problems?
-[Create an issue](https://github.com/ao/serengeti/issues/new) if you need help
+## Requirements
+
+- JDK 11 or higher
+- Maven 3.6+ (for building from source)
+- Network environment where nodes can discover each other (same subnet)
+
+## Use Cases
+
+Serengeti is ideal for:
+
+- **Microservices Architectures**: Provide a distributed data layer for microservices
+- **Edge Computing**: Deploy database capabilities at the edge with minimal configuration
+- **High-Availability Systems**: Ensure data availability even during node failures
+- **Scalable Applications**: Easily scale database capacity by adding nodes
+- **Development and Testing**: Quickly spin up a distributed database for development and testing
+
+## Community and Support
+
+- [GitHub Issues](https://github.com/ao/serengeti/issues) - Report bugs or request features
+- [GitHub Discussions](https://github.com/ao/serengeti/discussions) - Ask questions and discuss ideas
+- [Contributing](CONTRIBUTING.md) - Learn how to contribute to the project
+
+## License
+
+Serengeti is open-source software licensed under the [LICENSE](LICENSE) file in the repository.
