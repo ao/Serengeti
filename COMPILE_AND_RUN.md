@@ -30,7 +30,11 @@ If you want to skip the tests during compilation, use:
 mvn clean package -DskipTests
 ```
 
-The compiled JAR file will be available at `target/Serengeti-1.3-SNAPSHOT-jar-with-dependencies.jar`.
+The compiled JAR file will be available at `target/Serengeti-<version>-jar-with-dependencies.jar`, where `<version>` corresponds to the current version of the project.
+
+## Versioning
+
+Serengeti uses semantic versioning (MAJOR.MINOR.PATCH). The current version can be found in the `version.txt` file in the project root directory. This is the source of truth for the current version of the application.
 
 ## Running the Application
 
@@ -39,8 +43,10 @@ The compiled JAR file will be available at `target/Serengeti-1.3-SNAPSHOT-jar-wi
 To run the application directly using Java:
 
 ```bash
-java -jar target/Serengeti-1.3-SNAPSHOT-jar-with-dependencies.jar
+java -jar target/Serengeti-<version>-jar-with-dependencies.jar
 ```
+
+Where `<version>` is the version number from the version.txt file.
 
 ### Using Docker
 

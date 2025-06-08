@@ -61,8 +61,10 @@ mvn clean install
 ### Running the Project
 
 ```
-java -jar target/serengeti-1.0-SNAPSHOT.jar
+java -jar target/serengeti-<version>.jar
 ```
+
+Where `<version>` is the current version of the project. The current version can be found in the `version.txt` file in the project root directory.
 
 ### IDE Setup
 
