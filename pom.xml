@@ -554,7 +554,7 @@
         <dependency>
             <groupId>org.json</groupId>
             <artifactId>json</artifactId>
-            <version>20201115</version>
+            <version>20231013</version>
         </dependency>
         
         <!-- LZ4 Compression -->
