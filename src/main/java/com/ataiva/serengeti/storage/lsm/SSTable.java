@@ -1,9 +1,12 @@
 package com.ataiva.serengeti.storage.lsm;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
  * SSTable represents a Sorted String Table in the LSM tree storage engine.
@@ -19,6 +22,8 @@ public class SSTable {
     private long creationTime;
     private Map<String, byte[]> data;
     private BitSet bloomFilter;
+    private Path filePath;
+    private ConcurrentSkipListMap<String, Long> index;
     
     /**
      * Creates a new SSTable
@@ -226,6 +231,97 @@ public class SSTable {
      * 
      * @return String representation
      */
+    /**
+     * Checks if the bloom filter might contain the given key
+     *
+     * @param key Key to check (as byte array)
+     * @return true if the key might be present, false if definitely not present
+     */
+    public boolean mightContain(byte[] key) {
+        if (bloomFilter == null) {
+            return true; // If no bloom filter, assume it might be present
+        }
+        // Convert byte array to string for comparison
+        String keyStr = new String(key);
+        return bloomFilterMightContain(keyStr);
+    }
+    
+    /**
+     * Creates a new SSTable from a MemTable
+     *
+     * @param memTable The MemTable to create SSTable from
+     * @param filePath The file path where the SSTable will be stored
+     * @param tableId The ID for the new SSTable
+     * @return A new SSTable instance
+     * @throws IOException If there's an error writing the SSTable to disk
+     */
+    public static SSTable create(MemTable memTable, Path filePath, String tableId) throws IOException {
+        // Get snapshot from MemTable (byte[] keys and values)
+        Map<byte[], byte[]> memTableData = memTable.getSnapshot();
+        
+        // Convert to String keys for SSTable
+        Map<String, byte[]> data = new HashMap<>();
+        for (Map.Entry<byte[], byte[]> entry : memTableData.entrySet()) {
+            String key = new String(entry.getKey());
+            data.put(key, entry.getValue());
+        }
+        
+        SSTable ssTable = new SSTable(data);
+        ssTable.id = tableId;
+        ssTable.filePath = filePath;
+        ssTable.index = new ConcurrentSkipListMap<>();
+        
+        // Build index
+        long offset = 0;
+        for (String key : data.keySet()) {
+            ssTable.index.put(key, offset);
+            offset += key.length() + data.get(key).length;
+        }
+        
+        return ssTable;
+    }
+    
+    /**
+     * Gets the index for this SSTable
+     *
+     * @return The index mapping keys to file offsets
+     */
+    public ConcurrentSkipListMap<String, Long> getIndex() {
+        return index;
+    }
+    
+    /**
+     * Closes this SSTable and releases any resources
+     */
+    public void close() throws IOException {
+        // Close any open file handles or resources
+        // For now, just clear the data
+        if (data != null) {
+            data.clear();
+        }
+        if (index != null) {
+            index.clear();
+        }
+    }
+    
+    /**
+     * Gets the file path for this SSTable
+     *
+     * @return The file path
+     */
+    public Path getFilePath() {
+        return filePath;
+    }
+    
+    /**
+     * Sets the file path for this SSTable
+     *
+     * @param filePath The file path to set
+     */
+    public void setFilePath(Path filePath) {
+        this.filePath = filePath;
+    }
+
     @Override
     public String toString() {
         return "SSTable{" +

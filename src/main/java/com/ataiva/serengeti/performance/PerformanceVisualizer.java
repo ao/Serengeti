@@ -490,4 +490,81 @@ public class PerformanceVisualizer {
             this.value = value;
         }
     }
+    /**
+     * Generates a benchmark report and saves it to the specified path
+     *
+     * @param outputPath The path where the benchmark report should be saved
+     * @return The path to the generated report
+     * @throws IOException If there's an error writing the report
+     */
+    public Path generateBenchmarkReport(Path outputPath) throws IOException {
+        // Create the output directory if it doesn't exist
+        Files.createDirectories(outputPath.getParent());
+        
+        // Generate benchmark report content
+        StringBuilder report = new StringBuilder();
+        report.append("# Benchmark Report\n\n");
+        report.append("Generated at: ").append(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)).append("\n\n");
+        
+        // Get all metrics from the profiler
+        List<PerformanceMetric> metrics = profiler.getAllMetrics();
+        
+        if (metrics.isEmpty()) {
+            report.append("No performance metrics available.\n");
+        } else {
+            // Group metrics by component and operation
+            Map<String, Map<String, List<PerformanceMetric>>> groupedMetrics = new HashMap<>();
+            
+            for (PerformanceMetric metric : metrics) {
+                groupedMetrics
+                    .computeIfAbsent(metric.getComponent(), k -> new HashMap<>())
+                    .computeIfAbsent(metric.getOperation(), k -> new ArrayList<>())
+                    .add(metric);
+            }
+            
+            // Generate report sections
+            for (Map.Entry<String, Map<String, List<PerformanceMetric>>> componentEntry : groupedMetrics.entrySet()) {
+                String component = componentEntry.getKey();
+                report.append("## ").append(component).append("\n\n");
+                
+                for (Map.Entry<String, List<PerformanceMetric>> operationEntry : componentEntry.getValue().entrySet()) {
+                    String operation = operationEntry.getKey();
+                    List<PerformanceMetric> operationMetrics = operationEntry.getValue();
+                    
+                    report.append("### ").append(operation).append("\n\n");
+                    
+                    // Calculate statistics
+                    Map<String, List<Double>> metricValues = new HashMap<>();
+                    for (PerformanceMetric metric : operationMetrics) {
+                        metricValues.computeIfAbsent(metric.getName(), k -> new ArrayList<>()).add(metric.getValue());
+                    }
+                    
+                    for (Map.Entry<String, List<Double>> metricEntry : metricValues.entrySet()) {
+                        String metricName = metricEntry.getKey();
+                        List<Double> values = metricEntry.getValue();
+                        
+                        if (!values.isEmpty()) {
+                            double min = values.stream().mapToDouble(Double::doubleValue).min().orElse(0.0);
+                            double max = values.stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+                            double avg = values.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+                            
+                            report.append("- **").append(metricName).append("**: ");
+                            report.append("Min=").append(String.format("%.2f", min));
+                            report.append(", Max=").append(String.format("%.2f", max));
+                            report.append(", Avg=").append(String.format("%.2f", avg));
+                            report.append(", Count=").append(values.size()).append("\n");
+                        }
+                    }
+                    
+                    report.append("\n");
+                }
+            }
+        }
+        
+        // Write the report to file
+        Files.write(outputPath, report.toString().getBytes(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        
+        LOGGER.info("Benchmark report generated: " + outputPath);
+        return outputPath;
+    }
 }

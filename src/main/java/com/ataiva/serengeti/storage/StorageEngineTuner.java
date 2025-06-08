@@ -136,7 +136,7 @@ public class StorageEngineTuner {
             return;
         }
         
-        String timerId = profiler.startTimer("storage", "bloom_filter_optimization", null);
+        String timerId = profiler.startTimer("storage", "bloom_filter_optimization");
         
         try {
             // Extract keys from SSTable
@@ -150,11 +150,7 @@ public class StorageEngineTuner {
             
             LOGGER.fine("Optimized SSTable with bloom filter: " + sstable.getId());
             
-            profiler.recordMetric(new PerformanceMetric.Builder()
-                .setCategory("storage")
-                .setName("bloom_filter.optimization")
-                .setValue(1)
-                .build());
+            profiler.recordCustomMetric("storage", "optimization", "bloom_filter.optimization", 1, "count");
         } finally {
             profiler.stopTimer(timerId, "storage.bloom_filter.optimization_time");
         }
@@ -185,7 +181,7 @@ public class StorageEngineTuner {
             return sstables;
         }
         
-        String timerId = profiler.startTimer("storage", "compaction", null);
+        String timerId = profiler.startTimer("storage", "compaction");
         
         try {
             List<SSTable> compactedSSTables = compactionStrategy.compact(sstables);
@@ -198,11 +194,7 @@ public class StorageEngineTuner {
             LOGGER.info("Compaction completed: " + sstables.size() + " SSTables compacted into " + 
                        compactedSSTables.size() + " SSTables");
             
-            profiler.recordMetric(new PerformanceMetric.Builder()
-                .setCategory("storage")
-                .setName("compaction.performed")
-                .setValue(1)
-                .build());
+            profiler.recordCustomMetric("storage", "compaction", "compaction.performed", 1, "count");
             
             return compactedSSTables;
         } finally {
@@ -294,7 +286,9 @@ public class StorageEngineTuner {
             return;
         }
         
-        String timerId = profiler.startTimer("storage", "batch_read", filePath);
+        String timerId = profiler.startTimer("storage", "batch_read");
+        // Store filePath in a local variable since we can't pass it to startTimer
+        String currentFilePath = filePath;
         
         final Map<Region, ByteBuffer> results = new HashMap<>();
         final AtomicInteger pendingReads = new AtomicInteger(regions.size());

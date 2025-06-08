@@ -32,17 +32,17 @@ public class ServerImpl extends Server {
     
     private static final Logger LOGGER = Logger.getLogger(ServerImpl.class.getName());
     
-    private HttpServer httpServer;
-    private ExecutorService threadPool;
-    private final int port;
-    private final int backlog;
-    private final int threadPoolSize;
-    private final long shutdownTimeout;
-    private final TimeUnit shutdownTimeoutUnit;
-    private final ConcurrentHashMap<String, RateLimiter> rateLimiters;
-    private final ConcurrentHashMap<String, Integer> activeConnections;
-    private final ConcurrentHashMap<String, Long> lastRequestTimes;
-    private boolean isRunning;
+    protected HttpServer httpServer;
+    protected ExecutorService threadPool;
+    protected final int port;
+    protected final int backlog;
+    protected final int threadPoolSize;
+    protected final long shutdownTimeout;
+    protected final TimeUnit shutdownTimeoutUnit;
+    protected final ConcurrentHashMap<String, RateLimiter> rateLimiters;
+    protected final ConcurrentHashMap<String, Integer> activeConnections;
+    protected final ConcurrentHashMap<String, Long> lastRequestTimes;
+    protected boolean isRunning;
     
     // Security components
     private SecurityManager securityManager;
@@ -147,7 +147,7 @@ public class ServerImpl extends Server {
     /**
      * Sets up the request handlers for the HTTP server.
      */
-    private void setupRequestHandlers() {
+    protected void setupRequestHandlers() {
         // Add the standard handlers from the parent class
         httpServer.createContext("/", new RateLimitedHandler(new RootHandler()));
         httpServer.createContext("/dashboard", new RateLimitedHandler(new DashboardHandler()));
@@ -216,6 +216,15 @@ public class ServerImpl extends Server {
      */
     public boolean isRunning() {
         return isRunning;
+    }
+    
+    /**
+     * Sets the running state of the server.
+     *
+     * @param running true if the server is running, false otherwise
+     */
+    protected void setRunning(boolean running) {
+        this.isRunning = running;
     }
     
     /**

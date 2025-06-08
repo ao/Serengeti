@@ -348,6 +348,20 @@ public class StorageImpl implements IStorage {
     }
     
     /**
+     * Drops a database.
+     *
+     * @param database The database name
+     * @param isReplicationAction Whether this is a replication action
+     * @return true if the database was dropped, false otherwise
+     */
+    @Override
+    public boolean dropDatabase(String database, boolean isReplicationAction) {
+        // The replication action parameter is not used in this implementation
+        // but we need to implement the method to satisfy the interface
+        return dropDatabase(database);
+    }
+    
+    /**
      * Lists all databases.
      * 
      * @return A list of database names
@@ -490,6 +504,21 @@ public class StorageImpl implements IStorage {
             LOGGER.log(Level.SEVERE, "Error dropping table " + database + "." + table, e);
             return false;
         }
+    }
+    
+    /**
+     * Drops a table.
+     *
+     * @param database The database name
+     * @param table The table name
+     * @param isReplicationAction Whether this is a replication action
+     * @return true if the table was dropped, false otherwise
+     */
+    @Override
+    public boolean dropTable(String database, String table, boolean isReplicationAction) {
+        // The replication action parameter is not used in this implementation
+        // but we need to implement the method to satisfy the interface
+        return dropTable(database, table);
     }
     
     /**
@@ -1348,6 +1377,25 @@ public class StorageImpl implements IStorage {
             }
             
             LOGGER.info("Recovery from WAL complete");
+        }
+    }
+    
+    /**
+     * Create database path if it doesn't exist
+     * @param db Database name
+     * @return Whether the path was created
+     */
+    @Override
+    public boolean createDatabasePathIfNotExists(String db) {
+        try {
+            Path dbPath = dataDirectory.resolve(db);
+            if (!Files.exists(dbPath)) {
+                Files.createDirectories(dbPath);
+            }
+            return true;
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error creating database path for " + db, e);
+            return false;
         }
     }
 }

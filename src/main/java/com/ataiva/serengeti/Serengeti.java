@@ -4,6 +4,7 @@ import com.ataiva.serengeti.index.IndexManager;
 import com.ataiva.serengeti.network.Network;
 import com.ataiva.serengeti.network.NetworkFactory;
 import com.ataiva.serengeti.search.FullTextSearch;
+import com.ataiva.serengeti.storage.IStorage;
 import com.ataiva.serengeti.storage.Storage;
 import com.ataiva.serengeti.storage.StorageFactory;
 import com.ataiva.serengeti.server.Server;
@@ -17,7 +18,7 @@ import java.util.Date;
 public class Serengeti {
     public static Network network;
     public static Server server;
-    public static Storage storage;
+    public static IStorage storage;
     public static StorageReshuffle storageReshuffle;
     public static StorageScheduler storageScheduler;
     public static IndexManager indexManager;

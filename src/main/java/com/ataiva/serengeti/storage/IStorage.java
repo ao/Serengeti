@@ -151,6 +151,14 @@ public interface IStorage {
     boolean dropDatabase(String db);
     
     /**
+     * Drop a database
+     * @param db Database name
+     * @param isReplicationAction Whether this is a replication action
+     * @return Whether the database was dropped
+     */
+    boolean dropDatabase(String db, boolean isReplicationAction);
+    
+    /**
      * Create a new table
      * @param db Database name
      * @param table Table name
@@ -184,6 +192,15 @@ public interface IStorage {
     boolean dropTable(String db, String table);
     
     /**
+     * Drop a table
+     * @param db Database name
+     * @param table Table name
+     * @param isReplicationAction Whether this is a replication action
+     * @return Whether the table was dropped
+     */
+    boolean dropTable(String db, String table, boolean isReplicationAction);
+    
+    /**
      * Get a list of tables in a database
      * @param db Database name
      * @return List of table names
@@ -204,4 +221,11 @@ public interface IStorage {
      * Shutdown the storage system
      */
     void shutdown();
+    
+    /**
+     * Create database path if it doesn't exist
+     * @param db Database name
+     * @return Whether the path was created
+     */
+    boolean createDatabasePathIfNotExists(String db);
 }

@@ -9,6 +9,8 @@ import com.ataiva.serengeti.security.authz.AuthorizationFilter;
 import com.ataiva.serengeti.security.authz.AuthorizationManager;
 import com.ataiva.serengeti.security.tls.KeyStoreGenerator;
 import com.ataiva.serengeti.security.tls.TLSConfig;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsServer;
 
@@ -154,14 +156,33 @@ public class SecurityManager {
         // Add authentication context
         server.createContext("/auth", authHandler).getFilters().add(authFilter);
         
-        // Add filters to existing contexts
-        server.getContexts().forEach(context -> {
-            // Skip the auth context, which already has the filter
-            if (!context.getPath().equals("/auth")) {
+        // Since we can't access all contexts directly, we'll remove the existing contexts
+        // and recreate them with the filters
+        
+        // Create a handler for the root context
+        HttpHandler rootHandler = server.createContext("/").getHandler();
+        server.removeContext("/");
+        HttpContext rootContext = server.createContext("/", rootHandler);
+        rootContext.getFilters().add(authFilter);
+        rootContext.getFilters().add(authzFilter);
+        
+        // Create handlers for other standard contexts
+        String[] paths = {
+            "/dashboard", "/interactive", "/meta", "/post",
+            "/health", "/metrics", "/admin"
+        };
+        
+        for (String path : paths) {
+            try {
+                HttpHandler handler = server.createContext(path).getHandler();
+                server.removeContext(path);
+                HttpContext context = server.createContext(path, handler);
                 context.getFilters().add(authFilter);
                 context.getFilters().add(authzFilter);
+            } catch (Exception e) {
+                LOGGER.warning("Could not add filters to context " + path + ": " + e.getMessage());
             }
-        });
+        }
         
         LOGGER.info("Security configured for HTTP server");
     }

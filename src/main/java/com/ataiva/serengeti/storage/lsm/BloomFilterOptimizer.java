@@ -45,7 +45,7 @@ public class BloomFilterOptimizer {
      * @return BitSet representing the bloom filter
      */
     public BitSet createFilter(List<String> keys) {
-        String timerId = profiler.startTimer("storage", "bloom_filter_creation", null);
+        String timerId = profiler.startTimer("storage", "bloom_filter_creation");
         
         try {
             int size = keys.size() * bitsPerElement;
@@ -73,7 +73,7 @@ public class BloomFilterOptimizer {
      * @return true if the key might be present, false if it's definitely not present
      */
     public boolean mightContain(String key, BitSet bloomFilter) {
-        String timerId = profiler.startTimer("storage", "bloom_filter_check", null);
+        String timerId = profiler.startTimer("storage", "bloom_filter_check");
         
         try {
             int size = bloomFilter.size();
