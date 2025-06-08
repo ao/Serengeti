@@ -118,4 +118,55 @@ public class PerformanceMetric {
         return String.format("%s.%s.%s: %.2f %s (%s)", 
             component, operation, name, value, unit, type);
     }
+    /**
+     * Builder class for creating PerformanceMetric instances.
+     */
+    public static class Builder {
+        private String name;
+        private double value;
+        private String unit;
+        private MetricType type;
+        private String component;
+        private String operation;
+        
+        public Builder setName(String name) {
+            this.name = name;
+            return this;
+        }
+        
+        public Builder setValue(double value) {
+            this.value = value;
+            return this;
+        }
+        
+        public Builder setUnit(String unit) {
+            this.unit = unit;
+            return this;
+        }
+        
+        public Builder setType(MetricType type) {
+            this.type = type;
+            return this;
+        }
+        
+        public Builder setComponent(String component) {
+            this.component = component;
+            return this;
+        }
+        
+        public Builder setOperation(String operation) {
+            this.operation = operation;
+            return this;
+        }
+        
+        public Builder setCategory(String category) {
+            // For backward compatibility, map category to component
+            this.component = category;
+            return this;
+        }
+        
+        public PerformanceMetric build() {
+            return new PerformanceMetric(name, value, unit, type, component, operation);
+        }
+    }
 }

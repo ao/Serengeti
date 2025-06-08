@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import com.ataiva.serengeti.performance.PerformanceDataCollector;
+import com.ataiva.serengeti.performance.PerformanceProfiler;
 
 /**
  * Factory class for creating SpillManager instances.
@@ -22,7 +22,7 @@ public class SpillManagerFactory {
     private static final int DEFAULT_MAX_ROWS_PER_CHUNK = 10000;
     
     // Performance data collector
-    private final PerformanceDataCollector performanceCollector;
+    private final PerformanceProfiler profiler;
     
     // Custom spill directory
     private final Path spillDirectory;
@@ -31,8 +31,8 @@ public class SpillManagerFactory {
      * Constructor
      * @param performanceCollector Performance data collector
      */
-    public SpillManagerFactory(PerformanceDataCollector performanceCollector) {
-        this(performanceCollector, null);
+    public SpillManagerFactory(PerformanceProfiler profiler) {
+        this(profiler, null);
     }
     
     /**
@@ -40,8 +40,8 @@ public class SpillManagerFactory {
      * @param performanceCollector Performance data collector
      * @param spillDirectory Custom spill directory
      */
-    public SpillManagerFactory(PerformanceDataCollector performanceCollector, Path spillDirectory) {
-        this.performanceCollector = performanceCollector;
+    public SpillManagerFactory(PerformanceProfiler profiler, Path spillDirectory) {
+        this.profiler = profiler;
         this.spillDirectory = spillDirectory;
     }
     
@@ -56,9 +56,9 @@ public class SpillManagerFactory {
         partitions.add(new HashMap<>());
         
         if (spillDirectory != null) {
-            return new HashJoinSpillManager(queryId, operationId, partitions, performanceCollector);
+            return new HashJoinSpillManager(queryId, operationId, partitions, profiler);
         } else {
-            return new HashJoinSpillManager(queryId, operationId, partitions, performanceCollector);
+            return new HashJoinSpillManager(queryId, operationId, partitions, profiler);
         }
     }
     
@@ -73,9 +73,9 @@ public class SpillManagerFactory {
             String queryId, String operationId, List<Map<Object, List<Object[]>>> partitions) {
         
         if (spillDirectory != null) {
-            return new HashJoinSpillManager(queryId, operationId, partitions, performanceCollector);
+            return new HashJoinSpillManager(queryId, operationId, partitions, profiler);
         } else {
-            return new HashJoinSpillManager(queryId, operationId, partitions, performanceCollector);
+            return new HashJoinSpillManager(queryId, operationId, partitions, profiler);
         }
     }
     
@@ -94,10 +94,10 @@ public class SpillManagerFactory {
         
         if (spillDirectory != null) {
             return new SortSpillManager(
-                queryId, operationId, chunks, comparator, performanceCollector, DEFAULT_MAX_ROWS_PER_CHUNK);
+                queryId, operationId, chunks, comparator, profiler, DEFAULT_MAX_ROWS_PER_CHUNK);
         } else {
             return new SortSpillManager(
-                queryId, operationId, chunks, comparator, performanceCollector, DEFAULT_MAX_ROWS_PER_CHUNK);
+                queryId, operationId, chunks, comparator, profiler, DEFAULT_MAX_ROWS_PER_CHUNK);
         }
     }
     
@@ -116,10 +116,10 @@ public class SpillManagerFactory {
         
         if (spillDirectory != null) {
             return new SortSpillManager(
-                queryId, operationId, chunks, comparator, performanceCollector, maxRowsPerChunk);
+                queryId, operationId, chunks, comparator, profiler, maxRowsPerChunk);
         } else {
             return new SortSpillManager(
-                queryId, operationId, chunks, comparator, performanceCollector, maxRowsPerChunk);
+                queryId, operationId, chunks, comparator, profiler, maxRowsPerChunk);
         }
     }
     

@@ -335,6 +335,25 @@ public class IndexManager implements Serializable {
     }
     
     /**
+     * Checks if a compound index exists for the specified columns
+     *
+     * @param databaseName The database name
+     * @param tableName The table name
+     * @param columns The column names to check for compound index
+     * @return true if a compound index exists, false otherwise
+     */
+    public boolean hasCompoundIndex(String databaseName, String tableName, String... columns) {
+        // For now, this implementation checks if individual indexes exist for all columns
+        // A true compound index implementation would require a different data structure
+        for (String column : columns) {
+            if (!hasIndex(databaseName, tableName, column)) {
+                return false;
+            }
+        }
+        return columns.length > 0;
+    }
+    
+    /**
      * Gets all indexes for a specific table
      * 
      * @param databaseName The database name

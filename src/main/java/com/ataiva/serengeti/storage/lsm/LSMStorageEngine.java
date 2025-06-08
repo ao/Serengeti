@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -230,7 +231,7 @@ public class LSMStorageEngine implements AutoCloseable {
             for (int i = ssTables.size() - 1; i >= 0; i--) {
                 SSTable ssTable = ssTables.get(i);
                 if (ssTable.mightContain(key)) {
-                    value = ssTable.get(key);
+                    value = ssTable.get(new String(key));
                     if (value != null) {
                         return value;
                     }
@@ -415,14 +416,15 @@ public class LSMStorageEngine implements AutoCloseable {
         // Process each SSTable, newer tables overwrite older ones
         for (SSTable ssTable : tablesToCompact) {
             // Get all keys from this SSTable
-            for (byte[] key : ssTable.getIndex().keySet()) {
+            for (String keyStr : ssTable.getIndex().keySet()) {
+                byte[] key = keyStr.getBytes();
                 // Skip if we already have a newer version of this key
                 if (mergedData.containsKey(key)) {
                     continue;
                 }
                 
                 // Read the value
-                byte[] value = ssTable.get(key);
+                byte[] value = ssTable.get(keyStr);
                 
                 // Add to merged data if not a tombstone, or if it's the newest tombstone
                 if (value != null) {
@@ -492,7 +494,7 @@ public class LSMStorageEngine implements AutoCloseable {
         for (int i = currentIndex + 1; i < allTables.size(); i++) {
             SSTable newerTable = allTables.get(i);
             if (newerTable.mightContain(key)) {
-                byte[] value = newerTable.get(key);
+                byte[] value = newerTable.get(new String(key));
                 if (value != null) {
                     return true;
                 }
@@ -550,19 +552,16 @@ public class LSMStorageEngine implements AutoCloseable {
         Files.list(dataDirectory)
             .filter(path -> path.toString().endsWith(".db"))
             .forEach(path -> {
-                try {
-                    // Open SSTable
-                    SSTable ssTable = new SSTable(path);
-                    
-                    // Add to list
-                    synchronized (ssTables) {
-                        ssTables.add(ssTable);
-                    }
-                    
-                    LOGGER.info("Loaded SSTable: " + path.getFileName());
-                } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to load SSTable: " + path, e);
+                // Open SSTable
+                SSTable ssTable = new SSTable();
+                ssTable.setFilePath(path);
+                
+                // Add to list
+                synchronized (ssTables) {
+                    ssTables.add(ssTable);
                 }
+                
+                LOGGER.info("Loaded SSTable: " + path.getFileName());
             });
     }
     

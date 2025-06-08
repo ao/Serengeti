@@ -173,7 +173,9 @@ public class CacheManager {
      * @return Cached value, or null if not found
      */
     public byte[] get(String key) {
-        String timerId = profiler.startTimer("storage", "cache_get", key);
+        String timerId = profiler.startTimer("storage", "cache_get");
+        // Store key in a local variable since we can't pass it to startTimer
+        String cacheKey = key;
         
         try {
             // Check L1 cache first
@@ -186,11 +188,7 @@ public class CacheManager {
                     entry.incrementAccessCount();
                     recordAccess(key);
                     
-                    profiler.recordMetric(new PerformanceMetric.Builder()
-                        .setCategory("storage")
-                        .setName("cache.l1_hit")
-                        .setValue(1)
-                        .build());
+                    profiler.recordCustomMetric("storage", "cache", "cache.l1_hit", 1, "count");
                     
                     return entry.getValue();
                 }
@@ -208,11 +206,7 @@ public class CacheManager {
                     entry.incrementAccessCount();
                     recordAccess(key);
                     
-                    profiler.recordMetric(new PerformanceMetric.Builder()
-                        .setCategory("storage")
-                        .setName("cache.l2_hit")
-                        .setValue(1)
-                        .build());
+                    profiler.recordCustomMetric("storage", "cache", "cache.l2_hit", 1, "count");
                     
                     // Promote to L1 cache if it passes admission policy
                     if (shouldAdmitToL1(entry)) {
@@ -228,11 +222,7 @@ public class CacheManager {
             // Cache miss
             misses.incrementAndGet();
             
-            profiler.recordMetric(new PerformanceMetric.Builder()
-                .setCategory("storage")
-                .setName("cache.miss")
-                .setValue(1)
-                .build());
+            profiler.recordCustomMetric("storage", "cache", "cache.miss", 1, "count");
             
             return null;
         } finally {
@@ -248,7 +238,9 @@ public class CacheManager {
      * @param size Size of the value in bytes
      */
     public void put(String key, byte[] value, int size) {
-        String timerId = profiler.startTimer("storage", "cache_put", key);
+        String timerId = profiler.startTimer("storage", "cache_put");
+        // Store key in a local variable since we can't pass it to startTimer
+        String cacheKey = key;
         
         try {
             CacheEntry entry = new CacheEntry(value, size);
@@ -293,11 +285,7 @@ public class CacheManager {
             l1Cache.put(key, entry);
             currentL1Size += entry.getSize();
             
-            profiler.recordMetric(new PerformanceMetric.Builder()
-                .setCategory("storage")
-                .setName("cache.l1_put")
-                .setValue(1)
-                .build());
+            profiler.recordCustomMetric("storage", "cache", "cache.l1_put", 1, "count");
         } finally {
             l1Lock.writeLock().unlock();
         }
@@ -321,11 +309,7 @@ public class CacheManager {
             l2Cache.put(key, entry);
             currentL2Size += entry.getSize();
             
-            profiler.recordMetric(new PerformanceMetric.Builder()
-                .setCategory("storage")
-                .setName("cache.l2_put")
-                .setValue(1)
-                .build());
+            profiler.recordCustomMetric("storage", "cache", "cache.l2_put", 1, "count");
         } finally {
             l2Lock.writeLock().unlock();
         }
@@ -350,11 +334,7 @@ public class CacheManager {
         // Add to L1
         putInL1(key, entry);
         
-        profiler.recordMetric(new PerformanceMetric.Builder()
-            .setCategory("storage")
-            .setName("cache.promotion")
-            .setValue(1)
-            .build());
+        profiler.recordCustomMetric("storage", "cache.promotion", "increment", 1, "count");
     }
     
     /**
@@ -701,11 +681,7 @@ public class CacheManager {
                 // For this example, we just log it
                 LOGGER.fine("Prefetching related key: " + keyToPrefetch);
                 
-                profiler.recordMetric(new PerformanceMetric.Builder()
-                    .setCategory("storage")
-                    .setName("cache.prefetch")
-                    .setValue(1)
-                    .build());
+                profiler.recordCustomMetric("storage", "cache.prefetch", "increment", 1, "count");
             }
         }
     }

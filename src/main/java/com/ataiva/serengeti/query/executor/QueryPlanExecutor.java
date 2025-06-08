@@ -578,7 +578,10 @@ public class QueryPlanExecutor {
             ascending = !operation.getFilterOperator().equalsIgnoreCase("DESC");
         }
         
-        LOGGER.info("Sorting results by " + sortColumn + " " + (ascending ? "ASC" : "DESC"));
+        // Create a final copy of the ascending variable for use in the lambda
+        final boolean isAscending = ascending;
+        
+        LOGGER.info("Sorting results by " + sortColumn + " " + (isAscending ? "ASC" : "DESC"));
         
         // Convert results to JSONObjects for sorting
         List<JSONObject> jsonResults = results.stream()
@@ -592,18 +595,18 @@ public class QueryPlanExecutor {
             
             // Handle null values
             if (valueA == null && valueB == null) return 0;
-            if (valueA == null) return ascending ? -1 : 1;
-            if (valueB == null) return ascending ? 1 : -1;
+            if (valueA == null) return isAscending ? -1 : 1;
+            if (valueB == null) return isAscending ? 1 : -1;
             
             // Compare based on type
             if (valueA instanceof Number && valueB instanceof Number) {
                 double numA = ((Number) valueA).doubleValue();
                 double numB = ((Number) valueB).doubleValue();
-                return ascending ? Double.compare(numA, numB) : Double.compare(numB, numA);
+                return isAscending ? Double.compare(numA, numB) : Double.compare(numB, numA);
             } else {
                 String strA = valueA.toString();
                 String strB = valueB.toString();
-                return ascending ? strA.compareTo(strB) : strB.compareTo(strA);
+                return isAscending ? strA.compareTo(strB) : strB.compareTo(strA);
             }
         });
         

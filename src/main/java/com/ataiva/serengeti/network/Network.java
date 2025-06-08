@@ -25,7 +25,7 @@ public class Network {
     int networkTimeout = 2500;
     int successStatus = 200;
 
-    private boolean hasPerformedNetworkSync = false;
+    protected boolean hasPerformedNetworkSync = false;
     public static boolean online = false;
 
     /***
@@ -478,4 +478,17 @@ public class Network {
         return "";
     }
 
+    /**
+     * Shuts down the network component and cleans up resources
+     */
+    public void shutdown() {
+        // Clear available nodes
+        availableNodes.clear();
+        
+        // Reset network state
+        hasPerformedNetworkSync = false;
+        online = false;
+        
+        System.out.println("Network component shut down");
+    }
 }

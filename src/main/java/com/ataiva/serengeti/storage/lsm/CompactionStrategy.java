@@ -47,7 +47,7 @@ public class CompactionStrategy {
      * @return true if compaction should be triggered, false otherwise
      */
     public boolean shouldCompact(List<SSTable> sstables) {
-        String timerId = profiler.startTimer("storage", "compaction_check", null);
+        String timerId = profiler.startTimer("storage", "compaction_check");
         
         try {
             if (compactionInProgress.get()) {
@@ -80,7 +80,7 @@ public class CompactionStrategy {
             throw new IllegalStateException("Compaction already in progress");
         }
         
-        String timerId = profiler.startTimer("storage", "compaction", null);
+        String timerId = profiler.startTimer("storage", "compaction");
         
         try {
             switch (compactionType) {

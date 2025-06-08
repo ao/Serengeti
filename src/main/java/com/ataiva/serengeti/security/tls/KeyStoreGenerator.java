@@ -111,7 +111,7 @@ public class KeyStoreGenerator {
         info.set(X509CertInfo.KEY, new CertificateX509Key(keyPair.getPublic()));
         
         // Set the algorithm ID
-        AlgorithmId algorithm = new AlgorithmId(AlgorithmId.sha256WithRSAEncryption_oid);
+        AlgorithmId algorithm = AlgorithmId.get("SHA256withRSA");
         info.set(X509CertInfo.ALGORITHM_ID, new CertificateAlgorithmId(algorithm));
         
         // Create the certificate and sign it

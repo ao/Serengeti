@@ -127,7 +127,9 @@ public class AsyncIOManager {
      * @param callback Callback to invoke when the read completes
      */
     public void readAsync(String filePath, long position, int size, IOCallback<ByteBuffer> callback) {
-        String timerId = profiler.startTimer("storage", "async_read", filePath);
+        String timerId = profiler.startTimer("storage", "async_read");
+        // Store filePath in a local variable since we can't pass it to startTimer
+        String currentFilePath = filePath;
         pendingOperations.incrementAndGet();
         
         ioExecutor.submit(() -> {
@@ -176,7 +178,9 @@ public class AsyncIOManager {
      * @param callback Callback to invoke when the write completes
      */
     public void writeAsync(String filePath, long position, ByteBuffer data, IOCallback<Integer> callback) {
-        String timerId = profiler.startTimer("storage", "async_write", filePath);
+        String timerId = profiler.startTimer("storage", "async_write");
+        // Store filePath in a local variable since we can't pass it to startTimer
+        String currentFilePath = filePath;
         pendingOperations.incrementAndGet();
         
         // Check if we should batch this write
@@ -274,7 +278,9 @@ public class AsyncIOManager {
             return;
         }
         
-        String timerId = profiler.startTimer("storage", "batch_flush", filePath);
+        String timerId = profiler.startTimer("storage", "batch_flush");
+        // Store filePath in a local variable since we can't pass it to startTimer
+        String currentFilePath = filePath;
         
         ioExecutor.submit(() -> {
             try {
