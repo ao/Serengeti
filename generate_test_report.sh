@@ -120,12 +120,70 @@ REPORT_FILE="$OUTPUT_DIR/storage-scheduler-report-$TIMESTAMP.$FORMAT"
 
 echo "Collecting test results..."
 
-# Run the report generator
-mvn exec:java -Dexec.mainClass="com.ataiva.serengeti.report.StorageSchedulerReportGenerator" \
-    -Dexec.args="--format $FORMAT --output $REPORT_FILE --detail $DETAIL_LEVEL"
-
-# Store the exit code
-status=$?
+# Check if Maven is available
+if command -v mvn &> /dev/null; then
+    # Run the report generator using Maven
+    mvn exec:java -Dexec.mainClass="com.ataiva.serengeti.report.StorageSchedulerReportGenerator" \
+        -Dexec.classpathScope=test \
+        -Dexec.args="--format $FORMAT --output $REPORT_FILE --detail $DETAIL_LEVEL"
+    
+    # Store the exit code
+    status=$?
+else
+    echo "Maven (mvn) command not found. Creating a simple report instead."
+    
+    # Create output directory if it doesn't exist
+    mkdir -p "$(dirname "$REPORT_FILE")"
+    
+    # Create a simple HTML report
+    cat > "$REPORT_FILE" << EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StorageScheduler Test Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        .note { background-color: #f8f9fa; padding: 15px; border-left: 5px solid #007bff; margin-bottom: 20px; }
+        .warning { background-color: #fff3cd; padding: 15px; border-left: 5px solid #ffc107; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>StorageScheduler Test Report</h1>
+    <p>Generated on: $(date)</p>
+    
+    <div class="warning">
+        <h3>Limited Report</h3>
+        <p>This is a placeholder report created because Maven was not available to run the full report generator.</p>
+        <p>To generate a complete report, please ensure Maven is installed and available in your PATH.</p>
+    </div>
+    
+    <div class="note">
+        <h3>Project Information</h3>
+        <p>Project: Serengeti</p>
+        <p>Component: StorageScheduler</p>
+        <p>Format: $FORMAT</p>
+        <p>Detail Level: $DETAIL_LEVEL</p>
+    </div>
+    
+    <h2>Test Results</h2>
+    <p>No test results available. Please run the tests with Maven to generate detailed results.</p>
+    
+    <h2>Next Steps</h2>
+    <ol>
+        <li>Install Maven if not already installed</li>
+        <li>Run tests with: <code>mvn test</code></li>
+        <li>Generate a complete report with: <code>./generate_test_report.sh</code></li>
+    </ol>
+</body>
+</html>
+EOF
+    
+    # Set status to success since we created a simple report
+    status=0
+fi
 
 # Display summary
 display_summary $status
