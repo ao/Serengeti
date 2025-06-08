@@ -6,6 +6,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import javax.xml.parsers.*;
 import javax.xml.transform.*;
 import javax.xml.transform.dom.DOMSource;
@@ -21,6 +22,115 @@ import static com.ataiva.serengeti.report.ReportGeneratorHelpers.*;
  * This class aggregates results from different test types and generates unified reports.
  */
 public class StorageSchedulerReportGenerator {
+
+    /**
+     * Main method for command-line execution.
+     *
+     * @param args Command-line arguments
+     */
+    public static void main(String[] args) throws IOException {
+        // Parse command-line arguments
+        String format = "html";
+        String outputPath = "target/reports/storage-scheduler/report." + format;
+        String detailLevel = "standard";
+        
+        for (int i = 0; i < args.length; i++) {
+            if (args[i].equals("--format") && i + 1 < args.length) {
+                format = args[i + 1].toLowerCase();
+                i++;
+            } else if (args[i].equals("--output") && i + 1 < args.length) {
+                outputPath = args[i + 1];
+                i++;
+            } else if (args[i].equals("--detail") && i + 1 < args.length) {
+                detailLevel = args[i + 1].toLowerCase();
+                i++;
+            }
+        }
+        
+        // Create report generator
+        StorageSchedulerReportGenerator generator = new StorageSchedulerReportGenerator();
+        
+        // Set metadata
+        String version = System.getProperty("project.version", "1.3-SNAPSHOT");
+        String gitCommit = System.getProperty("git.commit", "unknown");
+        String buildNumber = System.getProperty("build.number", "local");
+        generator.setMetadata(version, gitCommit, buildNumber);
+        
+        // Try to collect test results
+        boolean hasResults = false;
+        
+        try {
+            // Look for JUnit XML reports
+            Path reportsDir = Paths.get("target/surefire-reports");
+            if (Files.exists(reportsDir)) {
+                List<Path> xmlFiles = Files.list(reportsDir)
+                    .filter(p -> p.toString().endsWith(".xml"))
+                    .collect(Collectors.toList());
+                
+                for (Path p : xmlFiles) {
+                    String path = p.toString();
+                    if (path.contains("StorageSchedulerTest")) {
+                        generator.collectUnitTestResults(path);
+                    } else if (path.contains("StorageSchedulerFastTest")) {
+                        generator.collectFastTestResults(path);
+                    } else if (path.contains("StorageSchedulerIntegrationTest")) {
+                        generator.collectIntegrationTestResults(path);
+                    } else if (path.contains("StorageSchedulerPropertyTest")) {
+                        generator.collectPropertyTestResults(path);
+                    } else if (path.contains("StorageSchedulerChaosTest")) {
+                        generator.collectChaosTestResults(path);
+                    }
+                }
+                hasResults = true;
+            }
+            
+            // Try to collect coverage metrics
+            generator.collectCoverageMetrics("target/site/jacoco");
+            
+            // Try to collect mutation metrics
+            generator.collectMutationMetrics("target/pit-reports");
+            
+            // Try to collect benchmark results
+            Path benchmarkDir = Paths.get("target/benchmarks");
+            if (Files.exists(benchmarkDir)) {
+                List<Path> jsonFiles = Files.list(benchmarkDir)
+                    .filter(p -> p.toString().endsWith(".json"))
+                    .collect(Collectors.toList());
+                
+                if (!jsonFiles.isEmpty()) {
+                    generator.collectBenchmarkResults(jsonFiles.get(0).toString());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error collecting test results: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        // Generate report based on format
+        boolean success = false;
+        switch (format) {
+            case "html":
+                success = generator.generateHtmlReport(outputPath);
+                break;
+            case "xml":
+                success = generator.generateXmlReport(outputPath);
+                break;
+            case "json":
+                success = generator.generateJsonReport(outputPath);
+                break;
+            default:
+                System.err.println("Unsupported format: " + format);
+                System.exit(1);
+        }
+        
+        if (success) {
+            System.out.println("Report generated successfully: " + outputPath);
+            System.exit(0);
+        } else {
+            System.err.println("Failed to generate report");
+            System.exit(1);
+        }
+    }
 
     // Constants for report paths
     private static final String REPORT_DIR = "target/reports/storage-scheduler";
