@@ -6,7 +6,7 @@
 
     <groupId>com.ataiva.serengeti</groupId>
     <artifactId>Serengeti</artifactId>
-    <version>1.3.2</version>
+    <version>1.3.3</version>
 
     <build>
         <sourceDirectory>src/main/java</sourceDirectory>
