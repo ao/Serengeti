@@ -43,8 +43,20 @@ Before installing Serengeti, ensure your system meets the following requirements
 
 4. The built JAR will be in the `target` directory:
    ```
-   target/serengeti-1.0-SNAPSHOT.jar
+   target/serengeti-<version>.jar
    ```
+   
+   Where `<version>` is the current version of the project.
+
+## Versioning System
+
+Serengeti uses semantic versioning (MAJOR.MINOR.PATCH):
+
+- **MAJOR**: Incremented for incompatible API changes
+- **MINOR**: Incremented for new functionality in a backward-compatible manner
+- **PATCH**: Incremented for backward-compatible bug fixes
+
+The current version can be found in the `version.txt` file in the project root directory. This file serves as the source of truth for the current version of the application.
 
 ## Running Serengeti
 

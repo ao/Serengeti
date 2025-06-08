@@ -5,6 +5,6 @@ RUN mvn clean package -DskipTests
 
 FROM eclipse-temurin:11-jre-focal
 WORKDIR /app
-COPY --from=build /app/target/Serengeti-1.3-SNAPSHOT-jar-with-dependencies.jar .
+COPY --from=build /app/target/Serengeti-*-jar-with-dependencies.jar ./serengeti.jar
 EXPOSE 1985
-CMD ["java", "-jar", "Serengeti-1.3-SNAPSHOT-jar-with-dependencies.jar"]
+CMD ["java", "-jar", "serengeti.jar"]

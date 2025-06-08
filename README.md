@@ -51,7 +51,9 @@ Set the `classpath` to `Serengeti` and the `Main class` to `Serengeti`
 
 `mvn clean install`
 
-`java -jar target/serengeti-1.0-SNAPSHOT.jar`
+`java -jar target/serengeti-<version>.jar`
+
+Where `<version>` is the current version of the project. The current version can be found in the `version.txt` file in the project root directory.
 
 ## Testing
 
