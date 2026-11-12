@@ -18,8 +18,10 @@ public final class Serengeti {
         System.setProperty("sun.net.httpserver.maxReqTime", "30");
         System.setProperty("sun.net.httpserver.maxRspTime", "60");
         String configPath = null;
+        boolean health = false;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
+                case "--health" -> health = true;
                 case "--config" -> {
                     if (i + 1 >= args.length) {
                         fail("--config needs a file name");
@@ -31,7 +33,8 @@ public final class Serengeti {
                     return;
                 }
                 case "--help", "-h" -> {
-                    System.out.println("usage: serengeti [--config FILE] [--version]\n"
+                    System.out.println("usage: serengeti [--config FILE] [--version] [--health]\n"
+                            + "--health asks the running node's GET /health and exits 0 if it answers 200.\n"
                             + "Settings come from FILE (or SERENGETI_CONFIG) and SERENGETI_* environment variables.\n"
                             + "See docs/CONFIGURATION.md.");
                     return;
@@ -41,6 +44,9 @@ public final class Serengeti {
         }
         try {
             Config config = Config.load(configPath, System.getenv());
+            if (health) {
+                System.exit(probe(config) ? 0 : 1);
+            }
             Node node = Node.start(config, Node.QUERIES);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {
@@ -53,6 +59,29 @@ public final class Serengeti {
             fail(e.getMessage());
         } catch (IOException e) {
             fail("cannot start: " + e.getMessage());
+        }
+    }
+
+    /** For container health checks: the image has no curl. A wildcard bind is reached on loopback. */
+    static boolean probe(Config config) {
+        String host = switch (config.bind) {
+            case "0.0.0.0", "*" -> "127.0.0.1";
+            case "::" -> "[::1]";
+            default -> config.bind.contains(":") ? "[" + config.bind + "]" : config.bind;
+        };
+        try {
+            java.net.http.HttpClient c = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofSeconds(3)).build();
+            java.net.http.HttpResponse<Void> r = c.send(java.net.http.HttpRequest.newBuilder(
+                    java.net.URI.create(config.scheme() + "://" + host + ":" + config.port + "/health"))
+                    .timeout(java.time.Duration.ofSeconds(3)).build(),
+                    java.net.http.HttpResponse.BodyHandlers.discarding());
+            return r.statusCode() == 200;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
