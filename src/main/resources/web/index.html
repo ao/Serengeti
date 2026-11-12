@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serengeti</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>Serengeti</h1>
+  <dl id="status"></dl>
+</header>
+<main>
+  <form id="query-form">
+    <label for="query">Query</label>
+    <textarea id="query" rows="4" spellcheck="false">SHOW DATABASES</textarea>
+    <button type="submit">Run</button>
+    <span id="elapsed"></span>
+  </form>
+  <p id="error" role="alert"></p>
+  <div id="result"></div>
+</main>
+</body>
+</html>

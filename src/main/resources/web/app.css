@@ -1,0 +1,16 @@
+body { font: 15px/1.4 system-ui, sans-serif; margin: 0; color: #1d1d1f; background: #fafafa; }
+header { padding: 12px 24px; border-bottom: 1px solid #ddd; background: #fff; }
+h1 { font-size: 18px; margin: 0 0 6px; }
+#status { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; font-size: 13px; color: #555; }
+#status dt { font-weight: 600; }
+#status dd { margin: 0 8px 0 4px; }
+main { padding: 16px 24px; }
+form { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; }
+label { grid-column: 1 / -1; font-weight: 600; }
+textarea { font: 14px ui-monospace, monospace; padding: 8px; }
+button { padding: 6px 16px; }
+#error { color: #b00020; white-space: pre-wrap; }
+table { border-collapse: collapse; font: 13px ui-monospace, monospace; }
+th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #f0f0f0; }
+pre { background: #fff; border: 1px solid #ddd; padding: 8px; overflow: auto; }

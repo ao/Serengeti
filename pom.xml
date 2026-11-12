@@ -79,10 +79,13 @@
                 <configuration>
                     <compilerArgs>
                         <arg>-Xlint:all,-serial,-processing</arg>
-                        <!-- v1 KeyStoreGenerator; removed with the v1 code. -->
-                        <arg>--add-exports</arg>
-                        <arg>java.base/sun.security.x509=ALL-UNNAMED</arg>
                     </compilerArgs>
+                    <!-- Temporary: the v1 sources are not built and are deleted in the next commit. Only
+                         Serengeti.java and the core package are compiled. -->
+                    <includes>
+                        <include>com/ataiva/serengeti/Serengeti.java</include>
+                        <include>com/ataiva/serengeti/core/**</include>
+                    </includes>
                 </configuration>
             </plugin>
             <plugin>
