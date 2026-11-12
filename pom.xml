@@ -6,60 +6,101 @@
 
     <groupId>com.ataiva.serengeti</groupId>
     <artifactId>Serengeti</artifactId>
-    <version>1.3.4</version>
+    <version>2.0.0-SNAPSHOT</version>
+    <name>Serengeti</name>
+    <url>https://github.com/ao/Serengeti</url>
+    <licenses>
+        <license>
+            <name>Apache-2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <junit.version>5.11.4</junit.version>
+        <jqwik.version>1.9.2</jqwik.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+            <version>20260719</version>
+        </dependency>
+        <dependency>
+            <groupId>org.mindrot</groupId>
+            <artifactId>jbcrypt</artifactId>
+            <version>0.4</version>
+        </dependency>
+        <!-- Used only by the v1 code that the core replaces; removed with it. -->
+        <dependency>
+            <groupId>org.lz4</groupId>
+            <artifactId>lz4-java</artifactId>
+            <version>1.8.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.xerial.snappy</groupId>
+            <artifactId>snappy-java</artifactId>
+            <version>1.1.10.9</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.jqwik</groupId>
+            <artifactId>jqwik</artifactId>
+            <version>${jqwik.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
     <build>
-        <sourceDirectory>src/main/java</sourceDirectory>
-        <testSourceDirectory>src/test/java</testSourceDirectory>
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>src/main/resources-filtered</directory>
+                <filtering>true</filtering>
             </resource>
         </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
+                <version>3.13.0</version>
                 <configuration>
-                    <source>1.8</source>
-                    <target>1.8</target>
-                    <excludes>
-                        <!-- Exclude tests that are incompatible with the new IStorage interface -->
-                        <exclude>**/StorageCompressionIntegrationTest.java</exclude>
-                        <exclude>**/StorageSchedulerChaosTest.java</exclude>
-                        <exclude>**/MockServerPerformanceTest.java</exclude>
-                        <exclude>**/ServerPerformanceTest.java</exclude>
-                        <exclude>**/StoragePerformanceTest.java</exclude>
-                        <exclude>**/AdvancedSearchPerformanceTest.java</exclude>
-                        <exclude>**/HashJoinSpillManagerTest.java</exclude>
-                        <exclude>**/SortSpillManagerTest.java</exclude>
-                        <exclude>**/AdvancedSearchTest.java</exclude>
-                        <exclude>**/SSTableTest.java</exclude>
-                        <exclude>**/SSTableFastTest.java</exclude>
-                        <exclude>**/StorageImplTest.java</exclude>
-                    </excludes>
+                    <compilerArgs>
+                        <arg>-Xlint:all,-serial,-processing</arg>
+                        <!-- v1 KeyStoreGenerator; removed with the v1 code. -->
+                        <arg>--add-exports</arg>
+                        <arg>java.base/sun.security.x509=ALL-UNNAMED</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
-<!--            <plugin>-->
-<!--                &lt;!&ndash; Build an executable JAR &ndash;&gt;-->
-<!--                <groupId>org.apache.maven.plugins</groupId>-->
-<!--                <artifactId>maven-jar-plugin</artifactId>-->
-<!--                <version>3.2.0</version>-->
-<!--                <configuration>-->
-<!--                    <archive>-->
-<!--                        <manifest>-->
-<!--                            <addClasspath>true</addClasspath>-->
-<!--                            <classpathPrefix>lib/</classpathPrefix>-->
-<!--                            <mainClass>Serengeti</mainClass>-->
-<!--                        </manifest>-->
-<!--                    </archive>-->
-<!--                </configuration>-->
-<!--            </plugin>-->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Properties.java</include>
+                    </includes>
+                    <trimStackTrace>false</trimStackTrace>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
-                <version>3.1.1</version>
+                <version>3.7.1</version>
                 <configuration>
                     <archive>
                         <manifest>
@@ -80,649 +121,6 @@
                     </execution>
                 </executions>
             </plugin>
-            
-            <!-- Surefire plugin for test execution -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.1.2</version>
-                <configuration>
-                    <includes>
-                        <include>**/*Test.java</include>
-                    </includes>
-                    <excludes>
-                        <!-- Exclude tests that are incompatible with the new IStorage interface -->
-                        <exclude>**/StorageCompressionIntegrationTest.java</exclude>
-                        <exclude>**/StorageSchedulerChaosTest.java</exclude>
-                        <exclude>**/MockServerPerformanceTest.java</exclude>
-                        <exclude>**/ServerPerformanceTest.java</exclude>
-                        <exclude>**/StoragePerformanceTest.java</exclude>
-                        <exclude>**/AdvancedSearchPerformanceTest.java</exclude>
-                        <exclude>**/HashJoinSpillManagerTest.java</exclude>
-                        <exclude>**/SortSpillManagerTest.java</exclude>
-                        <exclude>**/AdvancedSearchTest.java</exclude>
-                        <exclude>**/SSTableTest.java</exclude>
-                        <exclude>**/SSTableFastTest.java</exclude>
-                        <exclude>**/StorageImplTest.java</exclude>
-                    </excludes>
-                    <skipTests>true</skipTests>
-                </configuration>
-            </plugin>
-            <!-- JaCoCo plugin for code coverage -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.11</version>
-                <executions>
-                    <execution>
-                        <id>prepare-agent</id>
-                        <goals>
-                            <goal>prepare-agent</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>report</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>report</goal>
-                        </goals>
-                        <configuration>
-                            <outputDirectory>${project.reporting.outputDirectory}/jacoco</outputDirectory>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>check</id>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                        <configuration>
-                            <rules>
-                                <!-- Global rule applied to all classes -->
-                                <rule>
-                                    <element>BUNDLE</element>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>0.00</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
-                                <!-- Specific rule for StorageScheduler class -->
-                                <rule>
-                                    <element>CLASS</element>
-                                    <includes>
-                                        <include>com.ataiva.serengeti.storage.StorageScheduler</include>
-                                    </includes>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>0.90</minimum>
-                                        </limit>
-                                        <limit>
-                                            <counter>BRANCH</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>0.85</minimum>
-                                        </limit>
-                                        <limit>
-                                            <counter>METHOD</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>1.00</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
-                            </rules>
-                            <failOnViolation>true</failOnViolation>
-                            <excludes>
-                                <!-- Exclude UI classes from coverage check -->
-                                <exclude>com/ataiva/serengeti/ui/**/*</exclude>
-                            </excludes>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            
-            <!-- SpotBugs plugin for static analysis -->
-            <plugin>
-                <groupId>com.github.spotbugs</groupId>
-                <artifactId>spotbugs-maven-plugin</artifactId>
-                <version>4.7.3.6</version>
-                <configuration>
-                    <effort>Max</effort>
-                    <threshold>Medium</threshold>
-                    <failOnError>false</failOnError>
-                </configuration>
-            </plugin>
-            
-            <!-- PMD plugin for static analysis -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-pmd-plugin</artifactId>
-                <version>3.21.0</version>
-                <configuration>
-                    <failOnViolation>false</failOnViolation>
-                    <printFailingErrors>true</printFailingErrors>
-                </configuration>
-            </plugin>
-            
-            <!-- Checkstyle plugin for code style checking -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-checkstyle-plugin</artifactId>
-                <version>3.3.1</version>
-                <configuration>
-                    <configLocation>google_checks.xml</configLocation>
-                    <failOnViolation>false</failOnViolation>
-                </configuration>
-            </plugin>
-            <!-- PIT Mutation Testing plugin -->
-            <plugin>
-                <groupId>org.pitest</groupId>
-                <artifactId>pitest-maven</artifactId>
-                <version>1.15.3</version>
-                <configuration>
-                    <targetClasses>
-                        <param>com.ataiva.serengeti.storage.StorageScheduler</param>
-                    </targetClasses>
-                    <targetTests>
-                        <param>com.ataiva.serengeti.unit.storage.StorageSchedulerTest</param>
-                        <param>com.ataiva.serengeti.storage.StorageSchedulerFastTest</param>
-                        <param>com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest</param>
-                    </targetTests>
-                    <mutators>
-                        <!-- Default strong mutators -->
-                        <mutator>DEFAULTS</mutator>
-                        <!-- Additional mutators for more thorough testing -->
-                        <mutator>CONSTRUCTOR_CALLS</mutator>
-                        <mutator>NON_VOID_METHOD_CALLS</mutator>
-                        <mutator>REMOVE_CONDITIONALS</mutator>
-                    </mutators>
-                    <timeoutConstant>10000</timeoutConstant>
-                    <threads>4</threads>
-                    <outputFormats>
-                        <param>HTML</param>
-                        <param>XML</param>
-                    </outputFormats>
-                    <mutationThreshold>85</mutationThreshold>
-                    <coverageThreshold>90</coverageThreshold>
-                    <historyInputFile>${project.build.directory}/pit-history/history.bin</historyInputFile>
-                    <historyOutputFile>${project.build.directory}/pit-history/history.bin</historyOutputFile>
-                    <timestampedReports>false</timestampedReports>
-                    <excludedMethods>
-                        <param>toString</param>
-                        <param>hashCode</param>
-                        <param>equals</param>
-                    </excludedMethods>
-                    <avoidCallsTo>
-                        <avoidCallsTo>java.util.logging</avoidCallsTo>
-                        <avoidCallsTo>org.apache.log4j</avoidCallsTo>
-                        <avoidCallsTo>org.slf4j</avoidCallsTo>
-                        <avoidCallsTo>org.apache.commons.logging</avoidCallsTo>
-                    </avoidCallsTo>
-                </configuration>
-                <dependencies>
-                    <dependency>
-                        <groupId>org.pitest</groupId>
-                        <artifactId>pitest-junit5-plugin</artifactId>
-                        <version>1.2.1</version>
-                    </dependency>
-                </dependencies>
-            </plugin>
         </plugins>
     </build>
-    
-    <profiles>
-        <profile>
-            <id>chaos-testing</id>
-            <dependencies>
-                <dependency>
-                    <groupId>de.codecentric</groupId>
-                    <artifactId>chaos-monkey-spring-boot</artifactId>
-                    <version>2.6.1</version>
-                    <scope>test</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-starter-actuator</artifactId>
-                    <version>2.7.14</version>
-                    <scope>test</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-starter-web</artifactId>
-                    <version>2.7.14</version>
-                    <scope>test</scope>
-                </dependency>
-                <dependency>
-                    <groupId>io.github.resilience4j</groupId>
-                    <artifactId>resilience4j-core</artifactId>
-                    <version>1.7.1</version>
-                    <scope>test</scope>
-                </dependency>
-                <!-- Removed fault-injection-core dependency due to availability issues -->
-            </dependencies>
-        </profile>
-        <profile>
-            <id>fast-tests</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-surefire-plugin</artifactId>
-                        <version>3.1.2</version>
-                        <configuration>
-                            <includes>
-                                <include>**/*FastTest.java</include>
-                            </includes>
-                            <excludes>
-                                <!-- Exclude tests that are incompatible with the new IStorage interface -->
-                                <exclude>**/StorageCompressionIntegrationTest.java</exclude>
-                                <exclude>**/StorageSchedulerChaosTest.java</exclude>
-                                <exclude>**/MockServerPerformanceTest.java</exclude>
-                                <exclude>**/ServerPerformanceTest.java</exclude>
-                                <exclude>**/StoragePerformanceTest.java</exclude>
-                                <exclude>**/AdvancedSearchPerformanceTest.java</exclude>
-                                <exclude>**/HashJoinSpillManagerTest.java</exclude>
-                                <exclude>**/SortSpillManagerTest.java</exclude>
-                                <exclude>**/AdvancedSearchTest.java</exclude>
-                                <exclude>**/SSTableTest.java</exclude>
-                                <exclude>**/SSTableFastTest.java</exclude>
-                                <exclude>**/StorageImplTest.java</exclude>
-                            </excludes>
-                            <parallel>classes</parallel>
-                            <threadCount>4</threadCount>
-                            <groups>fast</groups>
-                        </configuration>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.jacoco</groupId>
-                        <artifactId>jacoco-maven-plugin</artifactId>
-                        <version>0.8.11</version>
-                        <executions>
-                            <execution>
-                                <id>prepare-agent</id>
-                                <goals>
-                                    <goal>prepare-agent</goal>
-                                </goals>
-                            </execution>
-                            <execution>
-                                <id>report</id>
-                                <phase>test</phase>
-                                <goals>
-                                    <goal>report</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        
-        <!-- Profile for JaCoCo code coverage -->
-        <profile>
-            <id>jacoco</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.jacoco</groupId>
-                        <artifactId>jacoco-maven-plugin</artifactId>
-                        <version>0.8.11</version>
-                        <executions>
-                            <execution>
-                                <id>prepare-agent</id>
-                                <goals>
-                                    <goal>prepare-agent</goal>
-                                </goals>
-                            </execution>
-                            <execution>
-                                <id>report</id>
-                                <phase>test</phase>
-                                <goals>
-                                    <goal>report</goal>
-                                </goals>
-                                <configuration>
-                                    <formats>
-                                        <format>HTML</format>
-                                        <format>XML</format>
-                                        <format>CSV</format>
-                                    </formats>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>check</id>
-                                <goals>
-                                    <goal>check</goal>
-                                </goals>
-                                <configuration>
-                                    <rules>
-                                        <!-- Specific rule for StorageScheduler class -->
-                                        <rule>
-                                            <element>CLASS</element>
-                                            <includes>
-                                                <include>com.ataiva.serengeti.storage.StorageScheduler</include>
-                                            </includes>
-                                            <limits>
-                                                <limit>
-                                                    <counter>LINE</counter>
-                                                    <value>COVEREDRATIO</value>
-                                                    <minimum>0.90</minimum>
-                                                </limit>
-                                                <limit>
-                                                    <counter>BRANCH</counter>
-                                                    <value>COVEREDRATIO</value>
-                                                    <minimum>0.85</minimum>
-                                                </limit>
-                                                <limit>
-                                                    <counter>METHOD</counter>
-                                                    <value>COVEREDRATIO</value>
-                                                    <minimum>1.00</minimum>
-                                                </limit>
-                                            </limits>
-                                        </rule>
-                                    </rules>
-                                    <failOnViolation>true</failOnViolation>
-                                    <excludes>
-                                        <!-- Exclude UI classes from coverage check -->
-                                        <exclude>com/ataiva/serengeti/ui/**/*</exclude>
-                                    </excludes>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        
-        <!-- Profile for PIT Mutation Testing -->
-        <profile>
-            <id>mutation</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.pitest</groupId>
-                        <artifactId>pitest-maven</artifactId>
-                        <version>1.15.3</version>
-                        <executions>
-                            <execution>
-                                <id>run-mutation-tests</id>
-                                <goals>
-                                    <goal>mutationCoverage</goal>
-                                </goals>
-                                <phase>test</phase>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        
-        <!-- Profile for StorageScheduler Mutation Testing -->
-        <profile>
-            <id>storage-scheduler-mutation</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.pitest</groupId>
-                        <artifactId>pitest-maven</artifactId>
-                        <version>1.15.3</version>
-                        <executions>
-                            <execution>
-                                <id>run-storage-scheduler-mutation-tests</id>
-                                <goals>
-                                    <goal>mutationCoverage</goal>
-                                </goals>
-                                <phase>test</phase>
-                                <configuration>
-                                    <targetClasses>
-                                        <param>com.ataiva.serengeti.storage.StorageScheduler</param>
-                                    </targetClasses>
-                                    <targetTests>
-                                        <param>com.ataiva.serengeti.unit.storage.StorageSchedulerTest</param>
-                                        <param>com.ataiva.serengeti.storage.StorageSchedulerFastTest</param>
-                                        <param>com.ataiva.serengeti.storage.lsm.StorageSchedulerFastTest</param>
-                                    </targetTests>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        
-        <!-- Profile for JMH Benchmark Testing -->
-        <profile>
-            <id>benchmark</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-compiler-plugin</artifactId>
-                        <version>3.11.0</version>
-                        <configuration>
-                            <source>1.8</source>
-                            <target>1.8</target>
-                            <annotationProcessorPaths>
-                                <path>
-                                    <groupId>org.openjdk.jmh</groupId>
-                                    <artifactId>jmh-generator-annprocess</artifactId>
-                                    <version>1.36</version>
-                                </path>
-                            </annotationProcessorPaths>
-                        </configuration>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>exec-maven-plugin</artifactId>
-                        <version>3.1.0</version>
-                        <executions>
-                            <execution>
-                                <id>run-benchmarks</id>
-                                <phase>test</phase>
-                                <goals>
-                                    <goal>java</goal>
-                                </goals>
-                                <configuration>
-                                    <mainClass>org.openjdk.jmh.Main</mainClass>
-                                    <includePluginDependencies>true</includePluginDependencies>
-                                    <arguments>
-                                        <argument>${jmh.includes:.*}</argument>
-                                        <argument>${jmh.args:}</argument>
-                                    </arguments>
-                                </configuration>
-                            </execution>
-                        </executions>
-                        <dependencies>
-                            <dependency>
-                                <groupId>org.openjdk.jmh</groupId>
-                                <artifactId>jmh-core</artifactId>
-                                <version>1.36</version>
-                            </dependency>
-                            <dependency>
-                                <groupId>org.openjdk.jmh</groupId>
-                                <artifactId>jmh-generator-annprocess</artifactId>
-                                <version>1.36</version>
-                            </dependency>
-                        </dependencies>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
-    
-    <dependencies>
-        <dependency>
-            <groupId>org.json</groupId>
-            <artifactId>json</artifactId>
-            <version>20201115</version>
-        </dependency>
-        
-        <!-- LZ4 Compression -->
-        <dependency>
-            <groupId>org.lz4</groupId>
-            <artifactId>lz4-java</artifactId>
-            <version>1.8.0</version>
-        </dependency>
-        
-        <!-- Snappy Compression -->
-        <dependency>
-            <groupId>org.xerial.snappy</groupId>
-            <artifactId>snappy-java</artifactId>
-            <version>1.1.10.4</version>
-        </dependency>
-        
-        <!-- jBCrypt for password hashing -->
-        <dependency>
-            <groupId>org.mindrot</groupId>
-            <artifactId>jbcrypt</artifactId>
-            <version>0.4</version>
-        </dependency>
-        
-        <!-- Java Concurrency Utilities -->
-        <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>31.1-jre</version>
-        </dependency>
-        
-        <!-- JUnit 4 Dependencies (for legacy test compatibility) -->
-        <dependency>
-            <groupId>junit</groupId>
-            <artifactId>junit</artifactId>
-            <version>4.13.2</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <!-- JUnit 5 Dependencies -->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-api</artifactId>
-            <version>5.9.2</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-engine</artifactId>
-            <version>5.9.2</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-params</artifactId>
-            <version>5.9.2</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <!-- JUnit 4 to JUnit 5 Bridge -->
-        <dependency>
-            <groupId>org.junit.vintage</groupId>
-            <artifactId>junit-vintage-engine</artifactId>
-            <version>5.9.2</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <!-- PowerMock Dependencies for QueryPlanExecutorTest -->
-        <dependency>
-            <groupId>org.powermock</groupId>
-            <artifactId>powermock-module-junit4</artifactId>
-            <version>2.0.9</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.powermock</groupId>
-            <artifactId>powermock-api-mockito2</artifactId>
-            <version>2.0.9</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <!-- PIT Mutation Testing Dependencies -->
-        <dependency>
-            <groupId>org.pitest</groupId>
-            <artifactId>pitest-junit5-plugin</artifactId>
-            <version>1.2.1</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <!-- Mockito for mocking -->
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-core</artifactId>
-            <version>5.3.1</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-junit-jupiter</artifactId>
-            <version>5.3.1</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <!-- PowerMock dependencies are already defined above -->
-        
-        <!-- Awaitility for testing async code -->
-        <dependency>
-            <groupId>org.awaitility</groupId>
-            <artifactId>awaitility</artifactId>
-            <version>4.2.0</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <!-- JMH for performance benchmarking -->
-        <dependency>
-            <groupId>org.openjdk.jmh</groupId>
-            <artifactId>jmh-core</artifactId>
-            <version>1.36</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.openjdk.jmh</groupId>
-            <artifactId>jmh-generator-annprocess</artifactId>
-            <version>1.36</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpclient</artifactId>
-            <version>4.5.13</version>
-            <scope>test</scope>
-        </dependency>
-        
-        <!-- jqwik property-based testing dependencies -->
-        <dependency>
-            <groupId>net.jqwik</groupId>
-            <artifactId>jqwik</artifactId>
-            <version>1.7.3</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.jqwik</groupId>
-            <artifactId>jqwik-engine</artifactId>
-            <version>1.7.3</version>
-            <scope>test</scope>
-        </dependency>
-        <!-- Resilience Libraries -->
-        <dependency>
-            <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-core</artifactId>
-            <version>1.7.1</version>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
-    <!-- Repositories -->
-    <repositories>
-        <repository>
-            <id>maven-central</id>
-            <url>https://repo.maven.apache.org/maven2</url>
-        </repository>
-    </repositories>
-    
-    <scm>
-        <connection>scm:git:${project.scm.url}</connection>
-        <developerConnection>scm:git:${project.scm.url}</developerConnection>
-        <url>git@github.com:ao/Serengeti.git</url>
-        <tag>HEAD</tag>
-    </scm>
-
 </project>
