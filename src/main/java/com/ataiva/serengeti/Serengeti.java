@@ -41,7 +41,7 @@ public final class Serengeti {
         }
         try {
             Config config = Config.load(configPath, System.getenv());
-            Node node = Node.start(config, Node.NO_QUERIES);
+            Node node = Node.start(config, Node.QUERIES);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {
                     node.close();

@@ -92,6 +92,41 @@ class NodeTest {
         }
     }
 
+    private static HttpResponse<String> query(Node n, String q) throws Exception {
+        return HttpClient.newHttpClient().send(HttpRequest.newBuilder(
+                URI.create("http://127.0.0.1:" + n.address().getPort() + "/v1/query"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Basic " + Base64.getEncoder()
+                        .encodeToString(("admin:" + PW).getBytes(StandardCharsets.UTF_8)))
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        com.ataiva.serengeti.core.json.Json.write(Map.of("query", q)))).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void queriesOverHttpAreDurableAcrossARestart() throws Exception {
+        Path data = tmp.resolve("data");
+        Config c = config(data, "SERENGETI_ADMIN_PASSWORD", PW);
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+            assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
+            HttpResponse<String> ins = query(n, "INSERT INTO shop.items (_id, name, qty) VALUES "
+                    + "('a', '<img src=x onerror=alert(1)>', 2), ('b', 'nut', 10)");
+            assertEquals(200, ins.statusCode(), ins.body());
+            HttpResponse<String> bad = query(n, "SELECT * FROM");
+            assertEquals(400, bad.statusCode());
+            assertTrue(bad.body().contains("position"), bad.body());
+            assertEquals(400, query(n, "SELECT * FROM shop.missing").statusCode());
+        }
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            HttpResponse<String> r = query(n, "SELECT _id, name FROM shop.items WHERE qty > 1 ORDER BY qty DESC");
+            assertEquals(200, r.statusCode(), r.body());
+            Map<String, Object> body = com.ataiva.serengeti.core.json.Json.parseObject(r.body());
+            assertEquals(java.util.List.of(java.util.List.of("b", "nut"),
+                    java.util.List.of("a", "<img src=x onerror=alert(1)>")), body.get("rows"));
+        }
+    }
+
     @Test
     void aStaleSetupTokenIsRemovedWhenThePasswordComesFromTheEnvironment() throws Exception {
         Path data = tmp.resolve("data");

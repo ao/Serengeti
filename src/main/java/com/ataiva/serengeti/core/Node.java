@@ -2,6 +2,9 @@ package com.ataiva.serengeti.core;
 
 import com.ataiva.serengeti.core.config.Config;
 import com.ataiva.serengeti.core.config.ConfigException;
+import com.ataiva.serengeti.core.query.Query;
+import com.ataiva.serengeti.core.query.QueryException;
+import java.io.UncheckedIOException;
 import com.ataiva.serengeti.core.server.HttpApi;
 import com.ataiva.serengeti.core.server.QueryService;
 import com.ataiva.serengeti.core.server.SetupToken;
@@ -40,6 +43,20 @@ public final class Node implements AutoCloseable {
     /** Until the query language is wired in, every query is refused. */
     public static final QueryFactory NO_QUERIES = (s, c) -> (q, r) -> {
         throw new QueryService.Rejected(501, "queries are not available in this build");
+    };
+
+    /** The query language of docs/QUERY.md. Query mistakes are 400; storage failures are 500. */
+    public static final QueryFactory QUERIES = (engine, clock) -> {
+        Query q = new Query(engine, clock);
+        return (text, role) -> {
+            try {
+                return q.run(text).toJson();
+            } catch (QueryException e) {
+                throw new QueryService.Rejected(400, e.getMessage());
+            } catch (IOException e) {
+                throw new UncheckedIOException("storage failed", e);
+            }
+        };
     };
 
     private Node(Config config, QueryFactory queries) throws IOException {

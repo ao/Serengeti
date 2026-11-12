@@ -22,9 +22,10 @@ function table(rows, columns) {
   columns.forEach(c => head.appendChild(el('th', c)));
   t.appendChild(el('thead')).appendChild(head);
   const body = t.appendChild(el('tbody'));
+  // Each row is an array with one value per column (docs/API.md).
   rows.forEach(r => {
     const tr = el('tr');
-    columns.forEach(c => tr.appendChild(el('td', cell(r[c]))));
+    columns.forEach((c, i) => tr.appendChild(el('td', cell(r[i]))));
     body.appendChild(tr);
   });
   return t;
@@ -33,11 +34,12 @@ function table(rows, columns) {
 function render(data) {
   const out = document.getElementById('result');
   out.replaceChildren();
-  if (data && Array.isArray(data.rows)) {
-    const columns = Array.isArray(data.columns) ? data.columns
-      : [...new Set(data.rows.flatMap(r => Object.keys(r)))];
-    out.appendChild(table(data.rows, columns));
-    out.appendChild(el('p', data.rows.length + ' row' + (data.rows.length === 1 ? '' : 's')));
+  if (data && data.type === 'rows') {
+    out.appendChild(table(data.rows, data.columns));
+    const n = data.rows.length;
+    out.appendChild(el('p', n + ' row' + (n === 1 ? '' : 's') + (data.truncated ? ' (truncated)' : '')));
+  } else if (data && data.type === 'write') {
+    out.appendChild(el('p', data.affected + ' affected'));
   } else {
     out.appendChild(el('pre', JSON.stringify(data, null, 2)));
   }
