@@ -50,3 +50,19 @@ jobs:
         run: docker build -t serengeti:it .
       - name: Run the image tests
         run: SKIP_BUILD=1 IMAGE=serengeti:it tests/container/run.sh
+
+  quickstart:
+    name: Quick start (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the quick start from README.md
+        run: IMAGE=serengeti:quickstart docs/quickstart.sh
+
+  examples:
+    name: Examples (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the examples
+        run: IMAGE=serengeti:examples examples/run.sh
