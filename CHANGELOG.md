@@ -4,7 +4,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases up to 1.3.4 are described in their
 GitHub release notes and tags.
 
-## [Unreleased] - 2.0.0
+## [2.0.0] - 2026-11-13
 
 2.0 replaces the storage, query and server code of 1.x. It is not compatible with 1.x: the HTTP routes,
 the query language and the files in the data directory all change.
