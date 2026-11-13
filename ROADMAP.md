@@ -1,108 +1,45 @@
-# Serengeti Project Roadmap
+# Roadmap
 
-This document provides a comprehensive roadmap for the Serengeti distributed database system, focusing on the current implementation status and future development plans.
+This page says what 2.0 does, what comes next, and what Serengeti does not plan to do. The planned items
+are listed in the order they will be built. None has a date.
 
-## Implementation Status
+## What 2.0 does
 
-### 1. Core Components
+- One node per process, with its data in one directory. Writes go to a write-ahead log with CRC32C checks
+  and are forced to disk before they are acknowledged (`SERENGETI_FSYNC`, default `always`). Snapshots
+  bound the log, and recovery drops an incomplete last record.
+- Tables of JSON rows, and the query language in [docs/QUERY.md](docs/QUERY.md): CREATE and DROP for
+  databases and tables, SHOW, INSERT, SELECT with WHERE, ORDER BY and LIMIT, COUNT(*), UPDATE and DELETE.
+- An HTTP API ([docs/API.md](docs/API.md)) in which every route except `GET /health` needs HTTP Basic
+  credentials. The admin password comes from the environment, a file or a one-time setup token. Failed
+  logins are limited per address.
+- HTTPS with a PKCS#12 key store, TLS 1.2 and 1.3 only ([docs/CONFIGURATION.md](docs/CONFIGURATION.md)).
+- A console at `/`, and a container image for linux/amd64 and linux/arm64.
 
-| Component | Status | Completion |
-|-----------|--------|------------|
-| Network Implementation | Complete | 100% |
-| Storage Implementation | Complete | 100% |
-| Server Implementation | Complete | 100% |
-| Query Plan Executor | Complete | 100% |
-| Advanced Search Features | Complete | 100% |
+2.0 has these limits, and they stay in 2.0.x:
 
-### 2. Performance Foundation
+- one node; there is no replication yet;
+- no indexes, so every WHERE scans its table;
+- no joins and no transactions across statements.
 
-| Component | Status | Completion |
-|-----------|--------|------------|
-| Performance Profiling Framework | Complete | 100% |
-| Query Execution Optimization | In Progress | 75% |
-| Storage Engine Tuning | Complete | 100% |
-| Network Protocol Optimization | Complete | 100% |
+## Planned
 
-### 3. Security Infrastructure
+1. Replication across 1 to 7 nodes. A static peer list. Each write is applied on the node that
+   receives it and sent to every peer, and the client is told it succeeded once a majority of nodes,
+   including that node, has it on disk. Rows carry a version (a hybrid logical clock and the node id), and
+   concurrent writes to the same row keep the higher version. Node-to-node traffic needs a cluster key and
+   uses TLS. A node that was down catches up from a peer before it accepts writes. With fewer than a
+   majority reachable, writes fail rather than being accepted.
+2. `GET /ready`. Answers 200 once the data is loaded and, in a cluster, the node has caught up.
+3. `GET /metrics`. Prometheus text format, behind authentication.
+4. Backup and restore. `GET /v1/backup` streams a consistent snapshot to an admin, and
+   `serengeti restore FILE` loads one into an empty data directory.
 
-| Component | Status | Completion |
-|-----------|--------|------------|
-| Authentication System | In Progress | 40% |
-| Authorization Framework | Not Started | 0% |
-| Encryption Implementation | Not Started | 0% |
-| Audit Logging | Not Started | 0% |
-| Security Monitoring | Not Started | 0% |
+Replication will not give linearizable reads or writes: two clients writing the same row through different
+nodes at the same time get the higher version, not a queue.
 
-### 4. Scalability Features
+## Not planned
 
-| Component | Status | Completion |
-|-----------|--------|------------|
-| Multi-Region Support | Not Started | 0% |
-| Elastic Scaling | Not Started | 0% |
-| Backup and Recovery | Not Started | 0% |
-| Monitoring and Management | In Progress | 30% |
-
-## Query Execution Optimization Details
-
-The Query Execution Optimization component is currently at 75% completion, with significant progress made in all three key areas:
-
-### 1. Query Parser Improvements (80% Complete)
-
-- ✅ Implemented QueryParser.java for parsing SQL queries into abstract syntax trees
-- ✅ Created QueryParseException.java for handling parsing errors
-- ✅ Implemented QueryType.java enum for different query types
-- ✅ Created comprehensive AST structure with Node.java, QueryNode.java, and specific node types
-- ✅ Implemented SyntaxTree.java for representing complete syntax trees
-- ✅ Implemented QueryNormalizer.java for standardizing queries
-- 🔄 Pending: Enhanced error reporting and recovery
-- 🔄 Pending: Support for additional SQL features
-
-### 2. Execution Plan Optimization (70% Complete)
-
-- ✅ Implemented QueryOptimizer.java for applying optimization techniques
-- ✅ Implemented predicate pushdown optimization
-- ✅ Implemented join order optimization
-- ✅ Added configurable optimization levels
-- 🔄 Pending: Enhanced index utilization
-- 🔄 Pending: Prepared statement handling enhancements
-- 🔄 Pending: Advanced statistics-based optimization
-
-### 3. Memory Management Enhancements (75% Complete)
-
-- ✅ Implemented QueryMemoryManager.java for managing memory resources
-- ✅ Created BufferPool.java for efficient memory allocation
-- ✅ Implemented SpillManager.java interface for spill-to-disk operations
-- ✅ Created HashJoinSpillManager.java for hash join operations
-- ✅ Created SortSpillManager.java for sort operations
-- ✅ Implemented SpillManagerFactory.java for creating SpillManager instances
-- ✅ Enhanced QueryMemoryManager with spill-to-disk integration
-- ✅ Added comprehensive test coverage for all components
-- 🔄 Pending: Integration with Query Engine
-- 🔄 Pending: Performance tuning of memory thresholds
-
-## Next Steps
-
-### Short-term (1-2 weeks)
-
-1. Complete the integration of SpillManager with the Query Engine
-2. Implement prepared statement handling enhancements
-3. Enhance index utilization in the query optimizer
-4. Tune memory management parameters based on performance testing
-
-### Medium-term (3-4 weeks)
-
-1. Implement advanced statistics collection for better query optimization
-2. Enhance cost-based optimization with improved cost models
-3. Add support for additional SQL features in the query parser
-4. Implement query result caching
-
-### Long-term (1-2 months)
-
-1. Implement distributed query execution with parallel processing
-2. Add adaptive query parallelization
-3. Implement cross-region query optimization
-4. Enhance the monitoring dashboard with query performance metrics
-
-## Conclusion
-
-The Serengeti project has made significant progress in implementing core functionality and performance optimizations. The Query Execution Optimization component is well underway, with 75% completion across its key areas. The focus for the next development phase should be on completing the Query Execution Optimization component, followed by security enhancements and scalability improvements.
+- Joins.
+- Transactions across statements.
+- Multi-region clusters.

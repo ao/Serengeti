@@ -28,6 +28,8 @@ the query language and the files in the data directory all change.
 - One Docker image for linux/amd64 and linux/arm64, running as a non-root user, with a health check.
 - Tests: unit and property tests (`mvn verify`, Java 17 and 21), and container tests against the image
   (`tests/container/run.sh`), including `kill -9` during writes.
+- A quick start that CI runs (`docs/quickstart.sh`), and clients for curl, Python (`urllib`) and
+  JavaScript (`fetch`) under `examples/`, which CI runs in their own containers.
 
 ### Changed
 - The default bind address is 127.0.0.1. The image binds all interfaces inside its container and
@@ -35,6 +37,8 @@ the query language and the files in the data directory all change.
 - `POST /post` takes the same JSON body as `/v1/query` and is kept for 2.0 only.
 - The dashboard and interactive console are replaced by one console page at `/`.
 - Java 17 or later is required.
+- Versions come from Git tags. `release.yml` publishes the image, the jar and the GitHub release for a
+  tag; see VERSIONING.md. `version.txt` is removed.
 
 ### Removed
 - The `admin`/`admin` account.
