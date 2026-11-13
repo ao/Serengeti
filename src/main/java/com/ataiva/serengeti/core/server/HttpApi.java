@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -39,7 +40,12 @@ public final class HttpApi implements AutoCloseable {
 
     /** What the API needs from the rest of the node. */
     public record Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries,
-            StatusSource status, LongSupplier clock) {}
+            StatusSource status, LongSupplier clock, NodeOps ops) {
+        public Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries,
+                StatusSource status, LongSupplier clock) {
+            this(users, setupToken, queries, status, clock, NodeOps.NONE);
+        }
+    }
 
     /** Facts for {@code GET /v1/status}. */
     @FunctionalInterface
@@ -139,6 +145,12 @@ public final class HttpApi implements AutoCloseable {
             sendJson(ex, 200, Map.of("status", "ok"));
             return;
         }
+        if (path.equals("/ready")) {
+            requireMethod(method, "GET");
+            boolean ready = ready();
+            sendJson(ex, ready ? 200 : 503, Map.of("status", ready ? "ready" : "not ready"));
+            return;
+        }
         if (path.equals("/v1/setup")) {
             requireMethod(method, "POST");
             setup(ex);
@@ -171,6 +183,21 @@ public final class HttpApi implements AutoCloseable {
                 send(ex, 200, p.contentType(), p.body());
             }
         }
+    }
+
+    /** Runs every readiness check. The reason a check failed is logged, never sent to the client. */
+    private boolean ready() {
+        for (BooleanSupplier check : deps.ops().readiness()) {
+            try {
+                if (!check.getAsBoolean()) {
+                    return false;
+                }
+            } catch (RuntimeException e) {
+                LOG.log(Level.WARNING, "readiness check failed", e);
+                return false;
+            }
+        }
+        return true;
     }
 
     private void setup(HttpExchange ex) throws IOException {
