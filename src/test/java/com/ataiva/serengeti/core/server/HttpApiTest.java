@@ -179,6 +179,19 @@ class HttpApiTest {
         assertEquals(401, bearer.statusCode());
     }
 
+    // Repeated: a refusal sent before the request body was read was sometimes lost to a TCP reset.
+    @org.junit.jupiter.api.RepeatedTest(10)
+    void refusalsOfRequestsWithABodyStillCarryTheErrorMessage() throws Exception {
+        setUp();
+        String body = "{\"query\": \"" + "x".repeat(200_000) + "\"}";
+        HttpResponse<String> none = send(req("POST", "/v1/query", "application/json", body));
+        assertEquals(401, none.statusCode());
+        assertEquals(Map.of("error", "credentials required"), json(none));
+        HttpResponse<String> wrongType = send(authed(req("POST", "/v1/query", "text/plain", body)));
+        assertEquals(415, wrongType.statusCode());
+        assertTrue(json(wrongType).containsKey("error"));
+    }
+
     @Test
     void theOldAdminAdminLoginDoesNotWork() throws Exception {
         setUp();
