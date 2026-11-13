@@ -226,11 +226,15 @@ class HttpApiTest {
         }
     }
 
-    @Test
+    // Repeated: a 413 sent before the body is read used to be lost to a TCP reset now and then.
+    @org.junit.jupiter.api.RepeatedTest(10)
     void bodiesOverOneMebibyteAreRefused() throws Exception {
         setUp();
         String big = "{\"query\": \"" + "x".repeat(HttpApi.MAX_BODY) + "\"}";
         assertEquals(413, send(authed(req("POST", "/v1/query", "application/json", big))).statusCode());
+        HttpRequest.Builder chunked = authed(req("POST", "/v1/query", "application/json", null)
+                .POST(HttpRequest.BodyPublishers.fromPublisher(HttpRequest.BodyPublishers.ofString(big))));
+        assertEquals(413, send(chunked).statusCode(), "without Content-Length");
         String fits = "{\"query\": \"" + "x".repeat(HttpApi.MAX_BODY - 20) + "\"}";
         assertEquals(200, send(authed(req("POST", "/v1/query", "application/json", fits))).statusCode());
     }

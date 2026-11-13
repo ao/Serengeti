@@ -23,6 +23,8 @@ the query language and the files in the data directory all change.
   docs/API.md.
 - Configuration from a properties file and `SERENGETI_*` variables, with secrets from variables or
   files. See docs/CONFIGURATION.md.
+- HTTPS: `SERENGETI_TLS_KEYSTORE` (PKCS#12) switches the listener to TLS 1.2 and 1.3, with no plaintext
+  listener.
 - One Docker image for linux/amd64 and linux/arm64, running as a non-root user, with a health check.
 - Tests: unit and property tests (`mvn verify`, Java 17 and 21), and container tests against the image
   (`tests/container/run.sh`), including `kill -9` during writes.

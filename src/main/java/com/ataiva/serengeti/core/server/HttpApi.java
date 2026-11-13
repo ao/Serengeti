@@ -66,9 +66,27 @@ public final class HttpApi implements AutoCloseable {
         server.createContext("/", this::handle);
     }
 
-    /** Binds and starts serving. Use port 0 for an ephemeral port. */
+    /** Binds and starts serving plain HTTP. Use port 0 for an ephemeral port. */
     public static HttpApi start(String bind, int port, Deps deps) throws IOException {
-        HttpServer s = HttpServer.create(new InetSocketAddress(bind, port), 128);
+        return start(bind, port, null, deps);
+    }
+
+    /** With {@code tls} set, serves HTTPS only (TLS 1.2 and 1.3); there is no plaintext listener. */
+    public static HttpApi start(String bind, int port, javax.net.ssl.SSLContext tls, Deps deps) throws IOException {
+        HttpServer s;
+        InetSocketAddress addr = new InetSocketAddress(bind, port);
+        if (tls == null) {
+            s = HttpServer.create(addr, 128);
+        } else {
+            com.sun.net.httpserver.HttpsServer https = com.sun.net.httpserver.HttpsServer.create(addr, 128);
+            https.setHttpsConfigurator(new com.sun.net.httpserver.HttpsConfigurator(tls) {
+                @Override
+                public void configure(com.sun.net.httpserver.HttpsParameters params) {
+                    params.setSSLParameters(Tls.parameters(tls));
+                }
+            });
+            s = https;
+        }
         HttpApi api = new HttpApi(s, deps);
         s.start();
         return api;
@@ -303,15 +321,20 @@ public final class HttpApi implements AutoCloseable {
         }
     }
 
+    /** Oversized bodies up to this size are read and discarded before the 413, see {@link #tooLarge}. */
+    static final long DRAIN_LIMIT = 8L << 20;
+
     static byte[] readBody(HttpExchange ex) throws IOException {
         String len = ex.getRequestHeaders().getFirst("Content-Length");
         if (len != null) {
+            long declared;
             try {
-                if (Long.parseLong(len.trim()) > MAX_BODY) {
-                    throw new HttpError(413, "request body is larger than " + MAX_BODY + " bytes");
-                }
+                declared = Long.parseLong(len.trim());
             } catch (NumberFormatException e) {
                 throw new HttpError(400, "bad Content-Length");
+            }
+            if (declared > MAX_BODY) {
+                throw tooLarge(ex.getRequestBody());
             }
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -320,12 +343,31 @@ public final class HttpApi implements AutoCloseable {
             int n;
             while ((n = in.read(buf)) > 0) {
                 if (out.size() + n > MAX_BODY) {
-                    throw new HttpError(413, "request body is larger than " + MAX_BODY + " bytes");
+                    throw tooLarge(in);
                 }
                 out.write(buf, 0, n);
             }
         }
         return out.toByteArray();
+    }
+
+    /**
+     * Closing a socket with unread input makes TCP send a reset, which can destroy the 413 before the client
+     * reads it. So a body of up to {@link #DRAIN_LIMIT} is read to the end first; past that the connection
+     * is simply cut off.
+     */
+    private static HttpError tooLarge(InputStream in) {
+        byte[] buf = new byte[65536];
+        long left = DRAIN_LIMIT;
+        try {
+            int n;
+            while (left > 0 && (n = in.read(buf, 0, (int) Math.min(buf.length, left))) > 0) {
+                left -= n;
+            }
+        } catch (IOException ignored) {
+            // The client went away; nothing to answer.
+        }
+        return new HttpError(413, "request body is larger than " + MAX_BODY + " bytes");
     }
 
     private static Map<String, Object> error(String message) {

@@ -70,17 +70,22 @@ public final class Serengeti {
             default -> config.bind.contains(":") ? "[" + config.bind + "]" : config.bind;
         };
         try {
-            java.net.http.HttpClient c = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(java.time.Duration.ofSeconds(3)).build();
-            java.net.http.HttpResponse<Void> r = c.send(java.net.http.HttpRequest.newBuilder(
-                    java.net.URI.create(config.scheme() + "://" + host + ":" + config.port + "/health"))
-                    .timeout(java.time.Duration.ofSeconds(3)).build(),
-                    java.net.http.HttpResponse.BodyHandlers.discarding());
-            return r.statusCode() == 200;
-        } catch (IOException e) {
-            return false;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection)
+                    java.net.URI.create(config.scheme() + "://" + host + ":" + config.port + "/health").toURL()
+                            .openConnection();
+            if (c instanceof javax.net.ssl.HttpsURLConnection https) {
+                // Trust only this node's own certificate. The host name is not checked: the probe connects
+                // to loopback, and the certificate names the node's public host.
+                https.setSSLSocketFactory(com.ataiva.serengeti.core.server.Tls
+                        .clientContext(config.tlsKeystore, config.tlsKeystorePassword).getSocketFactory());
+                https.setHostnameVerifier((h, s) -> true);
+            }
+            c.setConnectTimeout(3000);
+            c.setReadTimeout(3000);
+            int code = c.getResponseCode();
+            c.disconnect();
+            return code == 200;
+        } catch (IOException | ConfigException e) {
             return false;
         }
     }

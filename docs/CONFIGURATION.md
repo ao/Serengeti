@@ -19,7 +19,17 @@ setting makes the node exit with status 2 and a one-line message.
 | `admin_password_file` | none | File holding the first admin password (12 to 72 bytes). |
 | `peers` | none | Reserved for replication. Refused in this build. |
 | `discovery_cidr` | none | Reserved for replication. Refused in this build. |
-| `tls_keystore` | none | Reserved for TLS. Refused in this build. |
+| `tls_keystore` | none | PKCS#12 file with this node's key and certificate chain. When set, the node serves HTTPS only (TLS 1.2 and 1.3) and there is no plaintext listener. Needs the keystore password below. |
+
+A key store for a test node can be made with the JDK's keytool:
+
+```sh
+keytool -genkeypair -alias node -keyalg EC -groupname secp256r1 -dname CN=db.example \
+  -ext san=dns:db.example -validity 365 -storetype PKCS12 -keystore node.p12
+```
+
+For anything longer-lived, use a certificate from your own CA, with the host name clients use in its
+subject alternative names.
 
 ## Secrets
 
@@ -30,6 +40,7 @@ newline in the file is ignored.
 | Secret | Variable | File setting |
 |---|---|---|
 | first admin password | `SERENGETI_ADMIN_PASSWORD` | `admin_password_file` |
+| key store password | `SERENGETI_TLS_KEYSTORE_PASSWORD` | `tls_keystore_password_file` |
 
 The admin password is only used when there is no account yet. Once `users.json` exists, it is ignored
 (the node logs that), and the password is changed with `POST /v1/password`.

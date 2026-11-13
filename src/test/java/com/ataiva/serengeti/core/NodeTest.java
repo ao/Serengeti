@@ -159,7 +159,7 @@ class NodeTest {
     }
 
     @Test
-    void clusteringAndTlsAreRefusedUntilTheyExist() throws Exception {
+    void clusteringIsRefusedUntilItExistsAndAJunkKeyStoreStopsTheNode() throws Exception {
         String key = "k".repeat(Config.MIN_CLUSTER_KEY);
         Config cluster = config(tmp.resolve("c"), "SERENGETI_PEERS", "peer:1985", "SERENGETI_CLUSTER_KEY", key,
                 "SERENGETI_CLUSTER_PLAINTEXT", "allow");

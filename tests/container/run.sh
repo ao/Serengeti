@@ -59,7 +59,7 @@ req() {
   docker exec "$RUN-client" sh -c 'curl "$@"; echo; cat /tmp/body; rm -f /tmp/body' sh "${args[@]}" "http://$1:1985$3"
 }
 
-status() { req "$@" | head -1; }
+status() { req "$@" | sed -n 1p; }
 body() { req "$@" | tail -n +2; }
 query() { # node query  -> status
   status "$1" POST /v1/query "admin:$PW" "$(printf '{"query": "%s"}' "$2")"
@@ -147,6 +147,39 @@ listen=$(docker run --rm --label "serengeti-it=$RUN" --network "$NET" --entrypoi
 # Java may report the IPv4 loopback socket in tcp6 as ::ffff:127.0.0.1; both forms are loopback only.
 listen=${listen/0000000000000000FFFF00000100007F/0100007F}
 expect "without SERENGETI_BIND the node listens on 127.0.0.1:1985 only" "0100007F:07C1" "$listen"
+
+echo "# TLS"
+certs=$(volume certs)
+docker run --rm -m 512m --label "serengeti-it=$RUN" -v "$certs:/certs" --user 0 --entrypoint sh "$IMAGE" -c '
+  set -e; cd /certs
+  keytool -genkeypair -alias node -keyalg EC -groupname secp256r1 -dname CN=tls -ext san=dns:tls -validity 2 \
+    -storetype PKCS12 -keystore node.p12 -storepass changeit >/dev/null 2>&1
+  keytool -exportcert -rfc -alias node -keystore node.p12 -storepass changeit -file node.pem >/dev/null 2>&1
+  printf changeit > pw
+  chown 10001:10001 node.p12 pw && chmod 600 node.p12 pw'
+docker run --rm --label "serengeti-it=$RUN" -v "$certs:/certs" --entrypoint cat "$IMAGE" /certs/node.pem \
+  | docker exec -i "$RUN-client" sh -c 'cat > /tmp/node.pem'
+node tls -v "$certs:/certs:ro" -e SERENGETI_TLS_KEYSTORE=/certs/node.p12 \
+  -e SERENGETI_TLS_KEYSTORE_PASSWORD_FILE=/certs/pw -e SERENGETI_ADMIN_PASSWORD="$PW"
+tls_status() { # path [credentials]
+  docker exec "$RUN-client" curl -s -o /dev/null -w '%{http_code}' --max-time 5 --cacert /tmp/node.pem \
+    ${2:+-u "$2"} "https://tls:1985$1" || true
+}
+for _ in $(seq 1 120); do [ "$(tls_status /health)" = 200 ] && break; sleep 0.5; done
+expect "HTTPS health with the node's certificate" 200 "$(tls_status /health)"
+expect "HTTPS status needs credentials" 401 "$(tls_status /v1/status)"
+expect "HTTPS status with credentials" 200 "$(tls_status /v1/status "admin:$PW")"
+expect "plain HTTP to the TLS port gets no HTTP answer" 000 \
+  "$(docker exec "$RUN-client" curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://tls:1985/health || true)"
+expect "an untrusting client is refused" 000 \
+  "$(docker exec "$RUN-client" curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://tls:1985/health || true)"
+expect "TLS 1.1 is refused" 000 \
+  "$(docker exec "$RUN-client" curl -s -o /dev/null -w '%{http_code}' --max-time 5 --cacert /tmp/node.pem \
+     --tlsv1.1 --tls-max 1.1 https://tls:1985/health || true)"
+expect "health probe over TLS exits 0" 0 \
+  "$(docker exec "$RUN-tls" java -jar /opt/serengeti/serengeti.jar --health >/dev/null 2>&1; echo $?)"
+node badtls -e SERENGETI_TLS_KEYSTORE=/nope.p12 -e SERENGETI_TLS_KEYSTORE_PASSWORD=x -e SERENGETI_ADMIN_PASSWORD="$PW"
+expect "a missing key store exits 2" 2 "$(exit_code badtls)"
 
 echo "# kill -9 during writes, $KILL_ROUNDS rounds"
 node crash -v "$(volume crash):/data" -e SERENGETI_ADMIN_PASSWORD="$PW"

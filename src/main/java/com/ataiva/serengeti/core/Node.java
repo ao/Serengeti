@@ -64,9 +64,10 @@ public final class Node implements AutoCloseable {
         if (config.clustered()) {
             throw new ConfigException("clustering is not available in this build; remove peers and discovery_cidr");
         }
-        if (config.tls()) {
-            throw new ConfigException("TLS is not available in this build; remove tls_keystore");
-        }
+        // Load the key store first, so a bad one stops the node before it touches the data directory.
+        javax.net.ssl.SSLContext tls = config.tls()
+                ? com.ataiva.serengeti.core.server.Tls.serverContext(config.tlsKeystore, config.tlsKeystorePassword)
+                : null;
         Path dir = config.dataDir;
         try {
             Files.createDirectories(dir);
@@ -101,7 +102,7 @@ public final class Node implements AutoCloseable {
         }
         QueryService qs = queries.apply(storage, clock);
         try {
-            this.api = HttpApi.start(config.bind, config.port, new HttpApi.Deps(users, token, qs, this::status,
+            this.api = HttpApi.start(config.bind, config.port, tls, new HttpApi.Deps(users, token, qs, this::status,
                     System::currentTimeMillis));
         } catch (IOException e) {
             storage.close();

@@ -5,8 +5,7 @@ and you query them over an authenticated HTTP API with a short SQL-like language
 to a checksummed write-ahead log before answering.
 
 This is the 2.0 line, a rewrite of 1.x. The 2.0 branch runs as a single node. Replication across a fixed
-set of peers, and TLS, are being built and are refused at start until they land (see
-[Status](#status)).
+set of peers is being built and is refused at start until it lands (see [Status](#status)).
 
 ## Quick start
 
@@ -56,8 +55,8 @@ keeps its data in `./data`.
   a minute block it for the rest of that minute.
 - The jar listens on 127.0.0.1 unless `SERENGETI_BIND` says otherwise. The image binds all interfaces
   inside its container and publishes nothing; publish to 127.0.0.1 unless other machines need it.
-- Without TLS, passwords cross the network in clear. Until TLS lands, reach a remote node through an SSH
-  tunnel rather than publishing its port.
+- Without TLS, passwords cross the network in clear. Set `SERENGETI_TLS_KEYSTORE` (see
+  docs/CONFIGURATION.md) before other machines connect, or reach the node through an SSH tunnel.
 
 ## Status
 
@@ -67,9 +66,10 @@ What works in this branch, with tests (`mvn verify`, and `tests/container/run.sh
   recovery that drops a torn tail; five rounds of `kill -9` during inserts lose no acknowledged insert;
 - the query language in docs/QUERY.md, with property tests on the parser;
 - the authenticated API and console;
+- HTTPS with a PKCS#12 key store, TLS 1.2 and 1.3 only;
 - one image for linux/amd64 and linux/arm64.
 
-Not yet done: replication and its fault tests, TLS, `/ready`, `/metrics`, backup and restore. There are
+Not yet done: replication, its node-to-node TLS and its fault tests, `/ready`, `/metrics`, backup and restore. There are
 no indexes; every `WHERE` scans the table. There are no joins and no transactions across statements.
 
 1.x (up to v1.3.4) is not compatible: its HTTP routes, on-disk files and `admin`/`admin` login are gone.
