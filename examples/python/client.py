@@ -59,7 +59,7 @@ def main():
         return 1
     print("\t".join(result["columns"]))
     for row in result["rows"]:
-        print("\t".join(str(value) for value in row))
+        print("\t".join("" if value is None else str(value) for value in row))
     return 0
 
 
