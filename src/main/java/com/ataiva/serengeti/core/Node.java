@@ -11,6 +11,7 @@ import com.ataiva.serengeti.core.server.QueryService;
 import com.ataiva.serengeti.core.server.SetupToken;
 import com.ataiva.serengeti.core.server.Users;
 import com.ataiva.serengeti.core.storage.Hlc;
+import com.ataiva.serengeti.core.storage.Op;
 import com.ataiva.serengeti.core.storage.StorageEngine;
 import com.ataiva.serengeti.core.storage.Wal;
 import java.io.IOException;
@@ -20,7 +21,9 @@ import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -136,6 +139,11 @@ public final class Node implements AutoCloseable {
     /** What the HTTP API reads from this node for {@code /ready} and {@code /metrics}. */
     private NodeOps operations() {
         return new NodeOps() {
+            @Override
+            public Optional<List<Op>> snapshot() {
+                return Optional.of(storage.snapshotOps());
+            }
+
             @Override
             public NodeOps.Gauges gauges() {
                 Wal.Stats wal = storage.walStats();

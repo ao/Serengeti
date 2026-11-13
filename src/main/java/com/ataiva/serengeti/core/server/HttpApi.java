@@ -196,6 +196,14 @@ public final class HttpApi implements AutoCloseable {
                 send(ex, 200, Metrics.CONTENT_TYPE, metrics.render(deps.ops().gauges())
                         .getBytes(StandardCharsets.UTF_8));
             }
+            case "/v1/backup" -> {
+                requireMethod(method, "GET");
+                if (role != Users.Role.ADMIN) {
+                    throw new HttpError(403, "backups need the admin role");
+                }
+                Backup.send(ex, deps.ops().snapshot()
+                        .orElseThrow(() -> new HttpError(501, "backups are not available in this build")));
+            }
             case "/v1/password" -> {
                 requireMethod(method, "POST");
                 changePassword(ex, role);

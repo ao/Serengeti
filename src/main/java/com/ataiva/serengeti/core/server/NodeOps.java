@@ -1,6 +1,8 @@
 package com.ataiva.serengeti.core.server;
 
+import com.ataiva.serengeti.core.storage.Op;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -17,6 +19,14 @@ public interface NodeOps {
      */
     default List<BooleanSupplier> readiness() {
         return List.of();
+    }
+
+    /**
+     * A consistent copy of the whole state for {@code GET /v1/backup}, taken under the storage lock. Empty if
+     * this node cannot be backed up.
+     */
+    default Optional<List<Op>> snapshot() {
+        return Optional.empty();
     }
 
     /** Values read on each scrape of {@code GET /metrics}. */
