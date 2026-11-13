@@ -85,6 +85,20 @@ class MetricsTest {
         return Exposition.parse(r.body());
     }
 
+    /**
+     * Scrapes until the counters show the given number of requests, scrapes not counted. Counters are updated
+     * just after each response is sent, so a scrape made right after a response can miss the last request.
+     */
+    private Exposition settled(int requests) throws Exception {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        Exposition e = scrape();
+        while (e.requestsExcept("/metrics") != requests && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+            e = scrape();
+        }
+        return e;
+    }
+
     @Test
     void theOutputParsesAndTheCountersMoveWithTraffic() throws Exception {
         setUp();
@@ -96,7 +110,7 @@ class MetricsTest {
         assertEquals(404, send("GET", "/nowhere", "admin", PASSWORD).statusCode());
         assertEquals(401, send("GET", "/v1/status", "admin", "wrong password here").statusCode());
 
-        Exposition before = scrape();
+        Exposition before = settled(6);
         assertEquals(2, before.value("serengeti_http_requests_total", "route", "/v1/status", "code", "200"));
         assertEquals(1, before.value("serengeti_http_requests_total", "route", "/health", "code", "200"));
         assertEquals(1, before.value("serengeti_http_requests_total", "route", "/v1/query", "code", "200"));
@@ -111,16 +125,16 @@ class MetricsTest {
         assertEquals(3, before.value("serengeti_http_request_duration_seconds_count", "route", "/v1/status"));
 
         assertEquals(200, send("GET", "/health", null, null).statusCode());
-        Exposition after = scrape();
+        Exposition after = settled(7);
         assertEquals(2, after.value("serengeti_http_requests_total", "route", "/health", "code", "200"));
-        assertEquals(1, after.value("serengeti_http_requests_total", "route", "/metrics", "code", "200"));
+        assertTrue(after.value("serengeti_http_requests_total", "route", "/metrics", "code", "200") >= 1);
     }
 
     @Test
     void histogramBucketsAreCumulativeAndEndAtTheCount() throws Exception {
         setUp();
         assertEquals(200, send("GET", "/v1/status", "admin", PASSWORD).statusCode());
-        Exposition e = scrape();
+        Exposition e = settled(1);
         assertEquals(1, e.value("serengeti_http_request_duration_seconds_bucket", "route", "/v1/status", "le", "+Inf"));
         assertEquals(1, e.value("serengeti_http_request_duration_seconds_count", "route", "/v1/status"));
         assertTrue(e.value("serengeti_http_request_duration_seconds_sum", "route", "/v1/status") >= 0);
@@ -132,7 +146,7 @@ class MetricsTest {
         for (int i = 0; i < 5; i++) {
             assertEquals(404, send("GET", "/probe/" + i, "admin", PASSWORD).statusCode());
         }
-        Exposition e = scrape();
+        Exposition e = settled(5);
         assertEquals(5, e.value("serengeti_http_requests_total", "route", "other", "code", "404"));
         assertFalse(e.text.contains("/probe"), "a path must not become a label");
         assertTrue(e.samples.stream().noneMatch(s -> s.labels().containsValue("/probe/0")));
@@ -155,7 +169,7 @@ class MetricsTest {
         for (int i = 0; i < 3; i++) {
             assertEquals(401, send("GET", "/v1/status", "admin", "wrong password " + i).statusCode());
         }
-        assertEquals(3, scrape().value("serengeti_login_failures_total"));
+        assertEquals(3, settled(3).value("serengeti_login_failures_total"));
     }
 
     @Test
@@ -234,6 +248,13 @@ class MetricsTest {
             }
             e.checkHistograms();
             return e;
+        }
+
+        /** Total of the request counter over all routes except one. */
+        long requestsExcept(String route) {
+            return samples.stream()
+                    .filter(s -> s.name().equals("serengeti_http_requests_total") && !route.equals(s.labels().get("route")))
+                    .mapToLong(s -> (long) s.value()).sum();
         }
 
         /** The value of the one series with this name and exactly these labels (name, value pairs). */

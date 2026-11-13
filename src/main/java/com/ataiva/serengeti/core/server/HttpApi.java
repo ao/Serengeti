@@ -38,6 +38,14 @@ public final class HttpApi implements AutoCloseable {
     public static final int MAX_BODY = 1 << 20;
     static final String REALM = "Basic realm=\"serengeti\", charset=\"UTF-8\"";
 
+    /**
+     * Per-request facts for the request log. Not an exchange attribute: the JDK keeps those on the context,
+     * shared by every request to it, so a user name would leak into the next request's log line.
+     */
+    private static final class Caller {
+        String user;
+    }
+
     /** What the API needs from the rest of the node. */
     public record Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries,
             StatusSource status, LongSupplier clock, NodeOps ops) {
@@ -112,6 +120,7 @@ public final class HttpApi implements AutoCloseable {
     private void handle(HttpExchange ex) throws IOException {
         long started = System.nanoTime();
         String route = Metrics.route(ex.getRequestURI().getRawPath());
+        Caller caller = new Caller();
         try (ex) {
             Headers h = ex.getResponseHeaders();
             h.set("X-Content-Type-Options", "nosniff");
@@ -119,7 +128,7 @@ public final class HttpApi implements AutoCloseable {
             h.set("X-Frame-Options", "DENY");
             h.set("Referrer-Policy", "no-referrer");
             try {
-                route(ex);
+                route(ex, caller);
             } catch (HttpError e) {
                 if (e.status == 401) {
                     h.set("WWW-Authenticate", REALM);
@@ -136,11 +145,15 @@ public final class HttpApi implements AutoCloseable {
             LOG.log(Level.FINE, "client connection failed", e);
         } finally {
             // Code 0 means no response was sent, for instance when the client went away first.
-            metrics.observe(route, Math.max(0, ex.getResponseCode()), System.nanoTime() - started);
+            int status = Math.max(0, ex.getResponseCode());
+            long nanos = System.nanoTime() - started;
+            metrics.observe(route, status, nanos);
+            String remote = ex.getRemoteAddress().getAddress().getHostAddress();
+            LOG.info(RequestLog.line(ex.getRequestMethod(), route, status, nanos, remote, caller.user));
         }
     }
 
-    private void route(HttpExchange ex) throws IOException {
+    private void route(HttpExchange ex, Caller caller) throws IOException {
         String path = ex.getRequestURI().getRawPath();
         String method = ex.getRequestMethod();
         if (!method.equals("GET")) {
@@ -166,7 +179,7 @@ public final class HttpApi implements AutoCloseable {
             throw new HttpError(503, "not set up: set SERENGETI_ADMIN_PASSWORD, or POST /v1/setup with the token "
                     + "from the data directory");
         }
-        Users.Role role = authenticate(ex);
+        Users.Role role = authenticate(ex, caller);
         switch (path) {
             case "/v1/query", "/post" -> {
                 // /post is the v1 route, kept for one release. It takes the same JSON body: a raw text/plain
@@ -274,7 +287,7 @@ public final class HttpApi implements AutoCloseable {
         sendJson(ex, 200, result);
     }
 
-    private Users.Role authenticate(HttpExchange ex) {
+    private Users.Role authenticate(HttpExchange ex, Caller caller) {
         String address = ex.getRemoteAddress().getAddress().getHostAddress();
         Optional<String[]> creds = basic(ex);
         if (creds.isEmpty()) {
@@ -287,6 +300,7 @@ public final class HttpApi implements AutoCloseable {
             metrics.loginFailed();
             throw new HttpError(401, "wrong user name or password");
         }
+        caller.user = creds.get()[0];
         return role.get();
     }
 
