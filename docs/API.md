@@ -57,8 +57,10 @@ POST /v1/password
 
 ## Errors
 
-Errors have a status code and a body of the form `{"error": "message"}`. The message never contains a
-stack trace; unexpected failures say `internal error` and are logged by the node.
+Errors have a status code and a body of the form `{"error": "message"}`, with one exception: a request
+with no credentials gets a 401 with no body, only the `WWW-Authenticate` challenge. The message never
+contains a stack trace; unexpected failures say `internal error` and are logged by the node. The
+clients in [examples/](../examples/) print the message and exit non-zero.
 
 | Status | When |
 |---|---|
