@@ -1,47 +1,32 @@
-# Versioning System for Serengeti
+# Versioning
 
-This document describes the versioning system used in the Serengeti project.
+Serengeti uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html), MAJOR.MINOR.PATCH.
 
-## Overview
+- A release is a Git tag named `vMAJOR.MINOR.PATCH`, such as `v2.0.0`. The tagged commit is the release.
+- Tags are not moved or reused. A wrong release is fixed by the next version.
+- `pom.xml` on main keeps the next version with a `-SNAPSHOT` suffix (`2.0.0-SNAPSHOT`). Nobody commits a
+  version bump for a release. `release.yml` sets the version from the tag while it builds, so the jar's
+  file name, `serengeti --version`, `GET /health` and `GET /v1/status` all show the tag's version.
+- A pre-release is a tag with a suffix, such as `v2.0.0-rc.1`. It is published as a GitHub pre-release and
+  as the image tag `2.0.0-rc.1`, and it does not change `latest`.
 
-Serengeti uses semantic versioning (MAJOR.MINOR.PATCH) for all artifacts. The version is centrally defined in the `version.txt` file at the root of the project.
+## What the parts mean
 
-## How It Works
+- MAJOR: an incompatible change to the HTTP routes, the query language, the files in the data directory or
+  the configuration settings. 2.0.0 is a MAJOR release: it is not compatible with 1.x.
+- MINOR: a new feature that keeps existing clients, data and settings working.
+- PATCH: a fix that keeps all of them working.
 
-1. The version is stored in `version.txt` at the root of the project
-2. The version is automatically incremented (PATCH version) with each push to the main branch
-3. All artifacts (JAR files, GitHub releases, Docker images) use this consistent version
+## Artifacts
 
-## Version Components
+Each release tag produces, from `.github/workflows/release.yml`:
 
-- **MAJOR**: Incremented for incompatible API changes
-- **MINOR**: Incremented for backward-compatible functionality additions
-- **PATCH**: Incremented for backward-compatible bug fixes and minor changes
+- the image `ataiva/serengeti` for linux/amd64 and linux/arm64, with the tag `X.Y.Z`, and `latest` for
+  releases that are not pre-releases;
+- the jar `serengeti-X.Y.Z.jar` and its SHA-256 checksum, attached to a GitHub release whose notes are the
+  matching section of CHANGELOG.md.
 
-## Automated Versioning
+Releases up to 1.3.4 are described in their tags and GitHub releases. Their version numbers are not
+reused.
 
-The versioning system is automated through GitHub Actions:
-
-1. On each push to the main branch, the CI workflow:
-   - Increments the PATCH version in `version.txt`
-   - Updates the version in `pom.xml`
-   - Commits these changes back to the repository
-
-2. When the CI workflow completes successfully, the release workflow:
-   - Reads the version from `version.txt`
-   - Creates a GitHub release with the tag `v{VERSION}`
-   - Builds and uploads the JAR file with the correct version
-   - Pushes Docker images with appropriate version tags
-
-## Manual Version Updates
-
-For MAJOR or MINOR version updates, manually edit the `version.txt` file and commit the changes. The CI system will handle the rest.
-
-## Version Artifacts
-
-The following artifacts are versioned consistently:
-
-1. Maven POM version
-2. JAR file names
-3. GitHub release tags
-4. DockerHub image tags
+See [docs/RELEASING.md](docs/RELEASING.md) for the steps.
