@@ -1,8 +1,9 @@
 # Serengeti documentation
 
 - [QUERY.md](QUERY.md): the query language.
-- [API.md](API.md): HTTP routes, authentication and errors.
-- [CONFIGURATION.md](CONFIGURATION.md): settings, secrets and the data directory.
+- [API.md](API.md): HTTP routes, authentication, errors, metrics and backup.
+- [CONFIGURATION.md](CONFIGURATION.md): settings, secrets, the data directory and restore.
+- [CONSISTENCY.md](CONSISTENCY.md): replication, conflicts and what a cluster promises.
+- [RELEASING.md](RELEASING.md): how a release is made.
 
-The other files under docs/ describe the 1.x code, which 2.0 no longer contains. They are kept until they
-are removed, and do not describe this version.
+The 1.x documentation is in the history and under the v1.3.4 tag.
