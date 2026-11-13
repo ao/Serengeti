@@ -6,11 +6,13 @@ import com.ataiva.serengeti.core.query.Query;
 import com.ataiva.serengeti.core.query.QueryException;
 import java.io.UncheckedIOException;
 import com.ataiva.serengeti.core.server.HttpApi;
+import com.ataiva.serengeti.core.server.NodeOps;
 import com.ataiva.serengeti.core.server.QueryService;
 import com.ataiva.serengeti.core.server.SetupToken;
 import com.ataiva.serengeti.core.server.Users;
 import com.ataiva.serengeti.core.storage.Hlc;
 import com.ataiva.serengeti.core.storage.StorageEngine;
+import com.ataiva.serengeti.core.storage.Wal;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -103,7 +105,7 @@ public final class Node implements AutoCloseable {
         QueryService qs = queries.apply(storage, clock);
         try {
             this.api = HttpApi.start(config.bind, config.port, tls, new HttpApi.Deps(users, token, qs, this::status,
-                    System::currentTimeMillis));
+                    System::currentTimeMillis, operations()));
         } catch (IOException e) {
             storage.close();
             throw new ConfigException("cannot listen on " + config.bind + ":" + config.port + ": " + e.getMessage());
@@ -129,6 +131,18 @@ public final class Node implements AutoCloseable {
         String s = UUID.randomUUID().toString();
         Files.writeString(f, s + "\n", StandardCharsets.UTF_8);
         return s;
+    }
+
+    /** What the HTTP API reads from this node for {@code /ready} and {@code /metrics}. */
+    private NodeOps operations() {
+        return new NodeOps() {
+            @Override
+            public NodeOps.Gauges gauges() {
+                Wal.Stats wal = storage.walStats();
+                long databases = storage.read(s -> (long) s.databases().size());
+                return new NodeOps.Gauges(wal.bytes(), wal.fsyncs(), wal.fsyncNanos(), databases);
+            }
+        };
     }
 
     public Map<String, Object> status() {

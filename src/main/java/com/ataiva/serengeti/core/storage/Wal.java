@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 import java.util.zip.CRC32C;
 
@@ -29,9 +30,14 @@ public final class Wal implements AutoCloseable {
     private final long testFsyncDelayMs;
     private long size;
     private volatile boolean dirty;
+    private final AtomicLong fsyncs = new AtomicLong();
+    private final AtomicLong fsyncNanos = new AtomicLong();
 
     /** Result of reading the log on open. */
     public record Recovered(List<List<Op>> batches, long validBytes, long discardedBytes) {}
+
+    /** Counters for {@code GET /metrics}: the log's size, and the forces done on it since the node started. */
+    public record Stats(long bytes, long fsyncs, long fsyncNanos) {}
 
     private Wal(Path path, FileChannel ch, FsyncPolicy policy, long testFsyncDelayMs, long size) {
         this.path = path;
@@ -138,6 +144,7 @@ public final class Wal implements AutoCloseable {
     }
 
     private void force() throws IOException {
+        long started = System.nanoTime();
         if (testFsyncDelayMs > 0) {
             try {
                 Thread.sleep(testFsyncDelayMs);
@@ -147,6 +154,13 @@ public final class Wal implements AutoCloseable {
         }
         ch.force(false);
         dirty = false;
+        fsyncs.incrementAndGet();
+        fsyncNanos.addAndGet(System.nanoTime() - started);
+    }
+
+    /** The log's size and its forces so far. Two clock reads per force; nothing is counted per record. */
+    public synchronized Stats stats() {
+        return new Stats(size, fsyncs.get(), fsyncNanos.get());
     }
 
     /** Empties the log, after a snapshot made its contents redundant. */

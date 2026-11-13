@@ -57,6 +57,7 @@ public final class HttpApi implements AutoCloseable {
     private final ExecutorService pool;
     private final Deps deps;
     private final LoginLimiter limiter;
+    private final Metrics metrics = new Metrics();
     private final Static pages = new Static();
 
     private HttpApi(HttpServer server, Deps deps) {
@@ -109,6 +110,8 @@ public final class HttpApi implements AutoCloseable {
     }
 
     private void handle(HttpExchange ex) throws IOException {
+        long started = System.nanoTime();
+        String route = Metrics.route(ex.getRequestURI().getRawPath());
         try (ex) {
             Headers h = ex.getResponseHeaders();
             h.set("X-Content-Type-Options", "nosniff");
@@ -131,6 +134,9 @@ public final class HttpApi implements AutoCloseable {
             }
         } catch (IOException e) {
             LOG.log(Level.FINE, "client connection failed", e);
+        } finally {
+            // Code 0 means no response was sent, for instance when the client went away first.
+            metrics.observe(route, Math.max(0, ex.getResponseCode()), System.nanoTime() - started);
         }
     }
 
@@ -171,6 +177,11 @@ public final class HttpApi implements AutoCloseable {
             case "/v1/status" -> {
                 requireMethod(method, "GET");
                 sendJson(ex, 200, deps.status().status());
+            }
+            case "/metrics" -> {
+                requireMethod(method, "GET");
+                send(ex, 200, Metrics.CONTENT_TYPE, metrics.render(deps.ops().gauges())
+                        .getBytes(StandardCharsets.UTF_8));
             }
             case "/v1/password" -> {
                 requireMethod(method, "POST");
@@ -273,6 +284,7 @@ public final class HttpApi implements AutoCloseable {
         Optional<Users.Role> role = deps.users().verify(creds.get()[0], creds.get()[1]);
         if (role.isEmpty()) {
             limiter.failed(address);
+            metrics.loginFailed();
             throw new HttpError(401, "wrong user name or password");
         }
         return role.get();
@@ -281,6 +293,7 @@ public final class HttpApi implements AutoCloseable {
     private void limited(String address) {
         long wait = limiter.retryAfterSeconds(address);
         if (wait > 0) {
+            metrics.loginLimited();
             HttpError e = new HttpError(429, "too many failed attempts; try again later");
             e.retryAfter = wait;
             throw e;
