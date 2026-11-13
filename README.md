@@ -4,8 +4,8 @@ Serengeti is a small document-table database in one jar: databases hold tables, 
 and you query them over an authenticated HTTP API with a short SQL-like language. It writes every change
 to a checksummed write-ahead log before answering.
 
-This is the 2.0 line, a rewrite of 1.x. The 2.0 branch runs as a single node. Replication across a fixed
-set of peers is being built and is refused at start until it lands (see [Status](#status)).
+This is the 2.0 line, a rewrite of 1.x. It runs as one node, or as a cluster of up to 7 that each hold
+every database and acknowledge a write once a majority has it on disk ([docs/CONSISTENCY.md](docs/CONSISTENCY.md)).
 
 ## Quick start
 
@@ -67,10 +67,14 @@ What works in this branch, with tests (`mvn verify`, and `tests/container/run.sh
 - the query language in docs/QUERY.md, with property tests on the parser;
 - the authenticated API and console;
 - HTTPS with a PKCS#12 key store, TLS 1.2 and 1.3 only;
+- replication across 1 to 7 nodes with majority writes, catch-up after restarts and partitions, and
+  majority reads; `tests/cluster/run.sh` kills, partitions and slows nodes of a 3-node TLS cluster in
+  Docker and checks that no acknowledged write is lost;
 - one image for linux/amd64 and linux/arm64.
 
-Not yet done: replication, its node-to-node TLS and its fault tests, `/ready`, `/metrics`, backup and restore. There are
-no indexes; every `WHERE` scans the table. There are no joins and no transactions across statements.
+Not yet done: `/ready`, `/metrics`, backup and restore. There are no indexes; every `WHERE` scans the
+table. There are no joins and no transactions across statements. Conflicting writes to one row are
+resolved last-writer-wins, not serialised.
 
 1.x (up to v1.3.4) is not compatible: its HTTP routes, on-disk files and `admin`/`admin` login are gone.
 

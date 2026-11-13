@@ -50,3 +50,13 @@ jobs:
         run: docker build -t serengeti:it .
       - name: Run the image tests
         run: SKIP_BUILD=1 IMAGE=serengeti:it tests/container/run.sh
+
+  cluster:
+    name: Cluster fault tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t serengeti:cluster .
+      - name: Kill, partition and slow-disk tests on 3 nodes
+        run: SKIP_BUILD=1 IMAGE=serengeti:cluster tests/cluster/run.sh

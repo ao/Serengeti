@@ -25,6 +25,9 @@ the query language and the files in the data directory all change.
   files. See docs/CONFIGURATION.md.
 - HTTPS: `SERENGETI_TLS_KEYSTORE` (PKCS#12) switches the listener to TLS 1.2 and 1.3, with no plaintext
   listener.
+- Replication across 1 to 7 nodes: majority writes, digest-based catch-up, `"consistency": "majority"`
+  reads, a cluster key for `/internal/*`, and HTTPS between nodes with certificate and host name checks.
+  A node with peers needs TLS or `SERENGETI_CLUSTER_PLAINTEXT=allow`. See docs/CONSISTENCY.md.
 - One Docker image for linux/amd64 and linux/arm64, running as a non-root user, with a health check.
 - Tests: unit and property tests (`mvn verify`, Java 17 and 21), and container tests against the image
   (`tests/container/run.sh`), including `kill -9` during writes.
@@ -38,8 +41,8 @@ the query language and the files in the data directory all change.
 
 ### Removed
 - The `admin`/`admin` account.
-- Automatic discovery that connected to port 1985 on every address in the subnet. Replication across
-  configured peers is planned; until it lands, 2.0 runs as a single node.
+- Automatic discovery that connected to port 1985 on every address in the subnet. Peers are now listed
+  in `SERENGETI_PEERS`, or found in an opt-in range of at most 256 addresses.
 - The LSM storage engine, B-tree indexes, query optimizer and the other 1.x modules that the running
   server never used. They remain in the history and the v1.3.4 tag.
 

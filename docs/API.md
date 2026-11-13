@@ -33,6 +33,11 @@ POST /v1/query
 {"query": "SELECT name FROM shop.items WHERE qty > 10 ORDER BY name LIMIT 5"}
 ```
 
+In a cluster, add `"consistency": "majority"` to read only after syncing with a majority of nodes, so
+the result includes every acknowledged write (see [CONSISTENCY.md](CONSISTENCY.md)). The default,
+`"local"`, answers from the node's own data. Writes return 503 when fewer than a majority of nodes are
+reachable.
+
 Reads return the column names and one array per row:
 
 ```json
