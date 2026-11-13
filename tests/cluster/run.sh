@@ -180,14 +180,40 @@ for i in 1 2 3; do wait_writable "$i"; done
 ok "restarted nodes caught up"
 
 echo "# partition n3 from its peers"
+# Not "docker network disconnect": some Docker hosts (OrbStack, for one) route between bridge networks,
+# and the JVM caches the peers' addresses, so n3 would still reach them. Instead, drop every packet
+# between n3 and the peers' addresses inside n3's network namespace. The client can still reach n3.
+docker build -q -t serengeti-netfault - >/dev/null <<'DOCKERFILE'
+FROM alpine:3.20
+RUN apk add --no-cache iptables
+DOCKERFILE
+peer_ips=$(for i in 1 2; do docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$RUN-n$i"; done)
+netfault() { # rules for n3's namespace: "cut" or "heal"
+  docker run --rm "${L[@]}" --network "container:$RUN-n3" --cap-add NET_ADMIN serengeti-netfault sh -c '
+    set -e
+    if [ "$1" = heal ]; then iptables -F INPUT; iptables -F OUTPUT; exit 0; fi
+    shift
+    for ip in "$@"; do iptables -A INPUT -s "$ip" -j DROP; iptables -A OUTPUT -d "$ip" -j DROP; done' sh "$@"
+}
 sleep 2
-docker network disconnect "$NET" "$RUN-n3"
+# shellcheck disable=SC2086
+netfault cut $peer_ips
 sleep 5
-expect "write on the minority side (n3) is 503" 503 "$(q 3 "INSERT INTO d.t (_id) VALUES ('minority')")"
+st3=$(docker exec "$RUN-client" curl -s --max-time 5 --cacert /tmp/ca.pem -u "admin:$PW" https://c3:1985/v1/status)
+case "$st3" in *'"reachable":1,'*) ok "the partition is real: n3 reaches no peer" ;;
+  *) bad "partition" "n3 still reaches peers: $st3" ;; esac
+minority=$(q 3 "INSERT INTO d.t (_id) VALUES ('minority')")
+expect "write on the minority side (n3) is 503" 503 "$minority"
+if [ "$minority" != 503 ]; then
+  echo "--- n3 status and log at the failed minority write:"
+  docker exec "$RUN-client" curl -s --max-time 5 --cacert /tmp/ca.pem -u "admin:$PW" https://c3:1985/v1/status; echo
+  docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$RUN-n3"
+  docker logs "$RUN-n3" 2>&1 | grep -v ' request ' | tail -20
+fi
 expect "write on the majority side (n1) succeeds" 200 "$(q 1 "INSERT INTO d.t (_id) VALUES ('majority')")"
 expect "majority read on n2 sees it" 200 "$(q 2 "SELECT _id FROM d.t WHERE _id = 'majority'" majority)"
 case "$(body)" in *'"count":1'*) ok "and returns the row" ;; *) bad "majority read" "$(body)" ;; esac
-docker network connect --alias n3 "$NET" "$RUN-n3"
+netfault heal
 wait_writable 3
 ok "n3 accepts writes again after the partition heals"
 

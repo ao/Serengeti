@@ -65,8 +65,9 @@ each node's certificate must name the host (or IP address) its peers use for it.
 
 `tests/cluster/run.sh` runs three nodes of the image over TLS in Docker and checks, while a writer
 inserts rows through all three: one node killed (writes continue), two killed (writes 503, majority
-reads 503), both restarted (they catch up), one node partitioned with `docker network disconnect`
-(writes on its side 503, on the majority side 200, it catches up after healing), one node's fsync slowed
-by 1 second (writes through the others are not slowed), and all three restarted. Every insert that got a
-200 must be on every node at the end. Two runs on an M-series Mac under OrbStack: 26 of 26 checks passed
-each time, with 117 and 215 acknowledged inserts and none lost.
+reads 503), both restarted (they catch up), one node partitioned by dropping its packets to and from the
+peers with iptables in its network namespace (the suite checks the node sees no peer; writes on its
+side 503, on the majority side 200, it catches up after healing), one node's fsync slowed by 1 second
+(writes through the others are not slowed), and all three restarted. Every insert that got a 200 must be
+on every node at the end. Three runs on an M-series Mac under OrbStack: 27 of 27 checks each time, with
+262, 228 and 223 acknowledged inserts and none lost.
