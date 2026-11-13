@@ -101,6 +101,35 @@ public final class Store {
         }
     }
 
+    /** True if applying {@code op} would change the state. Does not change anything itself. */
+    public boolean isNew(Op op) {
+        DbState d = dbs.get(op.db());
+        if (op instanceof Op.CreateDb o) {
+            return d == null || o.stamp().after(d.created);
+        }
+        if (op instanceof Op.DropDb o) {
+            return d == null || o.stamp().after(d.dropped);
+        }
+        String table = op instanceof Op.CreateTable o ? o.table()
+                : op instanceof Op.DropTable o ? o.table()
+                : op instanceof Op.Put o ? o.table()
+                : ((Op.Delete) op).table();
+        TableState t = d == null ? null : d.tables.get(table);
+        Stamp dropped = t != null ? t.dropped : d != null ? d.dropped : Stamp.ZERO;
+        if (op instanceof Op.CreateTable o) {
+            return t == null || o.stamp().after(t.created);
+        }
+        if (op instanceof Op.DropTable o) {
+            return o.stamp().after(dropped);
+        }
+        String id = op instanceof Op.Put o ? o.id() : ((Op.Delete) op).id();
+        if (!op.stamp().after(dropped)) {
+            return false;
+        }
+        RowState r = t == null ? null : t.rows.get(id);
+        return r == null || op.stamp().after(r.stamp);
+    }
+
     /** The newest stamp applied so far; the clock must start after it. */
     public Stamp maxStamp() {
         return maxStamp;

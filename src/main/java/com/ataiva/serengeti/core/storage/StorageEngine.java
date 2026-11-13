@@ -118,10 +118,13 @@ public final class StorageEngine implements AutoCloseable {
      * on this node.
      */
     public <T> T update(Function<Store, Planned<T>> plan) throws IOException {
+        WriteHooks h = hooks;
+        h.before();
+        Planned<T> p;
         lock.writeLock().lock();
         try {
             ensureOpen();
-            Planned<T> p = plan.apply(store);
+            p = plan.apply(store);
             if (!p.ops().isEmpty()) {
                 wal.append(p.ops());
                 store.applyAll(p.ops());
@@ -129,7 +132,63 @@ public final class StorageEngine implements AutoCloseable {
                     checkpointLocked();
                 }
             }
-            return p.result();
+        } finally {
+            lock.writeLock().unlock();
+        }
+        if (!p.ops().isEmpty()) {
+            h.after(p.ops());
+        }
+        return p.result();
+    }
+
+    /**
+     * Called around client writes ({@link #update}), outside the lock. Replication uses them: {@code before}
+     * refuses a write when too few replicas are reachable, {@code after} sends the committed ops to the
+     * replicas and may throw if too few acknowledge. Neither runs for {@link #apply} or {@link #merge}, which
+     * take ops that came from elsewhere.
+     */
+    public interface WriteHooks {
+        WriteHooks NONE = new WriteHooks() {
+            @Override
+            public void before() {}
+
+            @Override
+            public void after(List<Op> committed) {}
+        };
+
+        void before();
+
+        void after(List<Op> committed) throws IOException;
+    }
+
+    private volatile WriteHooks hooks = WriteHooks.NONE;
+
+    public void setWriteHooks(WriteHooks hooks) {
+        this.hooks = hooks == null ? WriteHooks.NONE : hooks;
+    }
+
+    /**
+     * Applies the ops that change the state and logs only those; returns how many that was. Used for ops
+     * from replicas and catch-up, where most of a peer's state is usually known already.
+     */
+    public int merge(List<Op> ops) throws IOException {
+        lock.writeLock().lock();
+        try {
+            ensureOpen();
+            List<Op> fresh = new ArrayList<>();
+            for (Op op : ops) {
+                if (store.isNew(op)) {
+                    fresh.add(op);
+                }
+            }
+            if (!fresh.isEmpty()) {
+                wal.append(fresh);
+                store.applyAll(fresh);
+                if (wal.size() >= checkpointBytes) {
+                    checkpointLocked();
+                }
+            }
+            return fresh.size();
         } finally {
             lock.writeLock().unlock();
         }

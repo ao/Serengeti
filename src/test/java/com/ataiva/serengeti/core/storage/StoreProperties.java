@@ -28,6 +28,34 @@ class StoreProperties {
         assertEquals(inOrder.toOps(), other.toOps());
     }
 
+    /** merge() logs only ops for which isNew is true, so isNew must be exactly "applying changes the state". */
+    @Property(tries = 500)
+    void isNewIsTrueExactlyWhenApplyingChangesTheState(@ForAll("ops") List<Op> state, @ForAll("ops") List<Op> more) {
+        Store s = new Store();
+        s.applyAll(state);
+        for (Op op : more) {
+            List<Op> before = s.toOps();
+            boolean predicted = s.isNew(op);
+            s.apply(op);
+            assertEquals(!before.equals(s.toOps()), predicted, () -> "op " + op + " on " + before);
+        }
+    }
+
+    @Property(tries = 300)
+    void mergingOnlyNewOpsGivesTheSameStateAsApplyingAll(@ForAll("ops") List<Op> a, @ForAll("ops") List<Op> b) {
+        Store all = new Store();
+        all.applyAll(a);
+        all.applyAll(b);
+        Store filtered = new Store();
+        filtered.applyAll(a);
+        for (Op op : b) {
+            if (filtered.isNew(op)) {
+                filtered.apply(op);
+            }
+        }
+        assertEquals(all.toOps(), filtered.toOps());
+    }
+
     @Property(tries = 300)
     void applyingTwiceChangesNothing(@ForAll("ops") List<Op> ops) {
         Store once = new Store();

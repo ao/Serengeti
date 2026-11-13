@@ -159,11 +159,7 @@ class NodeTest {
     }
 
     @Test
-    void clusteringIsRefusedUntilItExistsAndAJunkKeyStoreStopsTheNode() throws Exception {
-        String key = "k".repeat(Config.MIN_CLUSTER_KEY);
-        Config cluster = config(tmp.resolve("c"), "SERENGETI_PEERS", "peer:1985", "SERENGETI_CLUSTER_KEY", key,
-                "SERENGETI_CLUSTER_PLAINTEXT", "allow");
-        assertThrows(ConfigException.class, () -> Node.start(cluster, Node.NO_QUERIES));
+    void aJunkKeyStoreStopsTheNode() throws Exception {
         Path ks = tmp.resolve("ks.p12");
         Files.writeString(ks, "x");
         Config tls = config(tmp.resolve("t"), "SERENGETI_TLS_KEYSTORE", ks.toString(),

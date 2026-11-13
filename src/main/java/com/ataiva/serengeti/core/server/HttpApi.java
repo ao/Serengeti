@@ -39,7 +39,16 @@ public final class HttpApi implements AutoCloseable {
 
     /** What the API needs from the rest of the node. */
     public record Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries,
-            StatusSource status, LongSupplier clock) {}
+            StatusSource status, LongSupplier clock, InternalRoutes internal) {
+        /** A single node: no {@code /internal/} routes. */
+        public Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries, StatusSource status,
+                LongSupplier clock) {
+            this(users, setupToken, queries, status, clock, null);
+        }
+    }
+
+    /** Replication batches are larger than the client request that caused them. */
+    static final int MAX_INTERNAL_BODY = 16 << 20;
 
     /** Facts for {@code GET /v1/status}. */
     @FunctionalInterface
@@ -139,6 +148,10 @@ public final class HttpApi implements AutoCloseable {
             sendJson(ex, 200, Map.of("status", "ok"));
             return;
         }
+        if (path.startsWith("/internal/")) {
+            internal(ex, path, method);
+            return;
+        }
         if (path.equals("/v1/setup")) {
             requireMethod(method, "POST");
             setup(ex);
@@ -223,17 +236,63 @@ public final class HttpApi implements AutoCloseable {
         if (!(body.get("query") instanceof String q)) {
             throw new HttpError(400, "body must be {\"query\": \"...\"}");
         }
-        runQuery(ex, q, role);
-    }
-
-    private void runQuery(HttpExchange ex, String q, Users.Role role) throws IOException {
+        Object c = body.getOrDefault("consistency", "local");
+        if (!"local".equals(c) && !"majority".equals(c)) {
+            throw new HttpError(400, "consistency must be \"local\" or \"majority\"");
+        }
         Object result;
         try {
-            result = deps.queries().run(q, role);
+            result = deps.queries().run(q, role, "majority".equals(c));
         } catch (QueryService.Rejected r) {
             throw new HttpError(r.status(), r.getMessage());
         }
         sendJson(ex, 200, result);
+    }
+
+    /** Addresses already logged for a wrong cluster key, so a misconfigured peer logs once, not every second. */
+    private final Map<String, Boolean> keyWarnings = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private void internal(HttpExchange ex, String path, String method) throws IOException {
+        InternalRoutes routes = deps.internal();
+        if (routes == null) {
+            throw new HttpError(404, "no such route");
+        }
+        // Not rate-limited like logins: a key of 32 or more characters cannot be guessed, and a limit per
+        // address would let one misconfigured node behind the same NAT lock its healthy peers out.
+        if (!routes.authorized(ex.getRequestHeaders().getFirst(InternalRoutes.KEY_HEADER))) {
+            String address = ex.getRemoteAddress().getAddress().getHostAddress();
+            if (keyWarnings.putIfAbsent(address, Boolean.TRUE) == null) {
+                LOG.warning("refused a node-to-node request from " + address + ": wrong or missing cluster key");
+            }
+            throw new HttpError(401, "cluster key required");
+        }
+        Map<String, Object> body = Map.of();
+        if (method.equals("POST")) {
+            requireContentType(ex, "application/json");
+            try {
+                body = Json.parseObject(new String(readBody(ex, MAX_INTERNAL_BODY), StandardCharsets.UTF_8));
+            } catch (JsonException e) {
+                throw new HttpError(400, "body is not a JSON object");
+            }
+        } else if (!method.equals("GET")) {
+            throw new HttpError(405, "use GET or POST");
+        }
+        Map<String, String> query = new LinkedHashMap<>();
+        String raw = ex.getRequestURI().getRawQuery();
+        if (raw != null) {
+            for (String pair : raw.split("&")) {
+                int eq = pair.indexOf('=');
+                if (eq > 0) {
+                    query.put(java.net.URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
+                            java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+                }
+            }
+        }
+        try {
+            sendJson(ex, 200, routes.handle(method, path, query, body));
+        } catch (QueryService.Rejected r) {
+            throw new HttpError(r.status(), r.getMessage());
+        }
     }
 
     private Users.Role authenticate(HttpExchange ex) {
@@ -325,6 +384,10 @@ public final class HttpApi implements AutoCloseable {
     static final long DRAIN_LIMIT = 8L << 20;
 
     static byte[] readBody(HttpExchange ex) throws IOException {
+        return readBody(ex, MAX_BODY);
+    }
+
+    static byte[] readBody(HttpExchange ex, int max) throws IOException {
         String len = ex.getRequestHeaders().getFirst("Content-Length");
         if (len != null) {
             long declared;
@@ -333,8 +396,8 @@ public final class HttpApi implements AutoCloseable {
             } catch (NumberFormatException e) {
                 throw new HttpError(400, "bad Content-Length");
             }
-            if (declared > MAX_BODY) {
-                throw tooLarge(ex.getRequestBody());
+            if (declared > max) {
+                throw tooLarge(ex.getRequestBody(), max);
             }
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -342,8 +405,8 @@ public final class HttpApi implements AutoCloseable {
         try (InputStream in = ex.getRequestBody()) {
             int n;
             while ((n = in.read(buf)) > 0) {
-                if (out.size() + n > MAX_BODY) {
-                    throw tooLarge(in);
+                if (out.size() + n > max) {
+                    throw tooLarge(in, max);
                 }
                 out.write(buf, 0, n);
             }
@@ -356,7 +419,7 @@ public final class HttpApi implements AutoCloseable {
      * reads it. So a body of up to {@link #DRAIN_LIMIT} is read to the end first; past that the connection
      * is simply cut off.
      */
-    private static HttpError tooLarge(InputStream in) {
+    private static HttpError tooLarge(InputStream in, int max) {
         byte[] buf = new byte[65536];
         long left = DRAIN_LIMIT;
         try {
@@ -367,7 +430,7 @@ public final class HttpApi implements AutoCloseable {
         } catch (IOException ignored) {
             // The client went away; nothing to answer.
         }
-        return new HttpError(413, "request body is larger than " + MAX_BODY + " bytes");
+        return new HttpError(413, "request body is larger than " + max + " bytes");
     }
 
     private static Map<String, Object> error(String message) {

@@ -11,6 +11,14 @@ public interface QueryService {
      */
     Object run(String query, Users.Role role) throws Rejected;
 
+    /**
+     * As {@link #run(String, Users.Role)}; with {@code majority}, the node first syncs with enough peers to
+     * form a majority, so the read sees every write acknowledged before it began.
+     */
+    default Object run(String query, Users.Role role, boolean majority) throws Rejected {
+        return run(query, role);
+    }
+
     /** A query the client got wrong, with the HTTP status to return. */
     final class Rejected extends Exception {
         private static final long serialVersionUID = 1L;

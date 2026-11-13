@@ -21,7 +21,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiFunction;
+import com.ataiva.serengeti.core.cluster.Cluster;
+import com.ataiva.serengeti.core.cluster.UnavailableException;
 import java.util.logging.Logger;
 
 /** One running node: storage, accounts and the HTTP API, started in that order and closed in reverse. */
@@ -37,36 +38,57 @@ public final class Node implements AutoCloseable {
     private final HttpApi api;
     private final long started = System.currentTimeMillis();
 
-    /** Builds the query service once storage is open. */
-    public interface QueryFactory extends BiFunction<StorageEngine, Hlc, QueryService> {}
+    /** Builds the query service once storage is open. {@code cluster} is null on a single node. */
+    @FunctionalInterface
+    public interface QueryFactory {
+        QueryService create(StorageEngine engine, Hlc clock, Cluster cluster);
+    }
 
-    /** Until the query language is wired in, every query is refused. */
-    public static final QueryFactory NO_QUERIES = (s, c) -> (q, r) -> {
+    /** Every query is refused; for tests of the rest of the node. */
+    public static final QueryFactory NO_QUERIES = (s, c, cl) -> (q, r) -> {
         throw new QueryService.Rejected(501, "queries are not available in this build");
     };
 
-    /** The query language of docs/QUERY.md. Query mistakes are 400; storage failures are 500. */
-    public static final QueryFactory QUERIES = (engine, clock) -> {
+    /**
+     * The query language of docs/QUERY.md. Query mistakes are 400, too few reachable nodes 503, storage
+     * failures 500.
+     */
+    public static final QueryFactory QUERIES = (engine, clock, cluster) -> {
         Query q = new Query(engine, clock);
-        return (text, role) -> {
-            try {
-                return q.run(text).toJson();
-            } catch (QueryException e) {
-                throw new QueryService.Rejected(400, e.getMessage());
-            } catch (IOException e) {
-                throw new UncheckedIOException("storage failed", e);
+        return new QueryService() {
+            @Override
+            public Object run(String text, Users.Role role) throws Rejected {
+                return run(text, role, false);
+            }
+
+            @Override
+            public Object run(String text, Users.Role role, boolean majority) throws Rejected {
+                try {
+                    if (majority && cluster != null) {
+                        cluster.syncForRead();
+                    }
+                    return q.run(text).toJson();
+                } catch (QueryException e) {
+                    throw new Rejected(400, e.getMessage());
+                } catch (UnavailableException e) {
+                    throw new Rejected(503, e.getMessage());
+                } catch (IOException e) {
+                    throw new UncheckedIOException("storage failed", e);
+                }
             }
         };
     };
 
+    private Cluster cluster;
+
     private Node(Config config, QueryFactory queries) throws IOException {
         this.config = config;
-        if (config.clustered()) {
-            throw new ConfigException("clustering is not available in this build; remove peers and discovery_cidr");
-        }
-        // Load the key store first, so a bad one stops the node before it touches the data directory.
+        // Load the key stores first, so a bad one stops the node before it touches the data directory.
         javax.net.ssl.SSLContext tls = config.tls()
                 ? com.ataiva.serengeti.core.server.Tls.serverContext(config.tlsKeystore, config.tlsKeystorePassword)
+                : null;
+        javax.net.ssl.SSLContext peerTls = config.clustered() && config.tls()
+                ? com.ataiva.serengeti.core.server.Tls.clientContext(config.tlsTruststore, config.tlsTruststorePassword)
                 : null;
         Path dir = config.dataDir;
         try {
@@ -100,17 +122,33 @@ public final class Node implements AutoCloseable {
         } else if (config.adminPassword != null) {
             LOG.info("an admin account exists already; SERENGETI_ADMIN_PASSWORD is ignored");
         }
-        QueryService qs = queries.apply(storage, clock);
+        if (config.clustered()) {
+            cluster = new Cluster(config, id, storage, peerTls);
+            storage.setWriteHooks(cluster);
+        }
+        QueryService qs = queries.create(storage, clock, cluster);
         try {
             this.api = HttpApi.start(config.bind, config.port, tls, new HttpApi.Deps(users, token, qs, this::status,
-                    System::currentTimeMillis));
+                    System::currentTimeMillis, cluster));
         } catch (IOException e) {
+            if (cluster != null) {
+                cluster.close();
+            }
             storage.close();
             throw new ConfigException("cannot listen on " + config.bind + ":" + config.port + ": " + e.getMessage());
         }
         LOG.info("serengeti " + Version.current() + " node " + id + " listening on "
                 + config.scheme() + "://" + (config.bind.contains(":") ? "[" + config.bind + "]" : config.bind)
-                + ":" + api.address().getPort());
+                + ":" + api.address().getPort()
+                + (cluster == null ? "" : ", cluster of " + cluster.size() + " (writes need " + cluster.quorum() + ")"));
+        if (cluster != null) {
+            cluster.start();
+        }
+    }
+
+    /** The cluster this node belongs to, or null for a single node. */
+    public Cluster cluster() {
+        return cluster;
     }
 
     public static Node start(Config config, QueryFactory queries) throws IOException {
@@ -138,6 +176,9 @@ public final class Node implements AutoCloseable {
         m.put("uptime_s", (System.currentTimeMillis() - started) / 1000);
         m.put("databases", storage.read(s -> s.databases().size()));
         m.put("fsync", config.fsync.name().toLowerCase(java.util.Locale.ROOT));
+        if (cluster != null) {
+            m.put("cluster", cluster.status());
+        }
         return m;
     }
 
@@ -151,6 +192,9 @@ public final class Node implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        if (cluster != null) {
+            cluster.close();
+        }
         api.close();
         storage.close();
     }
