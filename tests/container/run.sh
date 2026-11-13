@@ -212,6 +212,46 @@ lost=$(docker exec "$RUN-client" sh -c 'wc -l < /tmp/lost' | tr -d ' ')
 if [ "$acked" -gt 0 ]; then ok "writes were acknowledged before the kills ($acked)"; else bad "kill test" "no writes acknowledged"; fi
 expect "every acknowledged write survived kill -9 ($acked acknowledged)" 0 "$lost"
 
+echo "# readiness, metrics, request log, backup and restore"
+expect "ready needs no credentials" 200 "$(status env GET /ready)"
+contains "ready says so" '{"status":"ready"}' "$(body env GET /ready)"
+expect "metrics need credentials" 401 "$(status env GET /metrics)"
+metrics=$(body env GET /metrics "admin:$PW")
+contains "metrics count query requests" 'serengeti_http_requests_total{route="/v1/query",code="200"}' "$metrics"
+contains "metrics report write-ahead log forces" 'serengeti_wal_fsyncs_total ' "$metrics"
+expect "backup needs credentials" 401 "$(status env GET /v1/backup)"
+backup_headers=$(docker exec "$RUN-client" curl -s -D - -o /tmp/backup.jsonl -u "admin:$PW" http://env:1985/v1/backup)
+contains "backup is octet-stream" "application/octet-stream" "$backup_headers"
+contains "backup names its file" 'filename="serengeti-backup-' "$backup_headers"
+contains "backup starts with the snapshot header" '"format":"serengeti-snapshot"' \
+  "$(docker exec "$RUN-client" head -1 /tmp/backup.jsonl)"
+
+restore_into() { # volume backup-file-in-client -> exit status of "serengeti restore" in a new container
+  local rc=0
+  docker exec "$RUN-client" cat "$2" | docker run --rm -i --label "serengeti-it=$RUN" -v "$1:/data" \
+    --entrypoint sh "$IMAGE" -c 'cat > /tmp/in && exec java -jar /opt/serengeti/serengeti.jar restore /tmp/in' \
+    >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+restored=$(volume restored)
+expect "restore into an empty volume exits 0" 0 "$(restore_into "$restored" /tmp/backup.jsonl)"
+expect "restore into a volume that holds data exits 2" 2 "$(restore_into "$restored" /tmp/backup.jsonl)"
+docker exec "$RUN-client" sh -c 'head -c $(( $(wc -c < /tmp/backup.jsonl) / 2 )) /tmp/backup.jsonl > /tmp/truncated.jsonl'
+trunc=$(volume trunc)
+expect "a truncated backup is refused with exit 2" 2 "$(restore_into "$trunc" /tmp/truncated.jsonl)"
+expect "and the volume is left without a snapshot" gone \
+  "$(docker run --rm -v "$trunc:/data" --entrypoint sh "$IMAGE" -c \
+     'test -e /data/snapshot.jsonl && echo there || echo gone')"
+node copy -v "$restored:/data" -e SERENGETI_ADMIN_PASSWORD="$PW"
+wait_up copy
+contains "a node on the restored volume has the rows" '"rows":[["a","bolt"],["b","nut"]]' \
+  "$(body copy POST /v1/query "admin:$PW" '{"query": "SELECT _id, name FROM shop.items"}')"
+contains "the request log names route and status, not the query" \
+  'request method=POST route=/v1/query status=200' "$(docker logs "$RUN-env" 2>&1)"
+expect "the request log holds no query text" 0 \
+  "$(docker logs "$RUN-env" 2>&1 | grep -c -F 'SELECT _id, name' || true)"
+expect "the request log holds no password" 0 "$(docker logs "$RUN-env" 2>&1 | grep -c -F "$PW" || true)"
+
 echo
 echo "$passed passed, $failed failed"
 [ "$failed" = 0 ]
