@@ -6,7 +6,12 @@ WORKDIR /src
 COPY pom.xml .
 RUN mvn -B -ntp -q dependency:go-offline
 COPY src src
-RUN mvn -B -ntp -q -DskipTests package \
+# Release builds pass the version from the tag (release.yml); other builds keep the pom's version.
+ARG VERSION=
+RUN if [ -n "$VERSION" ]; then \
+      mvn -B -ntp -q org.codehaus.mojo:versions-maven-plugin:2.18.0:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false; \
+    fi \
+ && mvn -B -ntp -q -DskipTests package \
  && cp target/Serengeti-*-jar-with-dependencies.jar /serengeti.jar
 
 FROM eclipse-temurin:21-jre
