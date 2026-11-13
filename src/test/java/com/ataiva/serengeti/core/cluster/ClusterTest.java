@@ -162,9 +162,20 @@ class ClusterTest {
         HttpResponse<String> r = query(0, "CREATE DATABASE d");
         assertEquals(503, r.statusCode(), r.body());
         assertTrue(r.body().contains("catching up"), r.body());
+        assertEquals(503, ready(0), "a lone node of three is not ready");
         start(1);
         waitWritable(0);
         assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        eventually("node 0 is ready", () -> ready(0) == 200);
+    }
+
+    private int ready(int i) {
+        try {
+            return HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[i] + "/ready")).build(),
+                    HttpResponse.BodyHandlers.discarding()).statusCode();
+        } catch (IOException | InterruptedException e) {
+            return -1;
+        }
     }
 
     @Test

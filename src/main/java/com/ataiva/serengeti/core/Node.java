@@ -6,11 +6,14 @@ import com.ataiva.serengeti.core.query.Query;
 import com.ataiva.serengeti.core.query.QueryException;
 import java.io.UncheckedIOException;
 import com.ataiva.serengeti.core.server.HttpApi;
+import com.ataiva.serengeti.core.server.NodeOps;
 import com.ataiva.serengeti.core.server.QueryService;
 import com.ataiva.serengeti.core.server.SetupToken;
 import com.ataiva.serengeti.core.server.Users;
 import com.ataiva.serengeti.core.storage.Hlc;
+import com.ataiva.serengeti.core.storage.Op;
 import com.ataiva.serengeti.core.storage.StorageEngine;
+import com.ataiva.serengeti.core.storage.Wal;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -18,7 +21,9 @@ import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import com.ataiva.serengeti.core.cluster.Cluster;
@@ -129,7 +134,7 @@ public final class Node implements AutoCloseable {
         QueryService qs = queries.create(storage, clock, cluster);
         try {
             this.api = HttpApi.start(config.bind, config.port, tls, new HttpApi.Deps(users, token, qs, this::status,
-                    System::currentTimeMillis, cluster));
+                    System::currentTimeMillis, cluster, operations()));
         } catch (IOException e) {
             if (cluster != null) {
                 cluster.close();
@@ -167,6 +172,30 @@ public final class Node implements AutoCloseable {
         String s = UUID.randomUUID().toString();
         Files.writeString(f, s + "\n", StandardCharsets.UTF_8);
         return s;
+    }
+
+    /** What the HTTP API reads from this node for {@code /ready} and {@code /metrics}. */
+    private NodeOps operations() {
+        return new NodeOps() {
+            @Override
+            public List<java.util.function.BooleanSupplier> readiness() {
+                // In a cluster, ready means caught up with a majority since start-up and a majority reachable now.
+                return cluster == null ? List.of()
+                        : List.of(() -> cluster.caughtUp() && cluster.reachable() >= cluster.quorum());
+            }
+
+            @Override
+            public Optional<List<Op>> snapshot() {
+                return Optional.of(storage.snapshotOps());
+            }
+
+            @Override
+            public NodeOps.Gauges gauges() {
+                Wal.Stats wal = storage.walStats();
+                long databases = storage.read(s -> (long) s.databases().size());
+                return new NodeOps.Gauges(wal.bytes(), wal.fsyncs(), wal.fsyncNanos(), databases);
+            }
+        };
     }
 
     public Map<String, Object> status() {

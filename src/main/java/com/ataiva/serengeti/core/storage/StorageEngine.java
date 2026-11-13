@@ -233,6 +233,11 @@ public final class StorageEngine implements AutoCloseable {
         return wal.size();
     }
 
+    /** The log's size and forces, for {@code GET /metrics}. */
+    public Wal.Stats walStats() {
+        return wal.stats();
+    }
+
     public Path dir() {
         return dir;
     }

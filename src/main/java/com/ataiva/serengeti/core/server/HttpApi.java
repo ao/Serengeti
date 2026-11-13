@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -37,13 +38,27 @@ public final class HttpApi implements AutoCloseable {
     public static final int MAX_BODY = 1 << 20;
     static final String REALM = "Basic realm=\"serengeti\", charset=\"UTF-8\"";
 
+    /**
+     * Per-request facts for the request log. Not an exchange attribute: the JDK keeps those on the context,
+     * shared by every request to it, so a user name would leak into the next request's log line.
+     */
+    private static final class Caller {
+        String user;
+    }
+
     /** What the API needs from the rest of the node. */
     public record Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries,
-            StatusSource status, LongSupplier clock, InternalRoutes internal) {
+            StatusSource status, LongSupplier clock, InternalRoutes internal, NodeOps ops) {
+        /** A single node without backups or gauges, for tests of the HTTP layer. */
+        public Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries,
+                StatusSource status, LongSupplier clock) {
+            this(users, setupToken, queries, status, clock, null, NodeOps.NONE);
+        }
+
         /** A single node: no {@code /internal/} routes. */
-        public Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries, StatusSource status,
-                LongSupplier clock) {
-            this(users, setupToken, queries, status, clock, null);
+        public Deps(Users users, AtomicReference<SetupToken> setupToken, QueryService queries,
+                StatusSource status, LongSupplier clock, NodeOps ops) {
+            this(users, setupToken, queries, status, clock, null, ops);
         }
     }
 
@@ -60,6 +75,7 @@ public final class HttpApi implements AutoCloseable {
     private final ExecutorService pool;
     private final Deps deps;
     private final LoginLimiter limiter;
+    private final Metrics metrics = new Metrics();
     private final Static pages = new Static();
 
     private HttpApi(HttpServer server, Deps deps) {
@@ -112,6 +128,9 @@ public final class HttpApi implements AutoCloseable {
     }
 
     private void handle(HttpExchange ex) throws IOException {
+        long started = System.nanoTime();
+        String route = Metrics.route(ex.getRequestURI().getRawPath());
+        Caller caller = new Caller();
         try (ex) {
             Headers h = ex.getResponseHeaders();
             h.set("X-Content-Type-Options", "nosniff");
@@ -119,7 +138,7 @@ public final class HttpApi implements AutoCloseable {
             h.set("X-Frame-Options", "DENY");
             h.set("Referrer-Policy", "no-referrer");
             try {
-                route(ex);
+                route(ex, caller);
             } catch (HttpError e) {
                 if (e.status == 401) {
                     h.set("WWW-Authenticate", REALM);
@@ -127,17 +146,30 @@ public final class HttpApi implements AutoCloseable {
                 if (e.retryAfter > 0) {
                     h.set("Retry-After", Long.toString(e.retryAfter));
                 }
+                drain(ex.getRequestBody());
                 sendJson(ex, e.status, error(e.getMessage()));
             } catch (RuntimeException e) {
                 LOG.log(Level.SEVERE, "request failed: " + ex.getRequestMethod() + " " + ex.getRequestURI().getPath(), e);
+                drain(ex.getRequestBody());
                 sendJson(ex, 500, error("internal error"));
             }
         } catch (IOException e) {
             LOG.log(Level.FINE, "client connection failed", e);
+        } finally {
+            // Code 0 means no response was sent, for instance when the client went away first.
+            int status = Math.max(0, ex.getResponseCode());
+            long nanos = System.nanoTime() - started;
+            metrics.observe(route, status, nanos);
+            String remote = ex.getRemoteAddress().getAddress().getHostAddress();
+            // Peers sync every second; their successful calls would drown the log at INFO.
+            Level level = route.startsWith("/internal/") && status == 200 ? Level.FINE : Level.INFO;
+            if (LOG.isLoggable(level)) {
+                LOG.log(level, RequestLog.line(ex.getRequestMethod(), route, status, nanos, remote, caller.user));
+            }
         }
     }
 
-    private void route(HttpExchange ex) throws IOException {
+    private void route(HttpExchange ex, Caller caller) throws IOException {
         String path = ex.getRequestURI().getRawPath();
         String method = ex.getRequestMethod();
         if (!method.equals("GET")) {
@@ -152,6 +184,12 @@ public final class HttpApi implements AutoCloseable {
             internal(ex, path, method);
             return;
         }
+        if (path.equals("/ready")) {
+            requireMethod(method, "GET");
+            boolean ready = ready();
+            sendJson(ex, ready ? 200 : 503, Map.of("status", ready ? "ready" : "not ready"));
+            return;
+        }
         if (path.equals("/v1/setup")) {
             requireMethod(method, "POST");
             setup(ex);
@@ -161,7 +199,7 @@ public final class HttpApi implements AutoCloseable {
             throw new HttpError(503, "not set up: set SERENGETI_ADMIN_PASSWORD, or POST /v1/setup with the token "
                     + "from the data directory");
         }
-        Users.Role role = authenticate(ex);
+        Users.Role role = authenticate(ex, caller);
         switch (path) {
             case "/v1/query", "/post" -> {
                 // /post is the v1 route, kept for one release. It takes the same JSON body: a raw text/plain
@@ -172,6 +210,19 @@ public final class HttpApi implements AutoCloseable {
             case "/v1/status" -> {
                 requireMethod(method, "GET");
                 sendJson(ex, 200, deps.status().status());
+            }
+            case "/metrics" -> {
+                requireMethod(method, "GET");
+                send(ex, 200, Metrics.CONTENT_TYPE, metrics.render(deps.ops().gauges())
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+            case "/v1/backup" -> {
+                requireMethod(method, "GET");
+                if (role != Users.Role.ADMIN) {
+                    throw new HttpError(403, "backups need the admin role");
+                }
+                Backup.send(ex, deps.ops().snapshot()
+                        .orElseThrow(() -> new HttpError(501, "backups are not available in this build")));
             }
             case "/v1/password" -> {
                 requireMethod(method, "POST");
@@ -184,6 +235,21 @@ public final class HttpApi implements AutoCloseable {
                 send(ex, 200, p.contentType(), p.body());
             }
         }
+    }
+
+    /** Runs every readiness check. The reason a check failed is logged, never sent to the client. */
+    private boolean ready() {
+        for (BooleanSupplier check : deps.ops().readiness()) {
+            try {
+                if (!check.getAsBoolean()) {
+                    return false;
+                }
+            } catch (RuntimeException e) {
+                LOG.log(Level.WARNING, "readiness check failed", e);
+                return false;
+            }
+        }
+        return true;
     }
 
     private void setup(HttpExchange ex) throws IOException {
@@ -295,7 +361,7 @@ public final class HttpApi implements AutoCloseable {
         }
     }
 
-    private Users.Role authenticate(HttpExchange ex) {
+    private Users.Role authenticate(HttpExchange ex, Caller caller) {
         String address = ex.getRemoteAddress().getAddress().getHostAddress();
         Optional<String[]> creds = basic(ex);
         if (creds.isEmpty()) {
@@ -305,14 +371,17 @@ public final class HttpApi implements AutoCloseable {
         Optional<Users.Role> role = deps.users().verify(creds.get()[0], creds.get()[1]);
         if (role.isEmpty()) {
             limiter.failed(address);
+            metrics.loginFailed();
             throw new HttpError(401, "wrong user name or password");
         }
+        caller.user = creds.get()[0];
         return role.get();
     }
 
     private void limited(String address) {
         long wait = limiter.retryAfterSeconds(address);
         if (wait > 0) {
+            metrics.loginLimited();
             HttpError e = new HttpError(429, "too many failed attempts; try again later");
             e.retryAfter = wait;
             throw e;
@@ -420,6 +489,16 @@ public final class HttpApi implements AutoCloseable {
      * is simply cut off.
      */
     private static HttpError tooLarge(InputStream in, int max) {
+        drain(in);
+        return new HttpError(413, "request body is larger than " + max + " bytes");
+    }
+
+    /**
+     * Reads and discards what is left of a request body, up to {@link #DRAIN_LIMIT}. Done before every error
+     * response: a refusal sent while the client is still sending (401 before the body is read, for one) is
+     * otherwise sometimes destroyed by the TCP reset that closing a socket with unread input causes.
+     */
+    private static void drain(InputStream in) {
         byte[] buf = new byte[65536];
         long left = DRAIN_LIMIT;
         try {
@@ -430,7 +509,6 @@ public final class HttpApi implements AutoCloseable {
         } catch (IOException ignored) {
             // The client went away; nothing to answer.
         }
-        return new HttpError(413, "request body is larger than " + max + " bytes");
     }
 
     private static Map<String, Object> error(String message) {

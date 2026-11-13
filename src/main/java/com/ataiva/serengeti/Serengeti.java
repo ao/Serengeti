@@ -17,6 +17,10 @@ public final class Serengeti {
         // Drop clients that hold a request open: 30 s to send a request, 60 s to read a response.
         System.setProperty("sun.net.httpserver.maxReqTime", "30");
         System.setProperty("sun.net.httpserver.maxRspTime", "60");
+        if (args.length > 0 && args[0].equals("restore")) {
+            System.exit(restore(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(),
+                    System.out, System.err));
+        }
         String configPath = null;
         boolean health = false;
         for (int i = 0; i < args.length; i++) {
@@ -34,7 +38,9 @@ public final class Serengeti {
                 }
                 case "--help", "-h" -> {
                     System.out.println("usage: serengeti [--config FILE] [--version] [--health]\n"
+                            + "       serengeti restore [--config FILE] BACKUP_FILE\n"
                             + "--health asks the running node's GET /health and exits 0 if it answers 200.\n"
+                            + "restore loads a backup into an empty data directory; stop the node first.\n"
                             + "Settings come from FILE (or SERENGETI_CONFIG) and SERENGETI_* environment variables.\n"
                             + "See docs/CONFIGURATION.md.");
                     return;
@@ -87,6 +93,46 @@ public final class Serengeti {
             return code == 200;
         } catch (IOException | ConfigException e) {
             return false;
+        }
+    }
+
+    /**
+     * {@code serengeti restore [--config FILE] BACKUP_FILE}. Returns the exit status: 0 when the backup was loaded,
+     * 2 when it was refused or the arguments or settings are wrong. Nothing is written on a refusal.
+     */
+    static int restore(String[] args, java.util.Map<String, String> env, java.io.PrintStream out,
+            java.io.PrintStream err) {
+        String configPath = null;
+        java.util.List<String> files = new java.util.ArrayList<>();
+        for (int i = 0; i < args.length; i++) {
+            if (args[i].equals("--config")) {
+                if (i + 1 >= args.length) {
+                    err.println("serengeti: --config needs a file name");
+                    return 2;
+                }
+                configPath = args[++i];
+            } else if (args[i].startsWith("--")) {
+                err.println("serengeti: unknown argument '" + args[i] + "' for restore");
+                return 2;
+            } else {
+                files.add(args[i]);
+            }
+        }
+        if (files.size() != 1) {
+            err.println("serengeti: restore needs one backup file: serengeti restore [--config FILE] BACKUP_FILE");
+            return 2;
+        }
+        try {
+            Config config = Config.load(configPath, env);
+            int n = com.ataiva.serengeti.core.server.Backup.restore(java.nio.file.Path.of(files.get(0)), config.dataDir);
+            out.println("restored " + n + " operations into " + config.dataDir.toAbsolutePath());
+            return 0;
+        } catch (ConfigException e) {
+            err.println("serengeti: " + e.getMessage());
+            return 2;
+        } catch (IOException e) {
+            err.println("serengeti: restore refused: " + e.getMessage());
+            return 2;
         }
     }
 

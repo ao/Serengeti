@@ -60,4 +60,35 @@ The admin password is only used when there is no account yet. Once `users.json` 
 | `setup-token` | One-time setup token (mode 0600), present only until the first admin password is set. |
 | `node-id` | A random id for this node, kept across restarts. |
 
-Back up a stopped node by copying the directory. A running node has no consistent backup yet.
+Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md#backup)). Copying the directory
+of a stopped node also works. A backup holds the data only: `users.json`, `node-id` and `setup-token` are not in it.
+
+## Restore
+
+```
+serengeti restore [--config FILE] BACKUP_FILE
+```
+
+Loads a backup into the data directory that the settings name (`data_dir`, or `SERENGETI_DATA_DIR`). Stop the
+node first. Restore does not lock the directory, and running it beside a node that writes to the same files
+is not supported.
+
+- The directory must not hold `wal.log` or `snapshot.jsonl`. An existing `users.json` is kept, so the restored
+  node keeps its accounts. Without one, the node asks for the setup token or `SERENGETI_ADMIN_PASSWORD` again.
+- The whole file is checked before anything is written: the format, every change, the count, the SHA-256 and
+  that the changes apply. A truncated or altered file is refused, and nothing is written.
+- Exit status 0 prints `restored N operations into DIR`. Exit status 2 prints the reason on stderr.
+
+With the image, mount the backup read-only and write into a volume that is empty:
+
+```sh
+docker run --rm -v serengeti-restored:/data -v "$PWD:/in:ro" serengeti restore /in/serengeti-backup.jsonl
+```
+
+## Health, readiness and logs
+
+- `GET /health` answers while the process serves HTTP. Use it for liveness.
+- `GET /ready` answers 200 once the node serves and every readiness check passes. Use it before sending traffic.
+  See [API.md](API.md#readiness).
+- `GET /metrics` gives Prometheus metrics. It needs credentials. See [API.md](API.md#metrics).
+- The node logs one INFO line per request, to stderr. See [API.md](API.md#request-log).

@@ -142,6 +142,23 @@ class StorageEngineTest {
     }
 
     @Test
+    void snapshotChecksumCatchesAChangeThatKeepsTheJsonValid() throws IOException {
+        List<Op> ops = List.of(new Op.CreateDb("d", at(1)),
+                new Op.Put("d", "t", "x", Map.of("k", (Object) "v"), at(2)));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Snapshot.write(ops, out);
+        String text = out.toString(StandardCharsets.UTF_8);
+        String changed = text.replace("\"v\"", "\"w\"");
+        assertThrows(IOException.class,
+                () -> Snapshot.read(new ByteArrayInputStream(changed.getBytes(StandardCharsets.UTF_8)), false));
+        String noChecksum = text.replaceAll(",\"sha256\":\"[0-9a-f]{64}\"", "");
+        assertEquals(ops, Snapshot.read(new ByteArrayInputStream(noChecksum.getBytes(StandardCharsets.UTF_8))),
+                "start-up still loads a snapshot without a checksum");
+        assertThrows(IOException.class,
+                () -> Snapshot.read(new ByteArrayInputStream(noChecksum.getBytes(StandardCharsets.UTF_8)), true));
+    }
+
+    @Test
     void intervalPolicyFlushesInTheBackground() throws Exception {
         try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.INTERVAL)) {
             seed(e, 2);

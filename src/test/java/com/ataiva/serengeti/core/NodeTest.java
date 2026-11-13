@@ -69,6 +69,15 @@ class NodeTest {
     }
 
     @Test
+    void readyAnswersWithoutCredentialsOnceTheNodeServes() throws Exception {
+        try (Node n = Node.start(config(tmp.resolve("data")), Node.NO_QUERIES)) {
+            HttpResponse<String> r = get(n, "/ready", null);
+            assertEquals(200, r.statusCode());
+            assertEquals("{\"status\":\"ready\"}", r.body().trim());
+        }
+    }
+
+    @Test
     void adminPasswordFromTheEnvironmentAndRestartKeepsItAndTheNodeId() throws Exception {
         Path data = tmp.resolve("data");
         String id;

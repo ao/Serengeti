@@ -86,11 +86,13 @@ What works in this branch, with tests (`mvn verify`, and `tests/container/run.sh
 - replication across 1 to 7 nodes with majority writes, catch-up after restarts and partitions, and
   majority reads; `tests/cluster/run.sh` kills, partitions and slows nodes of a 3-node TLS cluster in
   Docker and checks that no acknowledged write is lost;
+- `GET /ready`, Prometheus metrics at `GET /metrics`, and one request log line per request;
+- backup over HTTP (`GET /v1/backup`, admin) and `serengeti restore` into an empty data directory;
 - one image for linux/amd64 and linux/arm64.
 
-Not yet done: `/ready`, `/metrics`, backup and restore. There are no indexes; every `WHERE` scans the
-table. There are no joins and no transactions across statements. Conflicting writes to one row are
-resolved last-writer-wins, not serialised.
+What it does not do: there are no indexes, so every `WHERE` scans the table; there are no joins and no
+transactions across statements; conflicting writes to one row are resolved last-writer-wins, not
+serialised; accounts are not replicated.
 
 1.x (up to v1.3.4) is not compatible: its HTTP routes, on-disk files and `admin`/`admin` login are gone.
 

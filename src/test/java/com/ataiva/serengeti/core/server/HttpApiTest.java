@@ -111,6 +111,44 @@ class HttpApiTest {
     }
 
     @Test
+    void readyNeedsNoCredentialsAndSaysOnlyItsStatus() throws Exception {
+        HttpResponse<String> r = send(req("GET", "/ready", null, null));
+        assertEquals(200, r.statusCode());
+        assertEquals("{\"status\":\"ready\"}", r.body().trim());
+        assertEquals(405, send(req("POST", "/ready", "application/json", "{}")).statusCode());
+    }
+
+    @Test
+    void readyIsFalseWhenAnyCheckFailsAndSaysNothingAboutWhy() throws Exception {
+        NodeOps ops = new NodeOps() {
+            @Override
+            public List<java.util.function.BooleanSupplier> readiness() {
+                return List.of(() -> true, () -> {
+                    throw new IllegalStateException("secret detail /var/lib/x");
+                }, () -> false);
+            }
+        };
+        try (HttpApi other = HttpApi.start("127.0.0.1", 0, new HttpApi.Deps(users, token, queries::run,
+                () -> Map.of(), now::get, ops))) {
+            HttpResponse<String> r = send(HttpRequest.newBuilder(URI.create(
+                    "http://127.0.0.1:" + other.address().getPort() + "/ready")).GET());
+            assertEquals(503, r.statusCode());
+            assertEquals("{\"status\":\"not ready\"}", r.body().trim());
+        }
+        NodeOps ready = new NodeOps() {
+            @Override
+            public List<java.util.function.BooleanSupplier> readiness() {
+                return List.of(() -> true);
+            }
+        };
+        try (HttpApi other = HttpApi.start("127.0.0.1", 0, new HttpApi.Deps(users, token, queries::run,
+                () -> Map.of(), now::get, ready))) {
+            assertEquals(200, send(HttpRequest.newBuilder(URI.create(
+                    "http://127.0.0.1:" + other.address().getPort() + "/ready")).GET()).statusCode());
+        }
+    }
+
+    @Test
     void beforeSetupEveryOtherRouteAnswers503EvenWithCredentials() throws Exception {
         for (String route : PROTECTED) {
             HttpResponse<String> r = call(route, "admin", PASSWORD);

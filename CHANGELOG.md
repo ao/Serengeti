@@ -29,6 +29,14 @@ the query language and the files in the data directory all change.
   reads, a cluster key for `/internal/*`, and HTTPS between nodes with certificate and host name checks.
   A node with peers needs TLS or `SERENGETI_CLUSTER_PLAINTEXT=allow`. See docs/CONSISTENCY.md.
 - One Docker image for linux/amd64 and linux/arm64, running as a non-root user, with a health check.
+- `GET /ready` (no credentials; 503 while a readiness check fails) and `GET /metrics` (Prometheus text format,
+  Basic credentials). See docs/API.md.
+- One INFO log line per request, with method, route label, status, duration, address and user name. Never the
+  body, the query string or credentials.
+- `GET /v1/backup` streams a consistent snapshot to an admin account. `serengeti restore BACKUP_FILE` loads one
+  into an empty data directory; accounts are not included. See docs/CONFIGURATION.md.
+- Snapshot files, and so backups, carry a SHA-256 of their contents in the trailer. A backup without one is
+  refused on restore.
 - Tests: unit and property tests (`mvn verify`, Java 17 and 21), and container tests against the image
   (`tests/container/run.sh`), including `kill -9` during writes.
 - A quick start that CI runs (`docs/quickstart.sh`), and clients for curl, Python (`urllib`) and
