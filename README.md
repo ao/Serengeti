@@ -67,10 +67,12 @@ What works in this branch, with tests (`mvn verify`, and `tests/container/run.sh
 - the query language in docs/QUERY.md, with property tests on the parser;
 - the authenticated API and console;
 - HTTPS with a PKCS#12 key store, TLS 1.2 and 1.3 only;
+- `GET /ready`, Prometheus metrics at `GET /metrics`, and one request log line per request;
+- backup over HTTP (`GET /v1/backup`, admin) and `serengeti restore` into an empty data directory;
 - one image for linux/amd64 and linux/arm64.
 
-Not yet done: replication, its node-to-node TLS and its fault tests, `/ready`, `/metrics`, backup and restore. There are
-no indexes; every `WHERE` scans the table. There are no joins and no transactions across statements.
+Not yet done: replication, its node-to-node TLS and its fault tests. There are no indexes; every `WHERE` scans
+the table. There are no joins and no transactions across statements.
 
 1.x (up to v1.3.4) is not compatible: its HTTP routes, on-disk files and `admin`/`admin` login are gone.
 
