@@ -60,3 +60,19 @@ jobs:
         run: docker build -t serengeti:cluster .
       - name: Kill, partition and slow-disk tests on 3 nodes
         run: SKIP_BUILD=1 IMAGE=serengeti:cluster tests/cluster/run.sh
+
+  quickstart:
+    name: Quick start (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the quick start from README.md
+        run: IMAGE=serengeti:quickstart docs/quickstart.sh
+
+  examples:
+    name: Examples (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the examples
+        run: IMAGE=serengeti:examples examples/run.sh

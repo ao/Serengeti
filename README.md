@@ -9,14 +9,29 @@ every database and acknowledge a write once a majority has it on disk ([docs/CON
 
 ## Quick start
 
+Build the image and start one node. The node writes a one-time setup token to `/data/setup-token` on its
+first start and refuses every request except `GET /health` until the admin password is set with it:
+
 ```sh
 docker build -t serengeti .
-docker run -d --name serengeti -p 127.0.0.1:1985:1985 -v serengeti-data:/data \
-  -e SERENGETI_ADMIN_PASSWORD='choose a long password' serengeti
+docker run -d --name serengeti -p 127.0.0.1:1985:1985 -v serengeti-data:/data serengeti
+```
+
+Set the admin password and run queries. The commands keep the password in `SERENGETI_PASSWORD`; choose
+your own.
+
+```sh
+# Wait until the node answers, then set the admin password with the one-time setup token.
+for _ in $(seq 60); do curl -sf http://127.0.0.1:1985/health >/dev/null && break; sleep 1; done
+export SERENGETI_PASSWORD='choose a long password'
+token=$(docker exec serengeti cat /data/setup-token)
+curl -s -H 'Content-Type: application/json' \
+  --data "{\"token\": \"$token\", \"password\": \"$SERENGETI_PASSWORD\"}" http://127.0.0.1:1985/v1/setup; echo
+# {"user":"admin"}
 ```
 
 ```sh
-q() { curl -s -u "admin:choose a long password" -H 'Content-Type: application/json' \
+q() { curl -s -u "admin:$SERENGETI_PASSWORD" -H 'Content-Type: application/json' \
         --data "{\"query\": \"$1\"}" http://127.0.0.1:1985/v1/query; echo; }
 
 q "CREATE DATABASE shop"
@@ -28,14 +43,12 @@ q "SELECT name, qty FROM shop.items WHERE qty > 200"
 
 The console is at http://127.0.0.1:1985/ and asks for the same user name and password.
 
-Without `SERENGETI_ADMIN_PASSWORD`, the first start writes a one-time token to `/data/setup-token` and
-refuses every request except `GET /health` until the password is set with it:
+To set the password when the node first starts, pass `-e SERENGETI_ADMIN_PASSWORD` to `docker run`
+(the value is taken from your shell), and skip the setup step. See docs/CONFIGURATION.md.
 
-```sh
-token=$(docker exec serengeti cat /data/setup-token)
-curl -s -H 'Content-Type: application/json' \
-  --data "{\"token\": \"$token\", \"password\": \"choose a long password\"}" http://127.0.0.1:1985/v1/setup
-```
+The [examples](examples/) run the same steps from curl, Python (`urllib`) and JavaScript (`fetch`). The
+quick start is run by [docs/quickstart.sh](docs/quickstart.sh), and the examples by
+[examples/run.sh](examples/run.sh); both are run in CI.
 
 Without Docker, build with `mvn package` (Java 17 or later) and run
 `java -jar target/Serengeti-2.0.0-SNAPSHOT-jar-with-dependencies.jar`. It listens on 127.0.0.1:1985 and
@@ -46,6 +59,9 @@ keeps its data in `./data`.
 - [docs/QUERY.md](docs/QUERY.md): the query language, comparison rules and limits.
 - [docs/API.md](docs/API.md): HTTP routes, authentication and errors.
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md): settings, defaults and the data directory.
+- [examples/](examples/): clients for curl, Python and JavaScript.
+- [CHANGELOG.md](CHANGELOG.md), [ROADMAP.md](ROADMAP.md), [VERSIONING.md](VERSIONING.md) and
+  [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security defaults
 

@@ -30,8 +30,9 @@ Key principles:
 
 ### Prerequisites
 
-- JDK 11 or higher
-- Maven 3.6 or higher
+- JDK 17 or higher (CI runs Java 17 and 21)
+- Maven 3.9 or higher
+- Docker, for the container, quick start and example tests
 - Git
 
 ### Setting Up the Development Environment
@@ -55,16 +56,20 @@ Key principles:
 ### Building the Project
 
 ```
-mvn clean install
+mvn verify      # compiles, runs the unit and property tests
+mvn package     # also builds target/Serengeti-<version>-jar-with-dependencies.jar
 ```
+
+The version is the one in `pom.xml`, which stays at the next `-SNAPSHOT` version on main.
 
 ### Running the Project
 
 ```
-java -jar target/serengeti-<version>.jar
+java -jar target/Serengeti-2.0.0-SNAPSHOT-jar-with-dependencies.jar
 ```
 
-Where `<version>` is the current version of the project. The current version can be found in the `version.txt` file in the project root directory.
+A node listens on 127.0.0.1:1985 and keeps its data in `./data`. The first start needs an admin password;
+the README's quick start shows how to set it. See docs/CONFIGURATION.md for the settings.
 
 ### IDE Setup
 
@@ -147,13 +152,16 @@ Fixes #123
 
 ### Test Categories
 
-Serengeti uses several test categories:
+Serengeti has four kinds of test:
 
-1. **Unit Tests**: Test individual components in isolation
-2. **Integration Tests**: Test interactions between components
-3. **Fast Tests**: Quick tests for rapid feedback during development
-4. **Performance Tests**: Test system performance
-5. **Chaos Tests**: Test system resilience under adverse conditions
+1. Unit and property tests (`src/test/java`, JUnit 5 and jqwik): `mvn verify`, on Java 17 and 21.
+2. Container tests (`tests/container/run.sh`): the image is started on a private Docker network and
+   checked over HTTP, including setup, TLS, restarts and `kill -9` during writes. The script builds the
+   image as `serengeti:it` unless `SKIP_BUILD=1` is set.
+3. Quick start (`docs/quickstart.sh`): runs the commands in the README's Quick start section.
+4. Examples (`examples/run.sh`): runs the curl, Python and JavaScript clients in their own containers.
+
+Everything except the unit tests needs Docker. CI runs all four.
 
 ### Writing Tests
 
@@ -166,18 +174,17 @@ Serengeti uses several test categories:
 ### Running Tests
 
 ```
-# Run all tests
-mvn test
+# Run all unit and property tests
+mvn verify
 
-# Run fast tests only
-mvn test -Pfast-tests
+# Run one test class
+mvn -Dtest=ParserTest test
 
-# Run specific test class
-mvn test -Dtest=ClassName
-
-# Run specific test method
-mvn test -Dtest=ClassName#methodName
+# Run one test method
+mvn -Dtest=ParserTest#createAndDropTable test
 ```
+
+The container and example scripts run against the image; see the list above.
 
 ## Documentation Guidelines
 
