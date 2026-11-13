@@ -108,16 +108,12 @@ public final class Node implements AutoCloseable {
             throw new ConfigException("cannot listen on " + config.bind + ":" + config.port + ": " + e.getMessage());
         }
         LOG.info("serengeti " + Version.current() + " node " + id + " listening on "
-                + config.scheme() + "://" + hostPort(api.address()));
+                + config.scheme() + "://" + (config.bind.contains(":") ? "[" + config.bind + "]" : config.bind)
+                + ":" + api.address().getPort());
     }
 
     public static Node start(Config config, QueryFactory queries) throws IOException {
         return new Node(config, queries);
-    }
-
-    private static String hostPort(InetSocketAddress a) {
-        String h = a.getAddress().getHostAddress();
-        return (h.contains(":") ? "[" + h + "]" : h) + ":" + a.getPort();
     }
 
     private static String nodeId(Path dir) throws IOException {

@@ -1,75 +1,49 @@
 # Changelog
 
-All notable changes to the Serengeti project will be documented in this file.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases up to 1.3.4 are described in their
+GitHub release notes and tags.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased] - 2.0.0
 
-## [Unreleased]
-
-### Added
-- Comprehensive documentation for all components
-- User guides for getting started, basic operations, and troubleshooting
-- Architecture documentation including system architecture, component interactions, and design decisions
-- CONTRIBUTING.md with guidelines for contributors
-- CHANGELOG.md to track project changes
-
-## [0.0.1] - 2024-12-15
-
-### Added
-- Initial release of Serengeti distributed database
-- Core functionality:
-  - Autonomous node discovery
-  - Automatic data replication
-  - Basic query processing
-  - Web-based dashboard and interactive console
-- Components:
-  - Storage system with LSM storage engine
-  - Indexing system with B-tree indexes
-  - Query engine with SQL-like syntax
-  - Network component for node communication
-  - Server component for client interaction
-- Testing:
-  - Comprehensive test suite
-  - Fast tests for development
-  - Integration tests
-  - Performance tests
-
-### Known Issues
-- Limited to single subnet deployment
-- No authentication or encryption
-- Limited query optimization
-- No support for complex joins
-- No support for transactions
-
-## Types of Changes
-
-- `Added` for new features.
-- `Changed` for changes in existing functionality.
-- `Deprecated` for soon-to-be removed features.
-- `Removed` for now removed features.
-- `Fixed` for any bug fixes.
-- `Security` in case of vulnerabilities.
-
-## Future Release Template
-
-```
-## [x.y.z] - YYYY-MM-DD
-
-### Added
-- New features
-
-### Changed
-- Changes in existing functionality
-
-### Deprecated
-- Soon-to-be removed features
-
-### Removed
-- Now removed features
+2.0 replaces the storage, query and server code of 1.x. It is not compatible with 1.x: the HTTP routes,
+the query language and the files in the data directory all change.
 
 ### Fixed
-- Bug fixes
+- The node starts and serves HTTP. 1.3.4 exited with a NullPointerException when `data/` was missing,
+  and otherwise held port 1985 without answering, on Java 11, 17 and 21.
+- Inserted rows are kept. 1.x wrote schema files only, so rows were lost on restart.
+
+### Added
+- A write-ahead log with CRC32C checks, fsync before acknowledging by default (`SERENGETI_FSYNC`), and
+  snapshots. Recovery drops a torn tail instead of failing.
+- A query language with a hand-written parser: CREATE/DROP DATABASE and TABLE, SHOW, INSERT, SELECT with
+  WHERE, ORDER BY and LIMIT, UPDATE, DELETE, COUNT(*). See docs/QUERY.md.
+- `POST /v1/query`, `POST /v1/setup`, `POST /v1/password`, `GET /v1/status` and `GET /health`. See
+  docs/API.md.
+- Configuration from a properties file and `SERENGETI_*` variables, with secrets from variables or
+  files. See docs/CONFIGURATION.md.
+- One Docker image for linux/amd64 and linux/arm64, running as a non-root user, with a health check.
+- Tests: unit and property tests (`mvn verify`, Java 17 and 21), and container tests against the image
+  (`tests/container/run.sh`), including `kill -9` during writes.
+
+### Changed
+- The default bind address is 127.0.0.1. The image binds all interfaces inside its container and
+  publishes nothing.
+- `POST /post` takes the same JSON body as `/v1/query` and is kept for 2.0 only.
+- The dashboard and interactive console are replaced by one console page at `/`.
+- Java 17 or later is required.
+
+### Removed
+- The `admin`/`admin` account.
+- Automatic discovery that connected to port 1985 on every address in the subnet. Replication across
+  configured peers is planned; until it lands, 2.0 runs as a single node.
+- The LSM storage engine, B-tree indexes, query optimizer and the other 1.x modules that the running
+  server never used. They remain in the history and the v1.3.4 tag.
 
 ### Security
-- Vulnerabilities fixed
+- Every route except `GET /health` needs HTTP Basic credentials, checked against bcrypt hashes in a
+  file readable by the owner only. Failed logins are limited per address.
+- Request bodies are limited to 1 MiB; JSON routes require `Content-Type: application/json`, and POSTs
+  from another origin are refused. The console inserts data as text, under a Content-Security-Policy.
+- Errors no longer include stack traces.

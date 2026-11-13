@@ -13,7 +13,7 @@ public final class Serengeti {
     public static void main(String[] args) {
         // One line per log record, to stdout's companion stderr, before any logger exists.
         System.setProperty("java.util.logging.SimpleFormatter.format",
-                "%1$tY-%1$tm-%1$tdT%1$tH:%1$tM:%1$tS.%1$tLZ %4$s %3$s: %5$s%6$s%n");
+                "%1$tY-%1$tm-%1$tdT%1$tH:%1$tM:%1$tS.%1$tL%1$tz %4$s %3$s: %5$s%6$s%n");
         // Drop clients that hold a request open: 30 s to send a request, 60 s to read a response.
         System.setProperty("sun.net.httpserver.maxReqTime", "30");
         System.setProperty("sun.net.httpserver.maxRspTime", "60");

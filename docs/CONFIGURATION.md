@@ -1,0 +1,47 @@
+# Configuration
+
+Settings come from three places. Later ones win:
+
+1. the defaults below;
+2. a properties file, named by `--config FILE` or `SERENGETI_CONFIG`;
+3. environment variables: the setting name in upper case with a `SERENGETI_` prefix, e.g. `port` is
+   `SERENGETI_PORT`.
+
+An unknown key in the file is an error, so a typo stops the node instead of being ignored. Any invalid
+setting makes the node exit with status 2 and a one-line message.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `bind` | `127.0.0.1` | Address to listen on. The Docker image sets `0.0.0.0`. |
+| `port` | `1985` | TCP port. |
+| `data_dir` | `data` | Data directory, created if missing. The image uses `/data`. |
+| `fsync` | `always` | `always`: the log is forced to disk before a write is acknowledged. `interval`: once a second; a machine crash can lose the last second. `off`: the operating system decides. |
+| `admin_password_file` | none | File holding the first admin password (12 to 72 bytes). |
+| `peers` | none | Reserved for replication. Refused in this build. |
+| `discovery_cidr` | none | Reserved for replication. Refused in this build. |
+| `tls_keystore` | none | Reserved for TLS. Refused in this build. |
+
+## Secrets
+
+Secrets are never read from the properties file. Each one comes from an environment variable or from a
+file named by its `_file` setting (or `SERENGETI_..._FILE`); the variable wins if both are set. A trailing
+newline in the file is ignored.
+
+| Secret | Variable | File setting |
+|---|---|---|
+| first admin password | `SERENGETI_ADMIN_PASSWORD` | `admin_password_file` |
+
+The admin password is only used when there is no account yet. Once `users.json` exists, it is ignored
+(the node logs that), and the password is changed with `POST /v1/password`.
+
+## Data directory
+
+| File | Contents |
+|---|---|
+| `wal.log` | Write-ahead log: length, CRC32C and JSON per batch. |
+| `snapshot.jsonl` | The state at the last checkpoint. The log is folded into it after 64 MiB. |
+| `users.json` | Accounts as bcrypt hashes (cost 12). Mode 0600; a node refuses to start if others can read it. |
+| `setup-token` | One-time setup token (mode 0600), present only until the first admin password is set. |
+| `node-id` | A random id for this node, kept across restarts. |
+
+Back up a stopped node by copying the directory. A running node has no consistent backup yet.
