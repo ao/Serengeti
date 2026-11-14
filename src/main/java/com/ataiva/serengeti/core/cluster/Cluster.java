@@ -57,6 +57,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     private static final class Peer {
         final String address;
         volatile long lastContact = Long.MIN_VALUE / 2;
+        /** When a sync with this peer last completed without error. */
+        volatile long lastSynced = Long.MIN_VALUE / 2;
+        /** The sync with this peer that is still running, if any. */
+        volatile CompletableFuture<Boolean> inFlight;
         volatile String node;
         volatile String lastError;
         /** The peer runs 2.0 and has only the whole-database routes. */
@@ -372,23 +376,31 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
 
     // ---- sync ----
 
+    /**
+     * Starts a sync with every peer whose previous one has finished, and never waits for them: each peer
+     * syncs on its own, so one that does not answer (a partition drops its packets, and each call runs
+     * until its timeout) cannot hold up the others. Waiting here once let a single cut-off peer keep the
+     * reachable ones from being contacted for longer than REACHABLE_MILLIS, so a node with a majority
+     * reachable refused writes. A majority counts as synced while enough peers have completed a sync
+     * within REACHABLE_MILLIS.
+     */
     private void syncRound() {
         if (closed) {
             return;
         }
         try {
-            List<CompletableFuture<Boolean>> runs = new ArrayList<>();
             for (Peer p : peers) {
-                runs.add(syncWith(p));
+                CompletableFuture<Boolean> f = p.inFlight;
+                if (f == null || f.isDone()) {
+                    p.inFlight = syncWith(p).completeOnTimeout(false,
+                            PeerClient.STATE_TIMEOUT.toMillis() + 5_000, TimeUnit.MILLISECONDS);
+                }
             }
+            long now = clock.getAsLong();
             int ok = 0;
-            for (CompletableFuture<Boolean> f : runs) {
-                try {
-                    if (f.get(PeerClient.STATE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
-                        ok++;
-                    }
-                } catch (Exception e) {
-                    // counted as not synced
+            for (Peer p : peers) {
+                if (now - p.lastSynced < REACHABLE_MILLIS) {
+                    ok++;
                 }
             }
             if (ok + 1 >= quorum) {
@@ -429,6 +441,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 LOG.fine("merged " + merged + " ops from " + p.address);
             }
             p.lastContact = clock.getAsLong();
+            p.lastSynced = p.lastContact;
             if (p.lastError != null) {
                 LOG.info("peer " + p.address + " is reachable again");
                 p.lastError = null;
@@ -463,6 +476,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     @SuppressWarnings("unchecked")
     private CompletableFuture<Integer> syncByBuckets(Peer p) {
         return client.roots(p.address).thenCompose(theirs -> {
+            p.lastContact = clock.getAsLong(); // it answered; a long pull that follows must not age it out
             Map<String, Map<String, Object>> mine = engine.read(Store::rootHashes);
             List<CompletableFuture<Integer>> work = new ArrayList<>();
             for (Map.Entry<String, Map<String, Object>> e : theirs.entrySet()) {
@@ -509,6 +523,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     /** Protocol 1 (2.0 peers): compare one SHA-256 per database and pull whole databases that differ. */
     private CompletableFuture<Integer> syncWholeDatabases(Peer p) {
         return client.digests(p.address).thenCompose(theirs -> {
+            p.lastContact = clock.getAsLong();
             Map<String, String> mine = engine.read(Store::digests);
             Set<String> differ = new TreeSet<>();
             for (Map.Entry<String, String> e : theirs.entrySet()) {

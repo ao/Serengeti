@@ -330,6 +330,49 @@ class ClusterTest {
     }
 
     @Test
+    void aPeerThatNeverAnswersDoesNotMakeTheOthersLookUnreachable() throws Exception {
+        // Node 2's port is held by a socket that accepts connections and never answers, as a partitioned
+        // node does when its packets are dropped: every call to it runs until its timeout.
+        try (ServerSocket hole = new ServerSocket(ports[2], 50, InetAddress.getLoopbackAddress())) {
+            List<java.net.Socket> held = new java.util.concurrent.CopyOnWriteArrayList<>();
+            Thread acceptor = new Thread(() -> {
+                try {
+                    while (true) {
+                        held.add(hole.accept());
+                    }
+                } catch (IOException e) {
+                    // closed at the end of the test
+                }
+            });
+            acceptor.setDaemon(true);
+            acceptor.start();
+            start(0);
+            start(1);
+            waitWritable(0);
+            assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+            assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+            // Several sync rounds with no writes (a write's acknowledgements would also count as contact):
+            // node 1 must stay reachable from node 0 throughout, and a write after that must succeed.
+            long end = System.currentTimeMillis() + 12_000;
+            int samples = 0;
+            int low = 0;
+            while (System.currentTimeMillis() < end) {
+                if (nodes[0].cluster().reachable() < 2) {
+                    low++;
+                }
+                samples++;
+                Thread.sleep(50);
+            }
+            assertEquals(0, low, "node 1 counted as unreachable from node 0 in " + low + " of " + samples + " samples");
+            HttpResponse<String> r = query(0, "INSERT INTO d.t (n) VALUES (1)");
+            assertEquals(200, r.statusCode(), r.body());
+            for (java.net.Socket s : held) {
+                s.close();
+            }
+        }
+    }
+
+    @Test
     void localWritesOnNodesThatRanAloneConvergeWhenTheyMeet() throws Exception {
         start(0);
         Thread.sleep(1200);
