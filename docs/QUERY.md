@@ -168,8 +168,8 @@ row, in insert order:
 - Parentheses and NOT may nest at most 64 levels deep in one condition (`Parser.MAX_DEPTH`). Long
   chains of AND or OR do not count towards this.
 - Names are at most 63 characters.
-- SELECT with ORDER BY sorts all matching rows in memory before applying the limit. There are no
-  indexes; every statement with WHERE scans the table.
+- SELECT with ORDER BY sorts all matching rows in memory before applying the limit. A statement whose
+  WHERE has no indexed comparison (see Indexes) scans the table.
 
 ## Writes and time
 
