@@ -71,6 +71,9 @@ public final class Executor {
                 return names("table", store.tables(t.db()));
             });
         }
+        if (s instanceof Statement.ShowConflicts c) {
+            return engine.read(store -> conflicts(store, c));
+        }
         if (s instanceof Statement.CreateDatabase c) {
             return engine.update(store -> {
                 if (store.dbExists(c.db())) {
@@ -181,6 +184,33 @@ public final class Executor {
             }
         });
         return new StorageEngine.Planned<>(ops, new Result.Write(ops.size()));
+    }
+
+    /** Columns of SHOW CONFLICTS: one result row per version, the row's value (the newest) first. */
+    static final List<String> CONFLICT_COLUMNS = List.of(ID, "current", "deleted", "node", "at", "row");
+
+    private Result conflicts(Store store, Statement.ShowConflicts c) {
+        requireTable(store, c.db(), c.table());
+        List<List<Object>> rows = new ArrayList<>();
+        boolean[] truncated = {false};
+        store.forEachConflict(c.db(), c.table(), (id, versions) -> {
+            if (rows.size() + versions.size() > maxRows) {
+                truncated[0] = true;
+                return;
+            }
+            for (int i = 0; i < versions.size(); i++) {
+                Store.Version v = versions.get(i);
+                List<Object> r = new ArrayList<>(CONFLICT_COLUMNS.size());
+                r.add(id);
+                r.add(i == 0);
+                r.add(v.deleted());
+                r.add(v.stamp().node());
+                r.add(v.stamp().wall());
+                r.add(v.value());
+                rows.add(r);
+            }
+        });
+        return new Result.Rows(CONFLICT_COLUMNS, rows, truncated[0]);
     }
 
     private StorageEngine.Planned<Result> delete(Store store, Statement.Delete d) {

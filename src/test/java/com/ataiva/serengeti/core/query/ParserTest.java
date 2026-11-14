@@ -54,6 +54,16 @@ class ParserTest {
     }
 
     @Test
+    void showConflicts() {
+        assertEquals(new Statement.ShowConflicts("shop", "items"), parse("SHOW CONFLICTS IN shop.items"));
+        assertEquals(new Statement.ShowConflicts("shop", "items"), parse("show Conflicts in SHOP.items;"));
+        fails("SHOW CONFLICTS shop.items");
+        fails("SHOW CONFLICTS IN shop");
+        // Not a reserved word: a table or column may still be called conflicts.
+        assertEquals(new Statement.CreateTable("shop", "conflicts", false), parse("CREATE TABLE shop.conflicts"));
+    }
+
+    @Test
     void insert() {
         Statement s = parse("INSERT INTO shop.items (name, price, ok, note) VALUES ('Tea', 3, true, null), "
                 + "('It''s', -1.5e2, FALSE, 'x')");

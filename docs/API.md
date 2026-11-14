@@ -49,6 +49,7 @@ Needs Basic credentials of any account. The body is Prometheus text format 0.0.4
 | `serengeti_wal_fsyncs_total` | counter | Forces of `wal.log` to disk. Zero with `fsync=off`. |
 | `serengeti_wal_fsync_seconds_total` | counter | Time spent in those forces. |
 | `serengeti_databases` | gauge | Databases that exist. |
+| `serengeti_conflicts` | gauge | Rows holding more than one version (see `SHOW CONFLICTS`). |
 | `serengeti_build_info{version}` | gauge | Always 1. |
 | `serengeti_start_time_seconds` | gauge | Unix time at which the node started. |
 

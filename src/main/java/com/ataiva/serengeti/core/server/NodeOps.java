@@ -38,7 +38,7 @@ public interface NodeOps {
      * Node values for the metrics. {@code walFsyncs} and {@code walFsyncNanos} count forces of the log since
      * start, so they are counters; the others are gauges.
      */
-    record Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases) {
-        public static final Gauges ZERO = new Gauges(0, 0, 0, 0);
+    record Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases, long conflicts) {
+        public static final Gauges ZERO = new Gauges(0, 0, 0, 0, 0);
     }
 }

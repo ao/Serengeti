@@ -231,8 +231,8 @@ public final class Node implements AutoCloseable {
             @Override
             public NodeOps.Gauges gauges() {
                 Wal.Stats wal = storage.walStats();
-                long databases = storage.read(s -> (long) s.databases().size());
-                return new NodeOps.Gauges(wal.bytes(), wal.fsyncs(), wal.fsyncNanos(), databases);
+                long[] counts = storage.read(s -> new long[] {s.databases().size(), s.conflicts()});
+                return new NodeOps.Gauges(wal.bytes(), wal.fsyncs(), wal.fsyncNanos(), counts[0], counts[1]);
             }
         };
     }

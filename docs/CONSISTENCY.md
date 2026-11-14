@@ -60,10 +60,35 @@ syncing and taking writes. To bring it back, stop it, empty its data directory e
 
 ## Conflicts
 
-Each change carries a version from a hybrid logical clock (wall time, a counter, and the node id). When
-two nodes change the same row at about the same time, the higher version wins on every node, and the
-other change is lost without an error. Schema changes resolve the same way; a table dropped at version D
-removes every row older than D.
+Each change carries a version from a hybrid logical clock (wall time, a counter, and the node id). A row
+write also records which writes to that row its node had already seen (a version vector: the newest
+version seen from each node). That tells a later write from a concurrent one.
+
+A write that had seen the row's current version replaces it. Two writes that had not seen each other, for
+example on both sides of a partition with `"ack": "local"`, are both kept. The row's value is the one with
+the higher version, on every node, so reads give the same answer everywhere. The other version is not
+lost: `SHOW CONFLICTS IN db.table` lists every version of every such row, and the metric
+`serengeti_conflicts` counts those rows.
+
+```
+SHOW CONFLICTS IN shop.items
+{"columns":["_id","current","deleted","node","at","row"],
+ "rows":[["bolt",true,false,"n1",1731400012000,{"qty":90}],
+         ["bolt",false,false,"n3",1731400011000,{"qty":150}]], ...}
+```
+
+The next write to the row resolves the conflict: the node writing it has seen every version, so its
+write replaces all of them. To keep the current value, write it again; to keep another version, write
+that one. A row whose current version is a delete is resolved by inserting its `_id` again.
+
+Merging versions is order-independent, so every node ends up with the same versions; a property test
+checks this against the true causal history of random writes and syncs on three replicas
+(`ConflictProperties`). Writes from 2.0 nodes carry no record of what they had seen. They are ordered by
+version among themselves, as 2.0 did, and a 2.1 write covers the older ones; during a rolling upgrade, a
+2.0 node's write to a row last written by a 2.1 node is kept as a conflict even when it was not concurrent.
+
+Schema changes resolve by version alone; a table dropped at version D removes every row version older
+than D.
 
 ## Reads
 
@@ -76,8 +101,8 @@ when no majority is reachable.
 
 It is not linearizable and has no transactions across statements. Insert-unless-exists is checked on the
 receiving node only: two nodes accepting an insert with the same `_id` at the same time both succeed, and
-the higher version wins. Versions follow wall clocks, so a node whose clock runs ahead wins conflicts it
-should lose; changes stamped more than 60 seconds ahead of the receiving node's clock are refused (and
+the row is then a conflict (above). Versions follow wall clocks, so a node whose clock runs ahead has its
+version chosen as the current one when it should not be; changes stamped more than 60 seconds ahead of the receiving node's clock are refused (and
 logged with the sending node), which bounds how far one bad clock can reach. Keep clocks synced with NTP.
 
 ## Node-to-node security

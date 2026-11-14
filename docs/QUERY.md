@@ -18,7 +18,8 @@ create      = "CREATE" "DATABASE" [ "IF" "NOT" "EXISTS" ] name
 drop        = "DROP" "DATABASE" [ "IF" "EXISTS" ] name
             | "DROP" "TABLE" [ "IF" "EXISTS" ] table ;
 show        = "SHOW" "DATABASES"
-            | "SHOW" "TABLES" "IN" name ;
+            | "SHOW" "TABLES" "IN" name
+            | "SHOW" "CONFLICTS" "IN" table ;
 
 insert      = "INSERT" "INTO" table "(" name { "," name } ")"
               "VALUES" tuple { "," tuple } ;
@@ -47,7 +48,8 @@ integer     = digits ;
 
 The keywords are: AND, ASC, BY, COUNT, CREATE, DATABASE, DATABASES, DELETE, DESC, DROP, EXISTS,
 FALSE, FROM, IF, IN, INSERT, INTO, IS, LIMIT, NOT, NULL, OR, ORDER, SELECT, SET, SHOW, TABLE, TABLES,
-TRUE, UPDATE, VALUES, WHERE. They cannot be used as names.
+TRUE, UPDATE, VALUES, WHERE. They cannot be used as names. CONFLICTS is not one: it has its meaning only
+after SHOW.
 
 A condition compares a column with a literal value; the left side is always a column. `NOT`
 binds tighter than `AND`, which binds tighter than `OR`.
@@ -123,6 +125,10 @@ SELECT and SHOW return rows. Each row is an array with one value per column:
   first seen.
 - `SELECT COUNT(*)` returns one column `count` and one row.
 - `SHOW DATABASES` returns the column `database`; `SHOW TABLES IN db` returns `table`.
+- `SHOW CONFLICTS IN db.table` returns one row per version of each row that has more than one
+  (writes made on nodes that had not seen each other's; see CONSISTENCY.md), with the columns `_id`,
+  `current` (true for the version that is the row's value, listed first), `deleted`, `node` (the node
+  that wrote it), `at` (Unix milliseconds) and `row` (the version's value, or null for a delete).
 
 Writes return the number of databases, tables or rows changed. INSERT also lists the `_id` of each
 row, in insert order:

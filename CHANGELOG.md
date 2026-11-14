@@ -11,6 +11,11 @@ GitHub release notes and tags.
   node's default. The write is acknowledged once it is in this node's log, also when no peer is
   reachable, and reaches the other nodes through sync. Nodes cut off from each other keep taking writes
   and converge when they meet. See docs/CONSISTENCY.md.
+- Conflicting writes are kept. A row write records which writes to the row its node had seen, so two
+  writes that had not seen each other are both kept: the newer is the row's value on every node, as
+  before, and `SHOW CONFLICTS IN db.table` lists all versions until the next write to the row resolves
+  them. New metric `serengeti_conflicts`. Log and snapshot records gain an optional `seen` field; 2.0
+  ignores it, and 2.1 reads 2.0's files and peers.
 - Tombstones are dropped after `tombstone_ttl_hours` (default 168). A cluster node that has not synced
   with a majority for longer than that refuses to start or keep syncing, so deleted rows cannot come back.
 

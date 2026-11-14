@@ -29,6 +29,9 @@ public final class Printer {
         if (s instanceof Statement.ShowTables t) {
             return "SHOW TABLES IN " + t.db();
         }
+        if (s instanceof Statement.ShowConflicts c) {
+            return "SHOW CONFLICTS IN " + c.db() + "." + c.table();
+        }
         if (s instanceof Statement.Insert i) {
             StringBuilder b = new StringBuilder("INSERT INTO ").append(i.db()).append('.').append(i.table())
                     .append(" (").append(String.join(", ", i.columns())).append(") VALUES ");

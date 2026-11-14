@@ -301,4 +301,48 @@ class ExecutorTest {
         ParseException e = assertThrows(ParseException.class, () -> run("SELEC * FROM shop.items"));
         assertEquals(0, e.position());
     }
+
+    @Test
+    void showConflictsListsConcurrentVersionsUntilAWriteResolvesThem() throws IOException {
+        run("CREATE DATABASE shop");
+        run("CREATE TABLE shop.items");
+        run("INSERT INTO shop.items (_id, name, qty) VALUES ('bolt', 'bolt', 120), ('nut', 'nut', 300)");
+        assertEquals(List.of(), rows("SHOW CONFLICTS IN shop.items").rows());
+        // A write from a node that never saw this node's insert of bolt: the two are concurrent.
+        long later = System.currentTimeMillis() + 1000;
+        var other = new com.ataiva.serengeti.core.storage.Op.Put("shop", "items", "bolt",
+                Map.of("name", "bolt", "qty", 90L), new com.ataiva.serengeti.core.storage.Stamp(later, 0, "n2"), Map.of());
+        assertEquals(1, engine.merge(List.of(other)));
+        assertEquals(List.of(90L), column("SELECT qty FROM shop.items WHERE _id = 'bolt'", "qty"),
+                "the newer version is the row's value");
+        Result.Rows c = rows("SHOW CONFLICTS IN shop.items");
+        assertEquals(List.of("_id", "current", "deleted", "node", "at", "row"), c.columns());
+        assertEquals(2, c.rows().size());
+        assertEquals(Arrays.asList("bolt", true, false, "n2", later), c.rows().get(0).subList(0, 5));
+        assertEquals(Map.of("name", "bolt", "qty", 90L), Json.parse(Json.write(c.rows().get(0).get(5))));
+        assertEquals(Arrays.asList("bolt", false, false, "n1"), c.rows().get(1).subList(0, 4));
+        assertEquals(Map.of("name", "bolt", "qty", 120L), Json.parse(Json.write(c.rows().get(1).get(5))));
+        // Merging the same version again changes nothing.
+        assertEquals(0, engine.merge(List.of(other)));
+        // A write made here has seen both, so it resolves the conflict.
+        assertEquals(1, affected("UPDATE shop.items SET qty = 210 WHERE _id = 'bolt'"));
+        assertEquals(List.of(), rows("SHOW CONFLICTS IN shop.items").rows());
+        assertEquals(List.of(210L), column("SELECT qty FROM shop.items WHERE _id = 'bolt'", "qty"));
+        assertEquals("table 'shop.nope' does not exist", fails("SHOW CONFLICTS IN shop.nope").getMessage());
+    }
+
+    @Test
+    void aWriteFromAPeerThatHadSeenThisOneReplacesItWithoutAConflict() throws IOException {
+        run("CREATE DATABASE shop");
+        run("CREATE TABLE shop.items");
+        run("INSERT INTO shop.items (_id, qty) VALUES ('bolt', 1)");
+        var mine = engine.read(s -> s.toOps("shop")).stream()
+                .filter(o -> o instanceof com.ataiva.serengeti.core.storage.Op.Put).findFirst().orElseThrow();
+        var seen = Map.of(mine.stamp().node(), mine.stamp());
+        long later = System.currentTimeMillis() + 1000;
+        engine.merge(List.of(new com.ataiva.serengeti.core.storage.Op.Put("shop", "items", "bolt", Map.of("qty", 2L),
+                new com.ataiva.serengeti.core.storage.Stamp(later, 0, "n2"), seen)));
+        assertEquals(List.of(2L), column("SELECT qty FROM shop.items", "qty"));
+        assertEquals(List.of(), rows("SHOW CONFLICTS IN shop.items").rows());
+    }
 }

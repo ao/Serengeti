@@ -47,26 +47,31 @@ public final class Store {
         void drop(Stamp at) {
             if (at.after(dropped)) {
                 dropped = at;
-                rows.entrySet().removeIf(e -> {
-                    if (e.getValue().stamp.after(at)) {
-                        return false;
+                var it = rows.entrySet().iterator();
+                while (it.hasNext()) {
+                    var e = it.next();
+                    RowState r = e.getValue();
+                    RowState kept = r.newerThan(at);
+                    if (kept == r) {
+                        continue;
                     }
-                    unaccount(e.getKey(), e.getValue());
-                    return true;
-                });
+                    unaccount(e.getKey(), r);
+                    if (kept == null) {
+                        it.remove();
+                    } else {
+                        account(e.getKey(), kept);
+                        e.setValue(kept);
+                    }
+                }
             }
         }
 
         void account(String id, RowState r) {
-            if (r.value != null) {
-                buckets[bucket(id)] += rowHash(id, r.stamp);
-            }
+            buckets[bucket(id)] += r.hash(id);
         }
 
         void unaccount(String id, RowState r) {
-            if (r.value != null) {
-                buckets[bucket(id)] -= rowHash(id, r.stamp);
-            }
+            buckets[bucket(id)] -= r.hash(id);
         }
 
         long root() {
@@ -124,7 +129,136 @@ public final class Store {
         }
     }
 
-    private record RowState(Map<String, Object> value, Stamp stamp) {}
+    /**
+     * One write to a row: its value (null for a delete), its stamp, and its causal context ({@link Op.RowOp#seen}).
+     *
+     * <p>Version {@code a} has been seen by version {@code b} when every entry of {@code a}'s clock is at or
+     * below {@code b}'s entry for the same key. A version's clock is its context plus its own stamp under its
+     * node's id and under {@code "~"}. A version with no context (from 2.0) has only {@code "~"}: such versions
+     * are ordered by stamp among themselves, as 2.0 ordered every write, and any later write that saw one
+     * covers it.
+     */
+    public record Version(Map<String, Object> value, Stamp stamp, Map<String, Stamp> seen) {
+        public boolean deleted() {
+            return value == null;
+        }
+
+        /** This version's clock entry for {@code key}, or null. */
+        Stamp clock(String key) {
+            if (seen == null) {
+                return key.equals("~") ? stamp : null;
+            }
+            if (key.equals("~") || key.equals(stamp.node())) {
+                return stamp; // a node's own write is newer than anything it had seen
+            }
+            return seen.get(key);
+        }
+
+        java.util.Set<String> clockKeys() {
+            if (seen == null) {
+                return java.util.Set.of("~");
+            }
+            java.util.Set<String> keys = new java.util.TreeSet<>(seen.keySet());
+            keys.add("~");
+            keys.add(stamp.node());
+            return keys;
+        }
+
+        /** True if {@code other} had seen this version when it was written (or is it). */
+        boolean seenBy(Version other) {
+            for (String k : clockKeys()) {
+                Stamp mine = clock(k);
+                Stamp theirs = other.clock(k);
+                if (theirs == null || mine.after(theirs)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        Op.RowOp toOp(String db, String table, String id) {
+            return value == null ? new Op.Delete(db, table, id, stamp, seen) : new Op.Put(db, table, id, value, stamp, seen);
+        }
+
+        static Version of(Op.RowOp op) {
+            return new Version(op instanceof Op.Put p ? p.row() : null, op.stamp(), op.seen());
+        }
+    }
+
+    /**
+     * A row: the versions that no other version of it has seen, newest first. Normally one; more after
+     * writes on nodes that had not seen each other's (a conflict). The newest is the row's value, so the
+     * outcome of a conflict is last-writer-wins as in 2.0, and the others stay until a write resolves them.
+     */
+    private record RowState(List<Version> versions) {
+        Version winner() {
+            return versions.get(0);
+        }
+
+        boolean live() {
+            for (Version v : versions) {
+                if (v.value != null) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The row's share of its bucket sum: nothing while every version is a delete (so collecting
+         * tombstones changes no sum), else the sum over all versions (so a conflicting delete still differs).
+         */
+        long hash(String id) {
+            if (!live()) {
+                return 0;
+            }
+            long h = 0;
+            for (Version v : versions) {
+                h += rowHash(id, v.stamp);
+            }
+            return h;
+        }
+
+        /** This state with {@code in} merged, or this same object if {@code in} changes nothing. */
+        RowState with(Version in) {
+            for (Version v : versions) {
+                if (v.stamp.equals(in.stamp) || in.seenBy(v)) {
+                    return this;
+                }
+            }
+            List<Version> out = new ArrayList<>(versions.size() + 1);
+            for (Version v : versions) {
+                if (!v.seenBy(in)) {
+                    out.add(v);
+                }
+            }
+            out.add(in);
+            out.sort((a, b) -> b.stamp.compareTo(a.stamp));
+            return new RowState(List.copyOf(out));
+        }
+
+        /** The versions stamped after {@code at}: this object if all are, null if none are. */
+        RowState newerThan(Stamp at) {
+            List<Version> out = new ArrayList<>(versions.size());
+            for (Version v : versions) {
+                if (v.stamp.after(at)) {
+                    out.add(v);
+                }
+            }
+            return out.size() == versions.size() ? this : out.isEmpty() ? null : new RowState(List.copyOf(out));
+        }
+
+        /** The context for a new write over this row: the newest stamp per key over all its versions. */
+        Map<String, Stamp> context() {
+            Map<String, Stamp> out = new TreeMap<>();
+            for (Version v : versions) {
+                for (String k : v.clockKeys()) {
+                    out.merge(k, v.clock(k), Stamp::max);
+                }
+            }
+            return out;
+        }
+    }
 
     private final TreeMap<String, DbState> dbs = new TreeMap<>();
     private Stamp maxStamp = Stamp.ZERO;
@@ -144,10 +278,8 @@ public final class Store {
             t.created = Stamp.max(t.created, o.stamp());
         } else if (op instanceof Op.DropTable o) {
             d.table(o.table()).drop(o.stamp());
-        } else if (op instanceof Op.Put o) {
-            putRow(d.table(o.table()), o.id(), o.row(), o.stamp());
-        } else if (op instanceof Op.Delete o) {
-            putRow(d.table(o.table()), o.id(), null, o.stamp());
+        } else if (op instanceof Op.RowOp o) {
+            putRow(d.table(o.table()), o.id(), Version.of(o));
         }
     }
 
@@ -157,19 +289,52 @@ public final class Store {
         }
     }
 
-    private static void putRow(TableState t, String id, Map<String, Object> value, Stamp at) {
-        if (!at.after(t.dropped)) {
+    private static void putRow(TableState t, String id, Version in) {
+        if (!in.stamp().after(t.dropped)) {
             return;
         }
         RowState r = t.rows.get(id);
-        if (r == null || at.after(r.stamp)) {
-            RowState next = new RowState(value, at);
+        RowState next = r == null ? new RowState(List.of(in)) : r.with(in);
+        if (next != r) {
             if (r != null) {
                 t.unaccount(id, r);
             }
             t.account(id, next);
             t.rows.put(id, next);
         }
+    }
+
+    /**
+     * The batch with a causal context on every row write that has none: the clock of everything this node
+     * holds for that row (and of the batch's earlier writes to it), so the write supersedes all of them.
+     * Client writes go through here before they are logged; ops from peers keep the context they came with.
+     */
+    public List<Op> withContext(List<Op> batch) {
+        List<Op> out = new ArrayList<>(batch.size());
+        Map<String, Version> earlier = new java.util.HashMap<>();
+        for (Op op : batch) {
+            if (op instanceof Op.RowOp r && r.seen() == null) {
+                String key = r.db() + "\u0000" + r.table() + "\u0000" + r.id();
+                Version prev = earlier.get(key);
+                Map<String, Stamp> ctx;
+                if (prev != null) {
+                    ctx = new RowState(List.of(prev)).context();
+                } else {
+                    DbState d = dbs.get(r.db());
+                    TableState t = d == null ? null : d.tables.get(r.table());
+                    RowState row = t == null ? null : t.rows.get(r.id());
+                    ctx = row == null ? new TreeMap<>() : row.context();
+                }
+                ctx.remove(r.stamp().node()); // implied by the write's own stamp
+                ctx.remove("~");
+                Op.RowOp filled = r.withSeen(ctx);
+                earlier.put(key, Version.of(filled));
+                out.add(filled);
+            } else {
+                out.add(op);
+            }
+        }
+        return out;
     }
 
     // ---- replica comparison ----
@@ -245,7 +410,9 @@ public final class Store {
         }
         t.rows.forEach((id, r) -> {
             if (wanted.contains(bucket(id))) {
-                out.add(r.value == null ? new Op.Delete(db, table, id, r.stamp) : new Op.Put(db, table, id, r.value, r.stamp));
+                for (Version v : r.versions()) {
+                    out.add(v.toOp(db, table, id));
+                }
             }
         });
         return out;
@@ -266,7 +433,7 @@ public final class Store {
                 var it = t.rows.values().iterator();
                 while (it.hasNext()) {
                     RowState r = it.next();
-                    if (r.value == null && r.stamp.wall() < cutoffWallMillis) {
+                    if (!r.live() && r.winner().stamp().wall() < cutoffWallMillis) {
                         it.remove();
                         n++;
                     }
@@ -282,7 +449,7 @@ public final class Store {
         for (DbState d : dbs.values()) {
             for (TableState t : d.tables.values()) {
                 for (RowState r : t.rows.values()) {
-                    if (r.value == null) {
+                    if (!r.live()) {
                         n++;
                     }
                 }
@@ -317,7 +484,7 @@ public final class Store {
             return false;
         }
         RowState r = t == null ? null : t.rows.get(id);
-        return r == null || op.stamp().after(r.stamp);
+        return r == null || r.with(Version.of((Op.RowOp) op)) != r;
     }
 
     /** The newest stamp applied so far; the clock must start after it. */
@@ -368,7 +535,7 @@ public final class Store {
             return null;
         }
         RowState r = dbs.get(db).tables.get(table).rows.get(id);
-        return r == null ? null : r.value;
+        return r == null ? null : r.winner().value();
     }
 
     /** Visits the live rows of a table in id order. */
@@ -377,10 +544,40 @@ public final class Store {
             return;
         }
         dbs.get(db).tables.get(table).rows.forEach((id, r) -> {
-            if (r.value != null) {
-                visitor.accept(id, r.value);
+            if (r.winner().value() != null) {
+                visitor.accept(id, r.winner().value());
             }
         });
+    }
+
+    /**
+     * Visits, in id order, the rows of a table that hold more than one version: writes made on nodes that
+     * had not seen each other's. The versions come newest first; the first is the row's value.
+     */
+    public void forEachConflict(String db, String table, BiConsumer<String, List<Version>> visitor) {
+        if (!tableExists(db, table)) {
+            return;
+        }
+        dbs.get(db).tables.get(table).rows.forEach((id, r) -> {
+            if (r.versions().size() > 1) {
+                visitor.accept(id, r.versions());
+            }
+        });
+    }
+
+    /** Number of rows, over every table, that hold more than one version; for metrics. */
+    public long conflicts() {
+        long n = 0;
+        for (DbState d : dbs.values()) {
+            for (TableState t : d.tables.values()) {
+                for (RowState r : t.rows.values()) {
+                    if (r.versions().size() > 1) {
+                        n++;
+                    }
+                }
+            }
+        }
+        return n;
     }
 
     public long rowCount(String db, String table) {
@@ -421,9 +618,11 @@ public final class Store {
             if (t.dropped.after(d.dropped)) {
                 out.add(new Op.DropTable(db, name, t.dropped));
             }
-            t.rows.forEach((id, r) -> out.add(r.value == null
-                    ? new Op.Delete(db, name, id, r.stamp)
-                    : new Op.Put(db, name, id, r.value, r.stamp)));
+            t.rows.forEach((id, r) -> {
+                for (Version v : r.versions()) {
+                    out.add(v.toOp(db, name, id));
+                }
+            });
         });
     }
 
@@ -445,7 +644,7 @@ public final class Store {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             for (Op op : toOps(db)) {
-                md.update(Json.write(Op.toJson(op)).getBytes(StandardCharsets.UTF_8));
+                md.update(Json.write(Op.toLegacyJson(op)).getBytes(StandardCharsets.UTF_8));
                 md.update((byte) '\n');
             }
             return HexFormat.of().formatHex(md.digest());

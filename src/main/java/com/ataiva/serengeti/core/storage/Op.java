@@ -23,15 +23,58 @@ public sealed interface Op {
 
     record DropTable(String db, String table, Stamp stamp) implements Op {}
 
+    /**
+     * A row write: {@link Put} or {@link Delete}. {@code seen} is its causal context: for each node, the newest
+     * stamp of that node's writes to this row that the writer had seen, plus {@code "~"} for writes from
+     * nodes that did not record one. It is null for an op that has none (written by 2.0, or a local write
+     * before {@link Store#withContext} fills it in). See {@link Store} for how it decides conflicts.
+     */
+    sealed interface RowOp extends Op {
+        String table();
+
+        String id();
+
+        Map<String, Stamp> seen();
+
+        RowOp withSeen(Map<String, Stamp> seen);
+    }
+
     /** Writes a whole row. */
-    record Put(String db, String table, String id, Map<String, Object> row, Stamp stamp) implements Op {
+    record Put(String db, String table, String id, Map<String, Object> row, Stamp stamp, Map<String, Stamp> seen)
+            implements RowOp {
         public Put {
             row = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(row));
+            seen = seen == null ? null : java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(seen));
+        }
+
+        public Put(String db, String table, String id, Map<String, Object> row, Stamp stamp) {
+            this(db, table, id, row, stamp, null);
+        }
+
+        @Override
+        public Put withSeen(Map<String, Stamp> seen) {
+            return new Put(db, table, id, row, stamp, seen);
         }
     }
 
     /** Deletes a row; kept as a tombstone so an older {@link Put} cannot bring it back. */
-    record Delete(String db, String table, String id, Stamp stamp) implements Op {}
+    record Delete(String db, String table, String id, Stamp stamp, Map<String, Stamp> seen) implements RowOp {
+        public Delete {
+            seen = seen == null ? null : java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(seen));
+        }
+
+        public Delete(String db, String table, String id, Stamp stamp) {
+            this(db, table, id, stamp, null);
+        }
+
+        @Override
+        public Delete withSeen(Map<String, Stamp> seen) {
+            return new Delete(db, table, id, stamp, seen);
+        }
+    }
+
+    /** The most entries a causal context may have: one per node of a 7-node cluster, "~", and spare. */
+    int MAX_SEEN = 16;
 
     static Map<String, Object> toJson(Op op) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -57,7 +100,42 @@ public sealed interface Op {
         }
         m.put("db", op.db());
         m.put("at", op.stamp().toString());
+        if (op instanceof RowOp r && r.seen() != null) {
+            Map<String, Object> seen = new java.util.TreeMap<>();
+            r.seen().forEach((k, v) -> seen.put(k, v.toString()));
+            m.put("seen", seen);
+        }
         return m;
+    }
+
+    /** As {@link #toJson(Op)} without the causal context: what a 2.0 node would write for the same op. */
+    static Map<String, Object> toLegacyJson(Op op) {
+        Map<String, Object> m = toJson(op);
+        m.remove("seen");
+        return m;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Stamp> seen(Map<String, Object> m) {
+        Object v = m.get("seen");
+        if (v == null) {
+            return null;
+        }
+        if (!(v instanceof Map<?, ?> raw) || raw.size() > MAX_SEEN) {
+            throw new IllegalArgumentException("'seen' must be an object of at most " + MAX_SEEN + " stamps");
+        }
+        Map<String, Stamp> out = new java.util.TreeMap<>();
+        for (Map.Entry<String, Object> e : ((Map<String, Object>) raw).entrySet()) {
+            if (!(e.getValue() instanceof String s)) {
+                throw new IllegalArgumentException("'seen' values must be stamps");
+            }
+            Stamp st = Stamp.parse(s);
+            if (!e.getKey().equals("~") && !e.getKey().equals(st.node())) {
+                throw new IllegalArgumentException("'seen' entry " + e.getKey() + " names another node's stamp");
+            }
+            out.put(e.getKey(), st);
+        }
+        return out;
     }
 
     @SuppressWarnings("unchecked")
@@ -79,9 +157,9 @@ public sealed interface Op {
                 if (!(row instanceof Map)) {
                     throw new IllegalArgumentException("put without a row");
                 }
-                return new Put(db, str(m, "table"), str(m, "id"), (Map<String, Object>) row, at);
+                return new Put(db, str(m, "table"), str(m, "id"), (Map<String, Object>) row, at, seen(m));
             case "delete":
-                return new Delete(db, str(m, "table"), str(m, "id"), at);
+                return new Delete(db, str(m, "table"), str(m, "id"), at, seen(m));
             default:
                 throw new IllegalArgumentException("unknown op " + kind);
         }

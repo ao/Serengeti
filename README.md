@@ -91,8 +91,8 @@ What works in this branch, with tests (`mvn verify`, and `tests/container/run.sh
 - one image for linux/amd64 and linux/arm64.
 
 What it does not do: there are no indexes, so every `WHERE` scans the table; there are no joins and no
-transactions across statements; conflicting writes to one row are resolved last-writer-wins, not
-serialised; accounts are not replicated.
+transactions across statements; concurrent writes to one row are not serialised: the newer one becomes
+the row's value and the other is kept for `SHOW CONFLICTS`; accounts are not replicated.
 
 1.x (up to v1.3.4) is not compatible: its HTTP routes, on-disk files and `admin`/`admin` login are gone.
 

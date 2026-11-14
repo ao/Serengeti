@@ -344,13 +344,47 @@ class ClusterTest {
         assertEquals(200, write(1, "CREATE DATABASE d", "local").statusCode());
         assertEquals(200, write(1, "CREATE TABLE d.t", "local").statusCode());
         assertEquals(200, write(1, "INSERT INTO d.t (_id, side) VALUES ('b', 'one')", "local").statusCode());
+        // Both nodes write row 'c' without having seen each other's write: a conflict once they meet.
+        assertEquals(200, write(1, "INSERT INTO d.t (_id, side) VALUES ('c', 'one')", "local").statusCode());
         assertEquals(400, write(1, "SHOW DATABASES", "eventually").statusCode());
+        stop(1);
         start(0);
+        Thread.sleep(1200);
+        assertEquals(200, write(0, "INSERT INTO d.t (_id, side) VALUES ('c', 'zero')", "local").statusCode());
+        start(1);
         start(2);
-        List<Object> both = List.of(List.of("a", "zero"), List.of("b", "one"));
+        List<Object> all = List.of(List.of("a", "zero"), List.of("b", "one"), List.of("c", "zero"));
         for (int i = 0; i < 3; i++) {
             int n = i;
-            eventually("node " + n + " has both sides' rows", () -> has(n, "SELECT _id, side FROM d.t", both));
+            eventually("node " + n + " has both sides' rows, the later write to c winning",
+                    () -> has(n, "SELECT _id, side FROM d.t", all));
+            eventually("node " + n + " shows both versions of c",
+                    () -> conflictSides(n).equals(List.of("zero", "one")));
+        }
+        // A write that has seen both versions resolves the conflict on every node.
+        waitWritable(0);
+        assertEquals(200, query(0, "UPDATE d.t SET side = 'both' WHERE _id = 'c'").statusCode());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has no conflict left", () -> conflictSides(n).isEmpty());
+        }
+    }
+
+    /** The 'side' of each version SHOW CONFLICTS lists on node i, current first. */
+    @SuppressWarnings("unchecked")
+    private List<Object> conflictSides(int i) {
+        try {
+            HttpResponse<String> r = query(i, "SHOW CONFLICTS IN d.t");
+            if (r.statusCode() != 200) {
+                return List.of("status " + r.statusCode());
+            }
+            List<Object> out = new java.util.ArrayList<>();
+            for (Object row : (List<Object>) ((Map<String, Object>) Json.parse(r.body())).get("rows")) {
+                out.add(((Map<String, Object>) ((List<Object>) row).get(5)).get("side"));
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of(e.toString());
         }
     }
 

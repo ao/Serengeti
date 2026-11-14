@@ -41,6 +41,14 @@ public sealed interface Statement {
         }
     }
 
+    /** The rows of a table that hold conflicting versions, one result row per version. */
+    record ShowConflicts(String db, String table) implements Statement {
+        public ShowConflicts {
+            Objects.requireNonNull(db, "db");
+            Objects.requireNonNull(table, "table");
+        }
+    }
+
     /** Each row in {@code rows} has one value per entry in {@code columns}. */
     record Insert(String db, String table, List<String> columns, List<List<Object>> rows) implements Statement {
         public Insert {

@@ -94,6 +94,9 @@ final class Metrics {
         b.append("serengeti_wal_fsync_seconds_total ").append(seconds(g.walFsyncNanos())).append('\n');
         family(b, "serengeti_databases", "gauge", "Databases that exist.");
         sample(b, "serengeti_databases", g.databases());
+        family(b, "serengeti_conflicts", "gauge",
+                "Rows holding conflicting versions from writes on nodes that had not seen each other's (SHOW CONFLICTS).");
+        sample(b, "serengeti_conflicts", g.conflicts());
         return b.toString();
     }
 

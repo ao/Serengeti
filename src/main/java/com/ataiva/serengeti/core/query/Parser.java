@@ -109,7 +109,14 @@ public final class Parser {
             expectKeyword("in");
             return new Statement.ShowTables(name());
         }
-        throw expected("DATABASES or TABLES");
+        // CONFLICTS is not a reserved word, so tables and columns may still be called that.
+        if (tok.kind() == Token.Kind.NAME && tok.text().equalsIgnoreCase("conflicts")) {
+            advance();
+            expectKeyword("in");
+            String[] q = qualifiedName();
+            return new Statement.ShowConflicts(q[0], q[1]);
+        }
+        throw expected("DATABASES, TABLES or CONFLICTS");
     }
 
     private Statement insert() {

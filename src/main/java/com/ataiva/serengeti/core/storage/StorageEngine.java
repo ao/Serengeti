@@ -123,14 +123,18 @@ public final class StorageEngine implements AutoCloseable {
         WriteHooks h = hooks;
         h.before();
         Planned<T> p;
+        List<Op> ops;
         long pos = -1;
         lock.writeLock().lock();
         try {
             ensureOpen();
             p = plan.apply(store);
-            if (!p.ops().isEmpty()) {
-                pos = wal.write(p.ops());
-                store.applyAll(p.ops());
+            // Each row write records what this node held for its row, so peers can tell a later write
+            // from a concurrent one (see Store).
+            ops = store.withContext(p.ops());
+            if (!ops.isEmpty()) {
+                pos = wal.write(ops);
+                store.applyAll(ops);
                 if (wal.size() >= checkpointBytes) {
                     checkpointLocked();
                 }
@@ -142,8 +146,8 @@ public final class StorageEngine implements AutoCloseable {
             // Outside the lock: writers that arrive during one fsync share the next (group commit).
             wal.awaitDurable(pos);
         }
-        if (!p.ops().isEmpty()) {
-            h.after(p.ops());
+        if (!ops.isEmpty()) {
+            h.after(ops);
         }
         return p.result();
     }

@@ -241,6 +241,25 @@ converged_rows() { # every node has the island's rows, the main side's row, and 
 for _ in $(seq 1 60); do converged_rows && break; sleep 0.5; done
 if converged_rows; then ok "after healing, every node has both sides' writes, and the later write to 'both' won"
 else bad "local-write merge" "$(body)"; fi
+conflict_shown() { # every node lists both versions of 'both', the later (n1's) as current, and no other row
+  for i in 1 2 3; do
+    q "$i" "SHOW CONFLICTS IN d.t" >/dev/null
+    case "$(body)" in *'"rows":[["both",true,false,'*'"side":"n1"'*'],["both",false,false,'*'"side":"n3"'*) ;; *) return 1 ;; esac
+  done
+}
+for _ in $(seq 1 20); do conflict_shown && break; sleep 0.5; done
+if conflict_shown; then ok "every node lists both writes to 'both' under SHOW CONFLICTS, n1's as current"
+else bad "conflict listing" "$(body)"; fi
+expect "a write that has seen both versions resolves the conflict" 200 \
+  "$(q 2 "UPDATE d.t SET side = 'resolved' WHERE _id = 'both'")"
+resolved() {
+  for i in 1 2 3; do
+    q "$i" "SHOW CONFLICTS IN d.t" >/dev/null
+    case "$(body)" in *'"rows":[]'*) ;; *) return 1 ;; esac
+  done
+}
+for _ in $(seq 1 20); do resolved && break; sleep 0.5; done
+if resolved; then ok "and no node lists a conflict after that"; else bad "conflict resolution" "$(body)"; fi
 
 median_write() { # i tag -> median seconds of five inserts through node i (each curl includes a TLS handshake)
   for k in 1 2 3 4 5; do
