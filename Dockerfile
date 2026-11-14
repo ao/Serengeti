@@ -24,7 +24,7 @@ USER 10001:10001
 # passes -p; publish to 127.0.0.1 unless other machines need to reach the node.
 ENV SERENGETI_BIND=0.0.0.0 \
     SERENGETI_DATA_DIR=/data \
-    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
 VOLUME /data
 EXPOSE 1985
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \

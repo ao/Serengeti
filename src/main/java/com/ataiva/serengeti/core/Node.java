@@ -38,6 +38,8 @@ public final class Node implements AutoCloseable {
     private final Config config;
     private final String id;
     private final StorageEngine storage;
+    /** Refuses writes that add data once the data fills its share of the heap; null at memory_limit_percent 100. */
+    private final MemoryGuard memory;
     private final Hlc clock;
     private final Users users;
     private final HttpApi api;
@@ -86,14 +88,15 @@ public final class Node implements AutoCloseable {
                     Cluster.Ack a = ack.equals("local") ? Cluster.Ack.LOCAL : Cluster.Ack.MAJORITY;
                     try {
                         return Cluster.withAck(a, () -> q.run(text).toJson());
-                    } catch (QueryException | UnavailableException | IOException e) {
+                    } catch (QueryException | UnavailableException | IOException
+                            | com.ataiva.serengeti.core.storage.WriteRefusedException e) {
                         throw e;
                     } catch (Exception e) {
                         throw new IllegalStateException(e);
                     }
                 } catch (QueryException e) {
                     throw new Rejected(400, e.getMessage());
-                } catch (UnavailableException e) {
+                } catch (UnavailableException | com.ataiva.serengeti.core.storage.WriteRefusedException e) {
                     throw new Rejected(503, e.getMessage());
                 } catch (IOException e) {
                     throw new UncheckedIOException("storage failed", e);
@@ -129,6 +132,8 @@ public final class Node implements AutoCloseable {
                 + (st.walDiscardedBytes() > 0 ? ", " + st.walDiscardedBytes() + " torn bytes discarded" : ""));
         this.clock = new Hlc(id);
         clock.observe(storage.read(s -> s.maxStamp()));
+        this.memory = config.memoryLimitPercent < 100 ? MemoryGuard.ofHeap(config.memoryLimitPercent) : null;
+        storage.setAdmission(memory);
         this.users = Users.open(dir);
         AtomicReference<SetupToken> token = new AtomicReference<>();
         if (!users.isSetUp()) {
@@ -243,8 +248,9 @@ public final class Node implements AutoCloseable {
             @Override
             public NodeOps.Gauges gauges() {
                 Wal.Stats wal = storage.walStats();
-                long[] counts = storage.read(s -> new long[] {s.databases().size(), s.conflicts()});
-                return new NodeOps.Gauges(wal.bytes(), wal.fsyncs(), wal.fsyncNanos(), counts[0], counts[1]);
+                long[] counts = storage.read(s -> new long[] {s.databases().size(), s.conflicts(), s.weight()});
+                return new NodeOps.Gauges(wal.bytes(), wal.fsyncs(), wal.fsyncNanos(), counts[0], counts[1],
+                        counts[2], memory == null ? 0 : memory.budget(), memory != null && counts[2] >= memory.budget());
             }
         };
     }

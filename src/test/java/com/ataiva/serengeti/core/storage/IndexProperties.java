@@ -108,6 +108,11 @@ class IndexProperties {
         b.applyAll(a.toOps());
         assertEquals(a.indexes("a", "t"), b.indexes("a", "t"));
         assertEquals(a.schemaHash("a"), b.schemaHash("a"));
+        assertEquals(a.weight(), b.weight(), "the weight estimate never drifts from a fresh count");
+        a.collectTombstones(Long.MAX_VALUE);
+        Store c = new Store();
+        c.applyAll(a.toOps());
+        assertEquals(c.weight(), a.weight(), "nor after tombstones are collected");
         checkEveryLookup(b);
     }
 

@@ -50,6 +50,10 @@ Needs Basic credentials of any account. The body is Prometheus text format 0.0.4
 | `serengeti_wal_fsync_seconds_total` | counter | Time spent in those forces. |
 | `serengeti_databases` | gauge | Databases that exist. |
 | `serengeti_conflicts` | gauge | Rows holding more than one version (see `SHOW CONFLICTS`). |
+| `serengeti_data_bytes` | gauge | Estimated heap bytes taken by the rows and index entries held. |
+| `serengeti_data_budget_bytes` | gauge | The estimate at which writes that add data are refused (`memory_limit_percent`; 0 when off). |
+| `serengeti_heap_bytes` | gauge | The JVM heap, by `kind`: `used` (garbage included), `committed` and `max`. |
+| `serengeti_memory_full` | gauge | 1 while writes that add data are refused (`memory_limit_percent`). |
 | `serengeti_build_info{version}` | gauge | Always 1. |
 | `serengeti_start_time_seconds` | gauge | Unix time at which the node started. |
 

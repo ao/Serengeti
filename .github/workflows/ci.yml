@@ -71,6 +71,16 @@ jobs:
       - name: 2.0.0 data opened by this build; a 3-node cluster upgraded one node at a time
         run: SKIP_BUILD=1 IMAGE=serengeti:upgrade OLD_IMAGE=ataiva/serengeti:2.0.0 tests/upgrade/run.sh
 
+  memory:
+    name: Memory limit (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t serengeti:mem .
+      - name: Fill a 400 MiB node through its API
+        run: SKIP_BUILD=1 IMAGE=serengeti:mem tests/memory/run.sh
+
   quickstart:
     name: Quick start (amd64)
     runs-on: ubuntu-24.04

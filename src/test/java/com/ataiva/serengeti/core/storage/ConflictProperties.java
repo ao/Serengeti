@@ -298,6 +298,10 @@ class ConflictProperties {
         twice.applyAll(ops);
         twice.applyAll(shuffled);
         assertEquals(a.toOps(), twice.toOps());
+        Store rebuilt = new Store();
+        rebuilt.applyAll(a.toOps());
+        assertEquals(rebuilt.weight(), a.weight(), "the weight estimate never drifts");
+        assertEquals(a.weight(), b.weight());
     }
 
     @Provide

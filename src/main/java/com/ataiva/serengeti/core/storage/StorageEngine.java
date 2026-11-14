@@ -140,6 +140,7 @@ public final class StorageEngine implements AutoCloseable {
         try {
             ensureOpen();
             p = plan.apply(store);
+            admission.admit(store, p.ops());
             // Each row write records what this node held for its row, so peers can tell a later write
             // from a concurrent one (see Store).
             ops = store.withContext(p.ops());
@@ -241,6 +242,22 @@ public final class StorageEngine implements AutoCloseable {
         } finally {
             lock.writeLock().unlock();
         }
+    }
+
+    /**
+     * Decides whether a client write may go ahead once its ops are known; throws (for example
+     * {@link WriteRefusedException}) to refuse it, before anything is logged. Not asked for ops from peers.
+     */
+    public interface Admission {
+        Admission ALL = (store, planned) -> { };
+
+        void admit(Store store, List<Op> planned);
+    }
+
+    private volatile Admission admission = Admission.ALL;
+
+    public void setAdmission(Admission admission) {
+        this.admission = admission == null ? Admission.ALL : admission;
     }
 
     /** Ops chosen by an {@link #update} plan, and the value to return to its caller. */

@@ -4,6 +4,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases up to 1.3.4 are described in their
 GitHub release notes and tags.
 
+## [Unreleased] - 2.2.0
+
+### Added
+- A memory limit: once the rows and index entries held are estimated to take `memory_limit_percent`
+  (default 60) of the heap, writes that add data get 503 instead of the node running out of memory and
+  exiting. Reads, deletes and drops are still served, and a delete makes room at once. The estimate is kept
+  in step with every change, so it needs no garbage collection to be current. Metrics
+  `serengeti_data_bytes`, `serengeti_data_budget_bytes`, `serengeti_memory_full` and `serengeti_heap_bytes`.
+  `tests/memory/run.sh` fills a node in a 512 MiB container through its API.
+
+### Changed
+- The image uses G1 and gives the heap 60% of the container's memory (was 75%), leaving room for the log's
+  page cache: at 75% a container filling with data was killed by the kernel before the heap was full.
+
 ## [Unreleased] - 2.1.0
 
 ### Added

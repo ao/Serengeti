@@ -27,7 +27,7 @@ public final class Config {
     private static final Set<String> KEYS = Set.of("bind", "port", "data_dir", "fsync", "peers", "advertise",
             "discovery_cidr", "cluster_size", "cluster_key_file", "cluster_plaintext", "admin_password_file",
             "tls_keystore", "tls_keystore_password_file", "tls_truststore", "tls_truststore_password_file",
-            "test_fsync_delay_ms", "tombstone_ttl_hours", "write_ack");
+            "test_fsync_delay_ms", "tombstone_ttl_hours", "write_ack", "memory_limit_percent");
 
     public final String bind;
     public final int port;
@@ -49,6 +49,8 @@ public final class Config {
     public final long tombstoneTtlMillis;
     /** Default acknowledgement for writes in a cluster: a majority of nodes, or this node only. */
     public final boolean localWriteAck;
+    /** Writes that add data are refused once the data is estimated to take this share of the heap. 100 turns it off. */
+    public final int memoryLimitPercent;
 
     private final boolean explicitSize;
 
@@ -80,6 +82,7 @@ public final class Config {
             throw new ConfigException("write_ack must be majority or local, not '" + ack + "'");
         }
         localWriteAck = ack.equals("local");
+        memoryLimitPercent = parseInt(v.getOrDefault("memory_limit_percent", "60"), "memory_limit_percent", 10, 100);
         String size = v.get("cluster_size");
         clusterSize = size == null ? peers.size() + 1 : parseInt(size, "cluster_size", 1, 7);
         validate();

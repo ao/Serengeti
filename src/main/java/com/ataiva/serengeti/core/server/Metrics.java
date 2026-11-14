@@ -98,6 +98,18 @@ final class Metrics {
         family(b, "serengeti_conflicts", "gauge",
                 "Rows holding conflicting versions from writes on nodes that had not seen each other's (SHOW CONFLICTS).");
         sample(b, "serengeti_conflicts", g.conflicts());
+        family(b, "serengeti_data_bytes", "gauge", "Estimated heap bytes taken by the rows and index entries held.");
+        sample(b, "serengeti_data_bytes", g.dataBytes());
+        family(b, "serengeti_data_budget_bytes", "gauge",
+                "The estimate at which writes that add data are refused (memory_limit_percent of the heap; 0: no limit).");
+        sample(b, "serengeti_data_budget_bytes", g.dataBudget());
+        family(b, "serengeti_memory_full", "gauge", "1 while writes that add data are refused (memory_limit_percent).");
+        sample(b, "serengeti_memory_full", g.memoryFull() ? 1 : 0);
+        Runtime rt = Runtime.getRuntime();
+        family(b, "serengeti_heap_bytes", "gauge", "The JVM heap: in use (garbage included), committed, and its maximum.");
+        b.append("serengeti_heap_bytes{kind=\"used\"} ").append(rt.totalMemory() - rt.freeMemory()).append('\n');
+        b.append("serengeti_heap_bytes{kind=\"committed\"} ").append(rt.totalMemory()).append('\n');
+        b.append("serengeti_heap_bytes{kind=\"max\"} ").append(rt.maxMemory()).append('\n');
         return b.toString();
     }
 

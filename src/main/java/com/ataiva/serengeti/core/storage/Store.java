@@ -34,6 +34,8 @@ public final class Store {
         Stamp created = Stamp.ZERO;
         Stamp dropped;
         final TreeMap<String, RowState> rows = new TreeMap<>();
+        /** Estimated heap bytes of the rows held (see Weight), kept in step with every change. */
+        long weight;
         final long[] buckets = new long[BUCKETS];
 
         TableState(Stamp dropped) {
@@ -71,11 +73,13 @@ public final class Store {
         void replace(String id, RowState old, RowState next) {
             if (old != null) {
                 unaccount(id, old);
+                weight -= old.weight(id);
             }
             if (next == null) {
                 rows.remove(id);
             } else {
                 account(id, next);
+                weight += next.weight(id);
                 rows.put(id, next);
             }
             Map<String, Object> was = old == null ? null : old.winner().value();
@@ -151,6 +155,8 @@ public final class Store {
         final TreeMap<Boolean, java.util.TreeSet<String>> bools = new TreeMap<>();
         final TreeMap<Number, java.util.TreeSet<String>> numbers = new TreeMap<>(ScalarOrder::compareNumbers);
         final TreeMap<String, java.util.TreeSet<String>> strings = new TreeMap<>();
+        /** Ids held across all keys, for the weight estimate. */
+        long entries;
 
         IndexState(String column, Stamp dropped) {
             this.column = column;
@@ -176,6 +182,7 @@ public final class Store {
                 bools.clear();
                 numbers.clear();
                 strings.clear();
+                entries = 0;
             }
         }
 
@@ -188,8 +195,8 @@ public final class Store {
         void add(String id, Map<String, Object> row) {
             Object v = row == null ? null : row.get(column);
             TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
-            if (m != null) {
-                m.computeIfAbsent(v, k -> new java.util.TreeSet<>()).add(id);
+            if (m != null && m.computeIfAbsent(v, k -> new java.util.TreeSet<>()).add(id)) {
+                entries++;
             }
         }
 
@@ -200,8 +207,11 @@ public final class Store {
                 return;
             }
             java.util.TreeSet<String> ids = m.get(v);
-            if (ids != null && ids.remove(id) && ids.isEmpty()) {
-                m.remove(v);
+            if (ids != null && ids.remove(id)) {
+                entries--;
+                if (ids.isEmpty()) {
+                    m.remove(v);
+                }
             }
         }
 
@@ -443,6 +453,15 @@ public final class Store {
             return out.size() == versions.size() ? this : out.isEmpty() ? null : new RowState(List.copyOf(out));
         }
 
+        /** Estimated heap bytes of this row: its place in the table and each version. */
+        long weight(String id) {
+            long n = Weight.ofRow(id);
+            for (Version v : versions) {
+                n += Weight.ofVersion(v.value, v.seen);
+            }
+            return n;
+        }
+
         /** The context for a new write over this row: the newest stamp per key over all its versions. */
         Map<String, Stamp> context() {
             Map<String, Stamp> out = new TreeMap<>();
@@ -674,13 +693,29 @@ public final class Store {
         int n = 0;
         for (DbState d : dbs.values()) {
             for (TableState t : d.tables.values()) {
-                var it = t.rows.values().iterator();
+                var it = t.rows.entrySet().iterator();
                 while (it.hasNext()) {
-                    RowState r = it.next();
+                    var e = it.next();
+                    RowState r = e.getValue();
                     if (!r.live() && r.winner().stamp().wall() < cutoffWallMillis) {
+                        t.weight -= r.weight(e.getKey());
                         it.remove();
                         n++;
                     }
+                }
+            }
+        }
+        return n;
+    }
+
+    /** Estimated heap bytes of all rows and index entries held (see Weight). */
+    public long weight() {
+        long n = 0;
+        for (DbState d : dbs.values()) {
+            for (TableState t : d.tables.values()) {
+                n += t.weight;
+                for (IndexState ix : t.indexes.values()) {
+                    n += ix.entries * Weight.INDEX_ENTRY;
                 }
             }
         }

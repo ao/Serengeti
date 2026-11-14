@@ -143,7 +143,8 @@ kept-alive connection, and 2.1 sets it itself.
 
 ## When not to use it
 
-- The data does not fit in memory on every node: each node keeps all of it in memory.
+- The data does not fit in memory on every node: each node keeps all of it in memory, and refuses writes
+  that add data (503) once it is estimated to fill `memory_limit_percent` of the heap.
 - You need joins, transactions across statements, or indexes on more than one column. A `WHERE` without
   an indexed comparison scans its table.
 - You need every write serialised, such as a balance that must never go below zero across nodes.

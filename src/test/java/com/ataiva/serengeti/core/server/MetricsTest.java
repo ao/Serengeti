@@ -43,7 +43,7 @@ class MetricsTest {
     private static final NodeOps OPS = new NodeOps() {
         @Override
         public NodeOps.Gauges gauges() {
-            return new NodeOps.Gauges(1234, 7, 9_000_000L, 2, 3);
+            return new NodeOps.Gauges(1234, 7, 9_000_000L, 2, 3, 5000, 4000, true);
         }
     };
 
@@ -123,6 +123,7 @@ class MetricsTest {
         assertEquals(0.009, before.value("serengeti_wal_fsync_seconds_total"), 1e-9);
         assertEquals(2, before.value("serengeti_databases"));
         assertEquals(3, before.value("serengeti_conflicts"));
+        assertEquals(1, before.value("serengeti_memory_full"));
         assertEquals(3, before.value("serengeti_http_request_duration_seconds_count", "route", "/v1/status"));
 
         assertEquals(200, send("GET", "/health", null, null).statusCode());
