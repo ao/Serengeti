@@ -80,7 +80,9 @@ public final class Wal implements AutoCloseable {
             header.flip();
             int len = header.getInt();
             int crc = header.getInt();
-            if (len < 0 || len > MAX_RECORD || pos + HEADER + len > total) {
+            // A payload is at least "[]": a shorter one is a zero-filled or torn tail (the CRC32C of an empty
+            // payload is 0, so eight zero bytes would otherwise pass the checksum).
+            if (len < 2 || len > MAX_RECORD || pos + HEADER + len > total) {
                 break;
             }
             ByteBuffer payload = ByteBuffer.allocate(len);
@@ -222,6 +224,11 @@ public final class Wal implements AutoCloseable {
 
     void failNextForceForTest(IOException e) {
         injectedFailure = e;
+    }
+
+    /** True once a force has failed: the log no longer says what is on disk, and the node must restart. */
+    public boolean failed() {
+        return failure != null;
     }
 
     private void checkHealthy() throws IOException {

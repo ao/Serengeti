@@ -131,6 +131,12 @@ class ConflictProperties {
         }
     }
 
+    static Map<String, List<Stamp>> conflicts(Store s) {
+        Map<String, List<Stamp>> out = new TreeMap<>();
+        s.forEachConflict("a", "t", (id, vs) -> out.put(id, vs.stream().map(Store.Version::stamp).toList()));
+        return out;
+    }
+
     static Map<String, Set<Stamp>> versions(Store s) {
         Map<String, Set<Stamp>> out = new TreeMap<>();
         for (String id : IDS) {
@@ -198,6 +204,8 @@ class ConflictProperties {
             for (String id : IDS) {
                 assertEquals(first.row("a", "t", id), r.store.row("a", "t", id));
             }
+            assertEquals(conflicts(first), conflicts(r.store), "SHOW CONFLICTS agrees on " + r.node);
+            assertEquals(first.conflicts(), r.store.conflicts());
         }
     }
 
@@ -268,6 +276,55 @@ class ConflictProperties {
             }
             assertEquals(r.store.toOps(), rebuilt.toOps());
         }
+    }
+
+    /** Merging stays order-independent and isNew exact for any contexts, floors and missing contexts included. */
+    @Property(tries = 1000)
+    void arbitraryContextsMergeTheSameInAnyOrder(@ForAll("contextOps") List<Op> ops, @ForAll long seed) {
+        Store a = new Store();
+        a.applyAll(ops);
+        List<Op> shuffled = new ArrayList<>(ops);
+        Collections.shuffle(shuffled, new Random(seed));
+        Store b = new Store();
+        for (Op op : shuffled) {
+            List<Op> before = b.toOps();
+            boolean predicted = b.isNew(op);
+            b.apply(op);
+            assertEquals(!before.equals(b.toOps()), predicted, () -> "isNew for " + op);
+        }
+        assertEquals(a.toOps(), b.toOps());
+        assertEquals(StoreProperties.roots(a), StoreProperties.roots(b));
+        Store twice = new Store();
+        twice.applyAll(ops);
+        twice.applyAll(shuffled);
+        assertEquals(a.toOps(), twice.toOps());
+    }
+
+    @Provide
+    Arbitrary<List<Op>> contextOps() {
+        List<String> nodes = List.of("n1", "n2", "n3", "n4");
+        Arbitrary<Stamp> stamp = Combinators.combine(Arbitraries.longs().between(1, 40), Arbitraries.of(nodes))
+                .as((w, n) -> new Stamp(w, 0, n));
+        Arbitrary<Map<String, Stamp>> seen = Arbitraries.maps(Arbitraries.of("n1", "n2", "n3", "n4", "*"),
+                Arbitraries.longs().between(1, 40)).ofMaxSize(4).map(m -> {
+                    Map<String, Stamp> out = new TreeMap<>();
+                    m.forEach((k, w) -> out.put(k, new Stamp(w, 0, k.equals("*") ? "n1" : k)));
+                    return out;
+                }).injectNull(0.2);
+        Arbitrary<Op> op = Combinators.combine(Arbitraries.of(IDS), Arbitraries.longs().between(-1, 3), stamp, seen)
+                .as((id, v, s, ctx) -> v < 0 ? (Op) new Op.Delete("a", "t", id, s, ctx)
+                        : (Op) new Op.Put("a", "t", id, Map.of("v", v), s, ctx));
+        return op.list().ofMaxSize(20).map(list -> {
+            // A stamp names one write: give each op its own counter so no two differ under one stamp.
+            List<Op> out = new ArrayList<>();
+            for (int i = 0; i < list.size(); i++) {
+                Op.RowOp r = (Op.RowOp) list.get(i);
+                Stamp s = new Stamp(r.stamp().wall(), i + 1, r.stamp().node());
+                out.add(r instanceof Op.Put p ? new Op.Put("a", "t", p.id(), p.row(), s, p.seen())
+                        : new Op.Delete("a", "t", r.id(), s, r.seen()));
+            }
+            return out;
+        });
     }
 
     @Provide

@@ -493,11 +493,19 @@ class ClusterTest {
     }
 
     @Test
-    void aNodeThatWasAwayLongerThanTheTombstoneTtlRefusesToStart() throws Exception {
+    void aNodeAwayLongerThanTheTombstoneTtlStartsStaleAndHandsOnOnlyItsNewerWrites() throws Exception {
+        long now = System.currentTimeMillis();
+        long lastSync = now - 2 * 3_600_000L;
         Path data = dir.resolve("n0");
-        java.nio.file.Files.createDirectories(data);
-        long longAgo = System.currentTimeMillis() - 2 * 3_600_000L;
-        java.nio.file.Files.writeString(data.resolve(Cluster.LAST_SYNC_FILE), longAgo + "\n");
+        // Its data: a row from before it lost the cluster, and one it wrote while cut off.
+        try (com.ataiva.serengeti.core.storage.StorageEngine e = com.ataiva.serengeti.core.storage.StorageEngine.open(
+                data, com.ataiva.serengeti.core.storage.FsyncPolicy.ALWAYS)) {
+            e.apply(List.of(new com.ataiva.serengeti.core.storage.Op.CreateDb("d", stampAt(lastSync - 60_000, "z0")),
+                    new com.ataiva.serengeti.core.storage.Op.CreateTable("d", "t", stampAt(lastSync - 59_000, "z0")),
+                    new com.ataiva.serengeti.core.storage.Op.Put("d", "t", "old", Map.of("n", 1L), stampAt(lastSync - 1_000, "z0")),
+                    new com.ataiva.serengeti.core.storage.Op.Put("d", "t", "isolated", Map.of("n", 2L), stampAt(now - 60_000, "z0"))));
+        }
+        java.nio.file.Files.writeString(data.resolve(Cluster.LAST_SYNC_FILE), lastSync + "\n");
         Map<String, String> env = new HashMap<>();
         env.put("SERENGETI_DATA_DIR", data.toString());
         env.put("SERENGETI_PORT", Integer.toString(ports[0]));
@@ -506,14 +514,42 @@ class ClusterTest {
         env.put("SERENGETI_CLUSTER_PLAINTEXT", "allow");
         env.put("SERENGETI_ADMIN_PASSWORD", PW);
         env.put("SERENGETI_TOMBSTONE_TTL_HOURS", "1");
-        com.ataiva.serengeti.core.config.ConfigException e = org.junit.jupiter.api.Assertions.assertThrows(
-                com.ataiva.serengeti.core.config.ConfigException.class, () -> Node.start(Config.load(null, env), Node.QUERIES));
-        assertTrue(e.getMessage().contains("tombstone_ttl_hours"), e.getMessage());
-        // With a recent sync, the same node starts.
+        Map<String, String> env1 = new HashMap<>(env);
+        env1.put("SERENGETI_DATA_DIR", dir.resolve("n1").toString());
+        env1.put("SERENGETI_PORT", Integer.toString(ports[1]));
+        env1.put("SERENGETI_PEERS", "127.0.0.1:" + ports[0]);
+        try (Node peer = Node.start(Config.load(null, env1), Node.QUERIES);
+                Node n = Node.start(Config.load(null, env), Node.QUERIES)) {
+            assertTrue(n.cluster().stale());
+            assertEquals(503, query(0, "INSERT INTO d.t (n) VALUES (3)").statusCode(), "a stale node takes no writes");
+            assertFalse(n.cluster().mayCollectTombstones());
+            // It hands on what it wrote after it last synced, and nothing older.
+            eventually("the peer has the write made while cut off",
+                    () -> has(1, "SELECT _id FROM d.t", List.of(List.of("isolated"))));
+            Thread.sleep(2500);
+            assertTrue(has(1, "SELECT _id FROM d.t", List.of(List.of("isolated"))), "and never the old row");
+        }
+        // With a recent sync, the same node starts normally.
         java.nio.file.Files.writeString(data.resolve(Cluster.LAST_SYNC_FILE), System.currentTimeMillis() + "\n");
         try (Node n = Node.start(Config.load(null, env), Node.QUERIES)) {
             assertFalse(n.cluster().stale());
         }
+    }
+
+    private static com.ataiva.serengeti.core.storage.Stamp stampAt(long wall, String node) {
+        return new com.ataiva.serengeti.core.storage.Stamp(wall, 0, node);
+    }
+
+    @Test
+    void tombstonesAreCollectedOnlyOnceEveryPeerHasSyncedByBuckets() throws Exception {
+        start(0);
+        start(1);
+        // Node 2 has not been seen since node 0 started: it may be a 2.0 node, or a restored backup.
+        waitWritable(0);
+        Thread.sleep(1500);
+        assertFalse(nodes[0].cluster().mayCollectTombstones());
+        start(2);
+        eventually("every peer has synced by buckets", () -> nodes[0].cluster().mayCollectTombstones());
     }
 
     @Test

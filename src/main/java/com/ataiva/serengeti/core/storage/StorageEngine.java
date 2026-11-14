@@ -105,7 +105,8 @@ public final class StorageEngine implements AutoCloseable {
 
     /**
      * Logs and applies a batch. With {@link FsyncPolicy#ALWAYS}, the batch is on disk when this returns.
-     * The batch is applied whole or, if the log write fails, not at all.
+     * The batch is applied whole or, if writing the log fails, not at all. It is applied before its fsync
+     * (group commit), so if the fsync then fails the node stops serving its data: see {@link #failed()}.
      */
     public void apply(List<Op> batch) throws IOException {
         if (batch.isEmpty()) {
@@ -213,8 +214,17 @@ public final class StorageEngine implements AutoCloseable {
         return count;
     }
 
+    /**
+     * True once an fsync of the log has failed. Writes applied in memory since the last good fsync may not be
+     * on disk, so the node then serves nothing from its data (queries, peers, readiness) until it restarts
+     * and recovers from what the disk holds.
+     */
+    public boolean failed() {
+        return wal.failed();
+    }
+
     /** Makes the next fsync fail with {@code e}, for tests of the failure path. */
-    void failNextFsyncForTest(IOException e) {
+    public void failNextFsyncForTest(IOException e) {
         wal.failNextForceForTest(e);
     }
 

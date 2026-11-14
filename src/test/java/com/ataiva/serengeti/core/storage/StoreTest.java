@@ -102,6 +102,62 @@ class StoreTest {
     }
 
     @Test
+    void aContextNeverOutgrowsWhatReadersAccept() {
+        Store s = table();
+        Op last = null;
+        for (int i = 0; i < Op.MAX_SEEN + 10; i++) {
+            // Each write is made on a different node that had seen everything before it.
+            last = s.withContext(List.of(new Op.Put("shop", "items", "a", row("v", (long) i), at(10 + i, "w" + i)))).get(0);
+            s.apply(last);
+            assertTrue(((Op.Put) last).seen().size() <= Op.MAX_SEEN, "context of write " + i);
+            assertEquals(last, Op.fromJson(Op.toJson(last)), "a reader accepts it");
+        }
+        assertEquals(row("v", (long) Op.MAX_SEEN + 9), s.row("shop", "items", "a"));
+        assertEquals(0, s.conflicts(), "each write saw the one before it");
+        assertEquals(Op.MAX_SEEN, ((Op.Put) last).seen().size());
+        assertTrue(((Op.Put) last).seen().containsKey("w" + (Op.MAX_SEEN + 8)), "the newest writers are kept");
+    }
+
+    @Test
+    void aCopyThatLostItsContextIsReplacedByTheFullOne() {
+        Store full = table();
+        Op.Put v = (Op.Put) full.withContext(List.of(new Op.Put("shop", "items", "a", row("v", 1L), at(10, "n2")))).get(0);
+        full.apply(v);
+        Store relayed = table();
+        relayed.apply(new Op.Put("shop", "items", "a", row("v", 1L), at(10, "n2"))); // through a 2.0 node: no context
+        assertFalse(java.util.Arrays.equals(full.bucketSums("shop", "items"), relayed.bucketSums("shop", "items")),
+                "the two copies hash differently, so sync fetches the full one");
+        assertTrue(relayed.isNew(v));
+        relayed.apply(v);
+        assertEquals(full.toOps(), relayed.toOps());
+        assertTrue(java.util.Arrays.equals(full.bucketSums("shop", "items"), relayed.bucketSums("shop", "items")));
+        // A later write that had seen it is then no conflict on either.
+        Op later = relayed.withContext(List.of(new Op.Put("shop", "items", "a", row("v", 2L), at(11, "n1")))).get(0);
+        full.apply(later);
+        relayed.apply(later);
+        assertEquals(0, full.conflicts());
+        assertEquals(0, relayed.conflicts());
+        // And the stripped copy arriving again changes nothing.
+        assertFalse(relayed.isNew(new Op.Put("shop", "items", "a", row("v", 1L), at(10, "n2"))));
+    }
+
+    @Test
+    void theDigestForTwoZeroPeersHashesWhatA20NodeHolds() {
+        // A 2.1 node with a conflict, and a 2.0 node that holds only the newer version, without contexts.
+        Store mine = table();
+        mine.apply(new Op.Put("shop", "items", "a", row("v", 1L), at(10, "n1"), Map.of()));
+        mine.apply(new Op.Put("shop", "items", "a", row("v", 2L), at(11, "n2"), Map.of()));
+        mine.applyAll(mine.withContext(List.of(new Op.Put("shop", "items", "b", row("v", 3L), at(12, "n1")))));
+        mine.apply(new Op.CreateIndex("shop", "items", "v", at(13)));
+        assertEquals(1, mine.conflicts());
+        Store theirs = table();
+        theirs.apply(new Op.Put("shop", "items", "a", row("v", 2L), at(11, "n2")));
+        theirs.apply(new Op.Put("shop", "items", "b", row("v", 3L), at(12, "n1")));
+        assertEquals(theirs.digest("shop"), mine.digest("shop"));
+        assertEquals(theirs.toOps("shop"), mine.legacyOps("shop"));
+    }
+
+    @Test
     void theSameWriteArrivingTwiceIsOneVersion() {
         Store s = table();
         Op.Put p = new Op.Put("shop", "items", "a", row("v", 1), at(10, "n1"), Map.of());

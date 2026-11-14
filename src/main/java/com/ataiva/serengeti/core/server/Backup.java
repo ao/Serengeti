@@ -81,6 +81,16 @@ public final class Backup {
             Snapshot.writeAtomically(indexes, dataDir.resolve(StorageEngine.INDEX_FILE));
         }
         Snapshot.writeAtomically(Op.legacyOnly(ops), dataDir.resolve(StorageEngine.SNAPSHOT_FILE));
+        // The backup cannot have synced with a cluster after its newest change: record that as this node's last
+        // sync, so a cluster node restored from a backup older than tombstone_ttl_hours starts stale instead of
+        // bringing back rows deleted since.
+        long newest = 0;
+        for (Op op : ops) {
+            newest = Math.max(newest, op.stamp().wall());
+        }
+        if (newest > 0) {
+            Files.writeString(dataDir.resolve(com.ataiva.serengeti.core.cluster.Cluster.LAST_SYNC_FILE), newest + "\n");
+        }
         return ops.size();
     }
 }

@@ -73,6 +73,9 @@ public final class Node implements AutoCloseable {
 
             @Override
             public Object run(String text, Users.Role role, boolean majority, String ack) throws Rejected {
+                if (engine.failed()) {
+                    throw new Rejected(503, "this node's write-ahead log failed to fsync; restart it to recover from disk");
+                }
                 try {
                     if (majority && cluster != null) {
                         cluster.syncForRead();
@@ -171,6 +174,9 @@ public final class Node implements AutoCloseable {
         });
         maintenance.scheduleWithFixedDelay(() -> {
             try {
+                if (cluster != null && !cluster.mayCollectTombstones()) {
+                    return; // a peer not yet seen syncing by buckets could bring back what was deleted
+                }
                 int n = storage.collectTombstones(config.tombstoneTtlMillis);
                 if (n > 0) {
                     LOG.info("dropped " + n + " tombstones older than " + config.tombstoneTtlMillis / 3_600_000 + " h");
@@ -186,6 +192,11 @@ public final class Node implements AutoCloseable {
     /** Runs tombstone collection now, for tests. */
     int collectTombstonesNow() {
         return storage.collectTombstones(config.tombstoneTtlMillis);
+    }
+
+    /** The storage engine, for tests. */
+    StorageEngine storageForTest() {
+        return storage;
     }
 
     /** The cluster this node belongs to, or null for a single node. */
@@ -218,8 +229,9 @@ public final class Node implements AutoCloseable {
             public List<java.util.function.BooleanSupplier> readiness() {
                 // In a cluster, ready means caught up with a majority since start-up and a majority reachable
                 // now; a node that acknowledges writes locally by default only needs to be in date.
-                return cluster == null ? List.of()
-                        : List.of(() -> !cluster.stale() && (cluster.localAckByDefault()
+                java.util.function.BooleanSupplier disk = () -> !storage.failed();
+                return cluster == null ? List.of(disk)
+                        : List.of(disk, () -> !cluster.stale() && (cluster.localAckByDefault()
                                 || cluster.caughtUp() && cluster.reachable() >= cluster.quorum()));
             }
 

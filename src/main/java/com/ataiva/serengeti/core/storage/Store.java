@@ -210,6 +210,49 @@ public final class Store {
             add(id, now);
         }
 
+        /** The matching keys' id sets, without copying them. */
+        java.util.Collection<java.util.TreeSet<String>> sets(String op, Object v) {
+            TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
+            if (m == null) {
+                return List.of();
+            }
+            return switch (op) {
+                case "=" -> {
+                    java.util.TreeSet<String> s = m.get(v);
+                    yield s == null ? List.of() : List.of(s);
+                }
+                case "<" -> m.headMap(v, false).values();
+                case "<=" -> m.headMap(v, true).values();
+                case ">" -> m.tailMap(v, false).values();
+                case ">=" -> m.tailMap(v, true).values();
+                default -> throw new IllegalArgumentException("no index lookup for " + op);
+            };
+        }
+
+        long estimate(String op, Object v) {
+            long n = 0;
+            for (java.util.TreeSet<String> s : sets(op, v)) {
+                n += s.size();
+            }
+            return n;
+        }
+
+        /** The ids in id order: equality as the live set, a range gathered if small enough, else null. */
+        Iterable<String> ids(String op, Object v) {
+            java.util.Collection<java.util.TreeSet<String>> sets = sets(op, v);
+            if (sets.size() <= 1) {
+                return sets.isEmpty() ? List.of() : sets.iterator().next();
+            }
+            if (estimate(op, v) > MATERIALIZE_LIMIT) {
+                return null;
+            }
+            java.util.TreeSet<String> out = new java.util.TreeSet<>();
+            for (java.util.TreeSet<String> s : sets) {
+                out.addAll(s);
+            }
+            return out;
+        }
+
         /** The ids whose value compares to {@code v} by {@code op} ("=", "<", "<=", ">", ">="), in id order. */
         java.util.SortedSet<String> lookup(String op, Object v) {
             java.util.TreeSet<String> out = new java.util.TreeSet<>();
@@ -259,6 +302,9 @@ public final class Store {
      * covers it.
      */
     public record Version(Map<String, Object> value, Stamp stamp, Map<String, Stamp> seen) {
+        /** The context key whose stamp covers every write at or below it, from any node. */
+        static final String FLOOR = Op.FLOOR;
+
         public boolean deleted() {
             return value == null;
         }
@@ -271,12 +317,15 @@ public final class Store {
             if (key.equals("~") || key.equals(stamp.node())) {
                 return stamp; // a node's own write is newer than anything it had seen
             }
-            return seen.get(key);
+            // FLOOR: every write stamped at or below it counts as seen (entries folded in to bound the size).
+            Stamp s = seen.get(key);
+            Stamp floor = seen.get(FLOOR);
+            return s == null ? floor : floor == null ? s : Stamp.max(s, floor);
         }
 
         java.util.Set<String> clockKeys() {
             if (seen == null) {
-                return java.util.Set.of("~");
+                return new java.util.TreeSet<>(java.util.Set.of("~"));
             }
             java.util.Set<String> keys = new java.util.TreeSet<>(seen.keySet());
             keys.add("~");
@@ -284,10 +333,20 @@ public final class Store {
             return keys;
         }
 
-        /** True if {@code other} had seen this version when it was written (or is it). */
+        /**
+         * True if {@code other} had seen this version when it was written (or is it): this clock is at or below
+         * the other's for every key either names. A key a clock does not name reads as its FLOOR, or as never.
+         */
         boolean seenBy(Version other) {
-            for (String k : clockKeys()) {
+            java.util.Set<String> keys = clockKeys();
+            if (seen != null && seen.containsKey(FLOOR)) {
+                keys.addAll(other.clockKeys()); // this floor applies to the other's keys too
+            }
+            for (String k : keys) {
                 Stamp mine = clock(k);
+                if (mine == null) {
+                    continue;
+                }
                 Stamp theirs = other.clock(k);
                 if (theirs == null || mine.after(theirs)) {
                     return false;
@@ -334,21 +393,31 @@ public final class Store {
             }
             long h = 0;
             for (Version v : versions) {
-                h += rowHash(id, v.stamp);
+                // A copy that lost its context (it went through a 2.0 node) hashes differently from the full
+                // one, so the replicas that hold it fetch the full copy.
+                h += rowHash(v.seen == null ? id : id + "\u0001", v.stamp);
             }
             return h;
         }
 
         /** This state with {@code in} merged, or this same object if {@code in} changes nothing. */
         RowState with(Version in) {
+            Version replaced = null;
             for (Version v : versions) {
-                if (v.stamp.equals(in.stamp) || in.seenBy(v)) {
+                if (v.stamp.equals(in.stamp)) {
+                    // The same write. Keep the copy that has its context: one without it came through a 2.0
+                    // node, which drops contexts, and would make later writes look concurrent with it.
+                    if (v.seen != null || in.seen == null) {
+                        return this;
+                    }
+                    replaced = v;
+                } else if (in.seenBy(v)) {
                     return this;
                 }
             }
             List<Version> out = new ArrayList<>(versions.size() + 1);
             for (Version v : versions) {
-                if (!v.seenBy(in)) {
+                if (v != replaced && !v.seenBy(in)) {
                     out.add(v);
                 }
             }
@@ -427,6 +496,38 @@ public final class Store {
     }
 
     /**
+     * A context of at most {@link Op#MAX_SEEN} entries, which is what readers accept. Entries at or below the
+     * floor are implied by it and dropped; past the limit, the oldest node entries are folded into the floor.
+     * Folding claims every write at or below the new floor was seen: a write from a node that was concurrent
+     * and older than all of the row's last {@code MAX_SEEN - 1} writers would be taken as superseded.
+     */
+    static Map<String, Stamp> bounded(Map<String, Stamp> ctx) {
+        Stamp floor = ctx.get(Op.FLOOR);
+        List<Map.Entry<String, Stamp>> nodes = new ArrayList<>();
+        for (Map.Entry<String, Stamp> e : ctx.entrySet()) {
+            if (!e.getKey().equals(Op.FLOOR) && (floor == null || e.getValue().after(floor))) {
+                nodes.add(e);
+            }
+        }
+        int room = Op.MAX_SEEN - 1; // one entry for the floor
+        if (nodes.size() > (floor == null ? Op.MAX_SEEN : room)) {
+            nodes.sort((a, b) -> b.getValue().compareTo(a.getValue()));
+            for (Map.Entry<String, Stamp> e : nodes.subList(room, nodes.size())) {
+                floor = floor == null ? e.getValue() : Stamp.max(floor, e.getValue());
+            }
+            nodes = new ArrayList<>(nodes.subList(0, room));
+        }
+        Map<String, Stamp> out = new TreeMap<>();
+        for (Map.Entry<String, Stamp> e : nodes) {
+            out.put(e.getKey(), e.getValue());
+        }
+        if (floor != null) {
+            out.put(Op.FLOOR, floor);
+        }
+        return out;
+    }
+
+    /**
      * The batch with a causal context on every row write that has none: the clock of everything this node
      * holds for that row (and of the batch's earlier writes to it), so the write supersedes all of them.
      * Client writes go through here before they are logged; ops from peers keep the context they came with.
@@ -449,6 +550,7 @@ public final class Store {
                 }
                 ctx.remove(r.stamp().node()); // implied by the write's own stamp
                 ctx.remove("~");
+                ctx = bounded(ctx);
                 Op.RowOp filled = r.withSeen(ctx);
                 earlier.put(key, Version.of(filled));
                 out.add(filled);
@@ -697,14 +799,15 @@ public final class Store {
 
     /**
      * Visits, in id order, the rows of a table that hold more than one version: writes made on nodes that
-     * had not seen each other's. The versions come newest first; the first is the row's value.
+     * had not seen each other's. The versions come newest first; the first is the row's value. Rows whose
+     * versions are all deletes are left out: they agree on the outcome, and such tombstones need not spread.
      */
     public void forEachConflict(String db, String table, BiConsumer<String, List<Version>> visitor) {
         if (!tableExists(db, table)) {
             return;
         }
         dbs.get(db).tables.get(table).rows.forEach((id, r) -> {
-            if (r.versions().size() > 1) {
+            if (r.versions().size() > 1 && r.live()) {
                 visitor.accept(id, r.versions());
             }
         });
@@ -762,13 +865,77 @@ public final class Store {
         return ix == null || !ix.exists() ? null : ix.lookup(op, value);
     }
 
+    /** A range lookup on a column index that would match more ids than this is not used: the caller scans. */
+    public static final int MATERIALIZE_LIMIT = 100_000;
+
+    /**
+     * How many rows a lookup through an index would visit, at most; -1 when {@code column} has no index.
+     * Exact for column indexes (summing the matching keys, no copying), an upper bound for {@code _id} ranges.
+     */
+    public long indexEstimate(String db, String table, String column, String op, Object value) {
+        if (!tableExists(db, table)) {
+            return -1;
+        }
+        TableState t = dbs.get(db).tables.get(table);
+        if (column.equals("_id")) {
+            return op.equals("=") ? 1 : t.rows.size();
+        }
+        IndexState ix = t.indexes.get(column);
+        return ix == null || !ix.exists() ? -1 : ix.estimate(op, value);
+    }
+
+    /**
+     * Visits, in id order, the live rows whose current value of {@code column} compares to {@code value} by
+     * {@code op}, through an index, without copying the whole match first: {@code _id} ranges and column
+     * equality stream; a column range is gathered only when it matches at most {@link #MATERIALIZE_LIMIT}
+     * rows. Returns false, having visited nothing, when there is no index or the range is larger: scan instead.
+     */
+    public boolean forEachIndexed(String db, String table, String column, String op, Object value,
+            BiConsumer<String, Map<String, Object>> visitor) {
+        if (!tableExists(db, table)) {
+            return false;
+        }
+        TableState t = dbs.get(db).tables.get(table);
+        Iterable<String> ids;
+        if (column.equals("_id")) {
+            if (!(value instanceof String v)) {
+                return true; // nothing compares with _id but a string
+            }
+            java.util.NavigableMap<String, RowState> range = switch (op) {
+                case "=" -> t.rows.subMap(v, true, v, true);
+                case "<" -> t.rows.headMap(v, false);
+                case "<=" -> t.rows.headMap(v, true);
+                case ">" -> t.rows.tailMap(v, false);
+                case ">=" -> t.rows.tailMap(v, true);
+                default -> throw new IllegalArgumentException("no index lookup for " + op);
+            };
+            ids = range.keySet();
+        } else {
+            IndexState ix = t.indexes.get(column);
+            if (ix == null || !ix.exists()) {
+                return false;
+            }
+            ids = ix.ids(op, value);
+            if (ids == null) {
+                return false;
+            }
+        }
+        for (String id : ids) {
+            RowState r = t.rows.get(id);
+            if (r != null && r.winner().value() != null) {
+                visitor.accept(id, r.winner().value());
+            }
+        }
+        return true;
+    }
+
     /** Number of rows, over every table, that hold more than one version; for metrics. */
     public long conflicts() {
         long n = 0;
         for (DbState d : dbs.values()) {
             for (TableState t : d.tables.values()) {
                 for (RowState r : t.rows.values()) {
-                    if (r.versions().size() > 1) {
+                    if (r.versions().size() > 1 && r.live()) {
                         n++;
                     }
                 }
@@ -824,6 +991,20 @@ public final class Store {
         });
     }
 
+    /**
+     * Every schema op (create and drop stamps never expire, so old ones are harmless), and the row versions
+     * stamped after {@code wallMillis}: what a stale node may hand on (see Cluster.pushIsolatedWrites).
+     */
+    public List<Op> opsSince(long wallMillis) {
+        List<Op> out = new ArrayList<>();
+        for (Op op : toOps()) {
+            if (!(op instanceof Op.RowOp) || op.stamp().wall() > wallMillis) {
+                out.add(op);
+            }
+        }
+        return out;
+    }
+
     /** All database names known, including dropped ones (their tombstones still replicate). */
     public List<String> allDatabaseNames() {
         return new ArrayList<>(dbs.keySet());
@@ -838,11 +1019,43 @@ public final class Store {
         return out;
     }
 
+    /**
+     * The database as a 2.0 node holds it: its schema without index ops, and for each row only its current
+     * version (2.0 keeps one per row), without causal contexts. The 2.0 routes serve this and
+     * {@link #digest} hashes it, so a 2.0 peer and this node agree once they hold the same data.
+     */
+    public List<Op> legacyOps(String db) {
+        List<Op> out = new ArrayList<>();
+        DbState d = dbs.get(db);
+        if (d == null) {
+            return out;
+        }
+        // In the order 2.0 writes them (its toOps), since the digest hashes the sequence.
+        if (d.created.after(Stamp.ZERO)) {
+            out.add(new Op.CreateDb(db, d.created));
+        }
+        if (d.dropped.after(Stamp.ZERO)) {
+            out.add(new Op.DropDb(db, d.dropped));
+        }
+        d.tables.forEach((name, t) -> {
+            if (t.created.after(Stamp.ZERO)) {
+                out.add(new Op.CreateTable(db, name, t.created));
+            }
+            if (t.dropped.after(d.dropped)) {
+                out.add(new Op.DropTable(db, name, t.dropped));
+            }
+            t.rows.forEach((id, r) -> {
+                Version w = r.winner();
+                out.add(new Version(w.value(), w.stamp(), null).toOp(db, name, id));
+            });
+        });
+        return out;
+    }
+
     public String digest(String db) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            // What a 2.0 node holds and hashes for the same state: no index ops, no causal contexts.
-            for (Op op : Op.legacyOnly(toOps(db))) {
+            for (Op op : legacyOps(db)) {
                 md.update(Json.write(Op.toLegacyJson(op)).getBytes(StandardCharsets.UTF_8));
                 md.update((byte) '\n');
             }

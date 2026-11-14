@@ -142,6 +142,46 @@ class WalTest {
     }
 
     @Test
+    void aZeroFilledTailIsTornNotARecord() throws IOException {
+        for (int zeros : new int[] {8, 9, 64, 4096}) {
+            Path p = dir.resolve("zeros-" + zeros + ".log");
+            try (Wal w = Wal.open(p, FsyncPolicy.ALWAYS, 0, new ArrayList<>())) {
+                w.append(batch(0));
+                w.append(batch(1));
+            }
+            Files.write(p, new byte[zeros], java.nio.file.StandardOpenOption.APPEND);
+            assertEquals(List.of(batch(0), batch(1)), reopen(p), zeros + " zero bytes");
+            try (Wal w = Wal.open(p, FsyncPolicy.ALWAYS, 0, new ArrayList<>())) {
+                w.append(batch(2));
+            }
+            assertEquals(List.of(batch(0), batch(1), batch(2)), reopen(p), "appends after the cut");
+        }
+    }
+
+    @Test
+    void aSnapshotWithAnOpOfANewerKindStillLoads() throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        Snapshot.write(List.of(batch(0).get(0), batch(1).get(0)), out);
+        String[] lines = out.toString(java.nio.charset.StandardCharsets.UTF_8).split("\n");
+        // Insert a line of an unknown kind and rewrite the trailer for three ops, as a newer version would.
+        String newer = "{\"op\":\"create_view\",\"db\":\"d\",\"table\":\"t\",\"view\":\"v\",\"at\":\"9.0.n2\"}";
+        java.security.MessageDigest md;
+        try {
+            md = java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        StringBuilder text = new StringBuilder();
+        for (String l : new String[] {lines[0], lines[1], newer, lines[2]}) {
+            text.append(l).append('\n');
+            md.update((l + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        text.append("{\"end\":true,\"ops\":3,\"sha256\":\"").append(java.util.HexFormat.of().formatHex(md.digest())).append("\"}\n");
+        List<Op> got = Snapshot.read(new java.io.ByteArrayInputStream(text.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)), true);
+        assertEquals(List.of(batch(0).get(0), batch(1).get(0)), got);
+    }
+
+    @Test
     void aRecordWithAValidChecksumThatCannotBeReadStopsTheOpenAndKeepsTheFile() throws IOException {
         Path p = writeBatches(2);
         appendRaw(p, "[{\"op\":\"put\",\"db\":\"d\",\"at\":\"not a stamp\"}]");

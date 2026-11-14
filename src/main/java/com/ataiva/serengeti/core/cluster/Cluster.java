@@ -53,6 +53,8 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     static final long SYNC_INTERVAL_MILLIS = 1_000;
     static final long WRITE_TIMEOUT_MILLIS = 5_000;
     static final long DISCOVERY_INTERVAL_MILLIS = 10_000;
+    /** How often a peer found running 2.0 is asked again whether it has the bucket routes (it may have been upgraded). */
+    static final long PROBE_MILLIS = 30_000;
 
     private static final class Peer {
         final String address;
@@ -65,6 +67,12 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         volatile String lastError;
         /** The peer runs 2.0 and has only the whole-database routes. */
         volatile boolean protocol1;
+        /** When protocol1 was last found true; the peer is asked for the bucket routes again after PROBE_MILLIS. */
+        volatile long protocol1Since;
+        /** A sync by buckets with this peer has completed since this node started: it runs 2.1 or later. */
+        volatile boolean v2Synced;
+        /** This node is stale and has pushed the writes it made while away to this peer. */
+        volatile boolean isolatedPushed;
 
         Peer(String address) {
             this.address = address;
@@ -137,10 +145,14 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         this.lastSyncFile = config.dataDir.resolve(LAST_SYNC_FILE);
         long last = readLastSync(lastSyncFile);
         if (last > 0 && clock.getAsLong() - last > tombstoneTtl) {
-            throw new com.ataiva.serengeti.core.config.ConfigException("this node last synced with a majority of its "
-                    + "cluster at " + java.time.Instant.ofEpochMilli(last) + ", longer ago than tombstone_ttl_hours ("
-                    + tombstoneTtl / 3_600_000 + "). Rows deleted since then could come back through it. Stop it, "
-                    + "empty its data directory except users.json and node-id, and start it again to resync.");
+            // It starts, but stale: no sync and no writes, so its old rows cannot bring back deleted ones. It
+            // still hands the changes it made after `last` to its peers (pushIsolatedWrites).
+            this.stale = true;
+            LOG.severe("this node last synced with a majority of its cluster at " + java.time.Instant.ofEpochMilli(last)
+                    + ", longer ago than tombstone_ttl_hours (" + tombstoneTtl / 3_600_000 + "). Rows deleted since then"
+                    + " could come back through it, so it does not sync or take writes. It hands the changes it made"
+                    + " since then to its peers; then stop it, empty its data directory except users.json and node-id,"
+                    + " and start it again to resync.");
         }
         this.lastMajoritySync = last > 0 ? last : clock.getAsLong();
         this.nodeId = nodeId;
@@ -430,20 +442,78 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         }
     }
 
+    /**
+     * True when tombstones may be collected: every peer has completed a sync by buckets since this node
+     * started, so each runs 2.1 or later and has the guard that keeps a node away longer than the TTL from
+     * rejoining. A 2.0 node has no such guard, and a peer not heard from since this node started may be one,
+     * or a node restored from an old backup: until they show up, tombstones stay.
+     */
+    public boolean mayCollectTombstones() {
+        if (stale) {
+            return false;
+        }
+        for (Peer p : peers) {
+            if (!p.v2Synced || p.protocol1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Most ops in one push from a stale node, to keep each request well under the internal body limit. */
+    static final int PUSH_BATCH = 2_000;
+
+    /**
+     * A stale node does not sync (its old rows could bring back deleted ones), but the writes it made after it
+     * last synced with a majority are newer than any tombstone the cluster can have collected, so they are
+     * safe to hand on: it pushes them to each peer once, so writes it acknowledged while cut off are not lost
+     * when it is emptied and resynced.
+     */
+    private CompletableFuture<Boolean> pushIsolatedWrites(Peer p) {
+        if (p.isolatedPushed) {
+            return CompletableFuture.completedFuture(false);
+        }
+        long since = lastMajoritySync;
+        List<Op> ops = engine.read(s -> s.opsSince(since));
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (int i = 0; i < ops.size(); i += PUSH_BATCH) {
+            List<Op> batch = ops.subList(i, Math.min(ops.size(), i + PUSH_BATCH));
+            chain = chain.thenCompose(v -> send(p, batch).thenAccept(x -> { }));
+        }
+        return chain.handle((v, err) -> {
+            if (err == null) {
+                p.isolatedPushed = true;
+                LOG.warning("this node is out of date; it handed the " + ops.size() + " changes stamped after "
+                        + java.time.Instant.ofEpochMilli(since) + " to " + p.address + ". Empty it and start it again.");
+            }
+            return false;
+        });
+    }
+
     /** Pulls every database whose digest differs from the peer's. Completes with true if it worked. */
     private CompletableFuture<Boolean> syncWith(Peer p) {
         if (stale) {
-            return CompletableFuture.completedFuture(false);
+            return pushIsolatedWrites(p);
         }
-        CompletableFuture<Integer> run = p.protocol1 ? syncWholeDatabases(p) : syncByBuckets(p).handle((n, err) -> {
+        // A peer found running 2.0 is asked for the bucket routes again now and then: it may have been upgraded.
+        boolean byBuckets = !p.protocol1 || clock.getAsLong() - p.protocol1Since > PROBE_MILLIS;
+        CompletableFuture<Integer> run = !byBuckets ? syncWholeDatabases(p) : syncByBuckets(p).handle((n, err) -> {
             if (err != null && unwrap(err) instanceof PeerClient.NotSupported) {
-                LOG.info("peer " + p.address + " runs 2.0; syncing with it by whole databases");
+                if (!p.protocol1) {
+                    LOG.info("peer " + p.address + " runs 2.0; syncing with it by whole databases");
+                }
                 p.protocol1 = true;
+                p.protocol1Since = clock.getAsLong();
                 return null;
             }
             if (err != null) {
                 throw new java.util.concurrent.CompletionException(unwrap(err));
             }
+            if (p.protocol1) {
+                LOG.info("peer " + p.address + " now has the bucket routes; syncing with it by buckets");
+                p.protocol1 = false;
+            }
+            p.v2Synced = true;
             return n;
         }).thenCompose(n -> n == null ? syncWholeDatabases(p) : CompletableFuture.completedFuture(n));
         return run.thenApply(merged -> {
@@ -670,6 +740,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     @Override
     public Object handle(String method, String path, Map<String, String> query, Map<String, Object> body)
             throws QueryService.Rejected {
+        if (engine.failed()) {
+            // Its memory may hold writes the disk does not: peers must not copy them.
+            throw new QueryService.Rejected(503, "this node's write-ahead log failed to fsync; it serves nothing until restarted");
+        }
         if (stale && !path.equals("/internal/hello")) {
             // Its rows may include ones the cluster deleted and has since forgotten the tombstones of.
             throw new QueryService.Rejected(503, "this node is out of date: it must be emptied and resynced");
@@ -731,7 +805,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     throw new QueryService.Rejected(400, "db is required");
                 }
                 // A 2.0 route, so only ops a 2.0 node can read (no index ops).
-                List<Op> ops = Op.legacyOnly(engine.read(s -> s.toOps(db)));
+                List<Op> ops = engine.read(s -> s.legacyOps(db));
                 return Map.of("ops", Op.toJson(ops));
             }
             case "/internal/apply" -> {

@@ -88,6 +88,7 @@ public final class Snapshot {
         md.update((line + "\n").getBytes(StandardCharsets.UTF_8));
         List<Op> ops = new java.util.ArrayList<>();
         long lineNo = 1;
+        long skipped = 0;
         while ((line = r.readLine()) != null) {
             lineNo++;
             Map<String, Object> m;
@@ -97,8 +98,8 @@ public final class Snapshot {
                 throw new IOException("snapshot line " + lineNo + ": " + e.getMessage(), e);
             }
             if (Boolean.TRUE.equals(m.get("end"))) {
-                if (!Long.valueOf(ops.size()).equals(m.get("ops"))) {
-                    throw new IOException("snapshot trailer says " + m.get("ops") + " ops, read " + ops.size());
+                if (!Long.valueOf(ops.size() + skipped).equals(m.get("ops"))) {
+                    throw new IOException("snapshot trailer says " + m.get("ops") + " ops, read " + (ops.size() + skipped));
                 }
                 Object sum = m.get("sha256");
                 if (sum == null && requireChecksum) {
@@ -116,6 +117,8 @@ public final class Snapshot {
                 Op op = Op.fromJson(m);
                 if (op != null) {
                     ops.add(op);
+                } else {
+                    skipped++; // a kind from a newer version: it still counts toward the trailer
                 }
             } catch (RuntimeException e) {
                 throw new IOException("snapshot line " + lineNo + ": " + e.getMessage(), e);

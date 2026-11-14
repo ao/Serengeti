@@ -59,10 +59,17 @@ class IndexProperties {
             for (String op : OPS) {
                 for (Object lit : column.equals("_id") ? List.<Object>of("1", "2", "0", "9", 1L) : VALUES) {
                     SortedSet<String> got = s.indexLookup("a", "t", column, op, lit);
+                    List<String> streamed = new ArrayList<>();
+                    boolean used = s.forEachIndexed("a", "t", column, op, lit, (id, row) -> streamed.add(id));
                     if (got == null) {
-                        continue; // no index on c right now: the executor scans
+                        assertEquals(false, used, "no index, so the executor scans");
+                        assertEquals(-1L, s.indexEstimate("a", "t", column, op, lit));
+                        continue;
                     }
                     assertEquals(scan(s, column, op, lit), got, column + " " + op + " " + lit);
+                    assertEquals(true, used);
+                    assertEquals(new ArrayList<>(got), streamed, "streamed in id order: " + column + " " + op + " " + lit);
+                    assertEquals(true, s.indexEstimate("a", "t", column, op, lit) >= got.size(), "estimate is an upper bound");
                 }
             }
         }

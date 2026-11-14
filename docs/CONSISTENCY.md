@@ -52,11 +52,21 @@ one node at a time.
 ## Deletes and how long a node may be away
 
 A delete leaves a tombstone so that an older copy of the row cannot come back from a node that missed the
-delete. Tombstones are kept for `tombstone_ttl_hours` (default 168, one week) and then dropped. A node
-that has not synced with a majority for longer than that might hold rows deleted meanwhile whose
-tombstones are already gone, so it refuses to start, and a running node that crosses the limit stops
-syncing and taking writes. To bring it back, stop it, empty its data directory except `users.json` and
-`node-id`, and start it; it resyncs from its peers. The time of its last sync is kept in `last-sync`.
+delete. Tombstones are kept for `tombstone_ttl_hours` (default 168, one week) and then dropped, but only
+on a node whose every peer has synced with it by buckets since it started: a 2.0 node, or one not heard
+from yet (down, or restored from a backup), could otherwise bring a deleted row back.
+
+A node that has not synced with a majority for longer than the TTL might hold rows deleted meanwhile whose
+tombstones are already gone. It starts, or carries on, as stale: it neither syncs nor takes writes, and
+its own data is not served to peers. It does hand on, once to each peer, the changes stamped after its
+last sync with a majority, which are newer than any tombstone the cluster can have dropped, so writes it
+acknowledged with `"ack": "local"` while cut off are not lost. Then stop it, empty its data directory
+except `users.json` and `node-id`, and start it; it resyncs from its peers. The time of its last sync is
+kept in `last-sync`; `serengeti restore` sets it to the backup's newest change, so a node restored from
+a backup older than the TTL starts stale too.
+
+2.0 does not write `last-sync`. After running a node on 2.0 for longer than the TTL (a rollback), delete
+its `last-sync` before starting it on 2.1 again: the other nodes did not drop tombstones while it ran 2.0.
 
 ## Conflicts
 
@@ -80,6 +90,10 @@ SHOW CONFLICTS IN shop.items
 The next write to the row resolves the conflict: the node writing it has seen every version, so its
 write replaces all of them. To keep the current value, write it again; to keep another version, write
 that one. A row whose current version is a delete is resolved by inserting its `_id` again.
+
+A version records at most 16 entries. When a row has been written from more nodes than that, the oldest
+entries are folded into one floor ("every write stamped at or before this was seen"), so a write from a
+node that was concurrent and older than the row's last 15 writers would count as superseded.
 
 Merging versions is order-independent, so every node ends up with the same versions; a property test
 checks this against the true causal history of random writes and syncs on three replicas

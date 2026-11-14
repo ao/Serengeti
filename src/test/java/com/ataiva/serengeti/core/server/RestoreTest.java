@@ -52,6 +52,12 @@ class RestoreTest {
             assertEquals("bolt", e.read(s -> s.row("d", "t", "a")).get("name"));
             assertEquals("nut", e.read(s -> s.row("d", "t", "b")).get("name"));
         }
+        long newest = 0;
+        for (com.ataiva.serengeti.core.storage.Op op : OPS) {
+            newest = Math.max(newest, op.stamp().wall());
+        }
+        assertEquals(newest + "\n", Files.readString(data.resolve(com.ataiva.serengeti.core.cluster.Cluster.LAST_SYNC_FILE)),
+                "the backup's newest change counts as the last sync, so a stale backup cannot rejoin a cluster as fresh");
     }
 
     @Test

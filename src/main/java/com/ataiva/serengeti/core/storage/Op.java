@@ -105,8 +105,11 @@ public sealed interface Op {
         }
     }
 
-    /** The most entries a causal context may have: one per node of a 7-node cluster, "~", and spare. */
+    /** The most entries a causal context may have, its floor included. */
     int MAX_SEEN = 16;
+
+    /** The context key for a floor: every write stamped at or below it, from any node, counts as seen. */
+    String FLOOR = "*";
 
     static Map<String, Object> toJson(Op op) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -170,7 +173,7 @@ public sealed interface Op {
                 throw new IllegalArgumentException("'seen' values must be stamps");
             }
             Stamp st = Stamp.parse(s);
-            if (!e.getKey().equals("~") && !e.getKey().equals(st.node())) {
+            if (!e.getKey().equals("~") && !e.getKey().equals(FLOOR) && !e.getKey().equals(st.node())) {
                 throw new IllegalArgumentException("'seen' entry " + e.getKey() + " names another node's stamp");
             }
             out.put(e.getKey(), st);

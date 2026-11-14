@@ -24,8 +24,12 @@ GitHub release notes and tags.
   still open the data directory after a rollback. See docs/QUERY.md, "Indexes".
 - `tests/upgrade/run.sh`, run in CI: a 2.0.0 node's data opened by this build, and a 3-node 2.0.0 cluster
   upgraded one node at a time under writes.
-- Tombstones are dropped after `tombstone_ttl_hours` (default 168). A cluster node that has not synced
-  with a majority for longer than that refuses to start or keep syncing, so deleted rows cannot come back.
+- Tombstones are dropped after `tombstone_ttl_hours` (default 168), and only once every peer has synced
+  with the node by buckets since it started, so a 2.0 node or a node restored from a backup cannot bring a
+  deleted row back (`serengeti restore` records the backup's newest change in `last-sync`). A cluster node
+  that has not synced with a majority for longer than the TTL is stale: it neither syncs nor takes writes,
+  but hands on, once to each peer, the changes stamped after its last majority sync, so writes it
+  acknowledged while cut off are not lost.
 
 ### Fixed
 - A peer that does not answer no longer makes the others look unreachable. Each sync round waited for
@@ -36,6 +40,8 @@ GitHub release notes and tags.
   the log there, dropping that record and every one after it; such a record now stops the node from
   starting and nothing is discarded. Ops of a kind this version does not know (from a newer version, on
   the wire or in files after a downgrade) are skipped instead of failing the whole batch.
+- After a failed fsync the node serves nothing from its data (queries, peers, `/ready`) until it is
+  restarted: a write applied in memory may not be on disk. 2.0 kept serving.
 
 ### Changed
 - Sync compares one hash per table, then per-bucket sums, and pulls only the rows that differ. 2.0

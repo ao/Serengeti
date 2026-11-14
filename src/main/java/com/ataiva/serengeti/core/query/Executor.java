@@ -265,28 +265,23 @@ public final class Executor {
      */
     private static void scan(Store store, String db, String table, Expr where,
             java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
-        java.util.SortedSet<String> ids = candidates(store, db, table, where);
-        if (ids == null) {
+        Expr.Compare via = cheapestIndexedTerm(store, db, table, where);
+        if (via == null || !store.forEachIndexed(db, table, via.column(), via.op().symbol(), via.value(), visitor)) {
             store.forEachRow(db, table, visitor);
-            return;
-        }
-        for (String id : ids) {
-            Map<String, Object> row = store.row(db, table, id);
-            if (row != null) {
-                visitor.accept(id, row);
-            }
         }
     }
 
-    /** The smallest candidate set any indexed term of {@code where} gives, or null to scan. */
-    static java.util.SortedSet<String> candidates(Store store, String db, String table, Expr where) {
+    /** The term of {@code where} (itself, or one of a top-level AND) whose index visits the fewest rows. */
+    static Expr.Compare cheapestIndexedTerm(Store store, String db, String table, Expr where) {
         List<Expr> terms = where instanceof Expr.And a ? a.terms() : where == null ? List.of() : List.of(where);
-        java.util.SortedSet<String> best = null;
+        Expr.Compare best = null;
+        long bestCount = Long.MAX_VALUE;
         for (Expr t : terms) {
             if (t instanceof Expr.Compare c && c.op() != Expr.Cmp.NE) {
-                java.util.SortedSet<String> ids = store.indexLookup(db, table, c.column(), c.op().symbol(), c.value());
-                if (ids != null && (best == null || ids.size() < best.size())) {
-                    best = ids;
+                long n = store.indexEstimate(db, table, c.column(), c.op().symbol(), c.value());
+                if (n >= 0 && n < bestCount) {
+                    best = c;
+                    bestCount = n;
                 }
             }
         }

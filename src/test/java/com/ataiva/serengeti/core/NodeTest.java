@@ -113,6 +113,29 @@ class NodeTest {
     }
 
     @Test
+    void afterAFailedFsyncTheNodeServesNothingFromItsDataUntilRestarted() throws Exception {
+        Path data = tmp.resolve("data");
+        Config c = config(data, "SERENGETI_ADMIN_PASSWORD", PW);
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+            assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
+            assertEquals(200, get(n, "/ready", null).statusCode());
+            n.storageForTest().failNextFsyncForTest(new java.io.IOException("injected EIO"));
+            HttpResponse<String> w = query(n, "INSERT INTO shop.items (_id) VALUES ('lost')");
+            assertTrue(w.statusCode() >= 500, w.statusCode() + " " + w.body());
+            // The insert is in memory but maybe not on disk: nobody may read it now.
+            HttpResponse<String> r = query(n, "SELECT _id FROM shop.items");
+            assertEquals(503, r.statusCode(), r.body());
+            assertTrue(r.body().contains("restart"), r.body());
+            assertEquals(503, get(n, "/ready", null).statusCode());
+            assertEquals(200, get(n, "/health", null).statusCode(), "the process is alive; it needs a restart");
+        }
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertEquals(200, query(n, "SELECT _id FROM shop.items").statusCode(), "a restart recovers from disk");
+        }
+    }
+
+    @Test
     void queriesOverHttpAreDurableAcrossARestart() throws Exception {
         Path data = tmp.resolve("data");
         Config c = config(data, "SERENGETI_ADMIN_PASSWORD", PW);
