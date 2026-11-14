@@ -23,6 +23,38 @@ public sealed interface Op {
 
     record DropTable(String db, String table, Stamp stamp) implements Op {}
 
+    /** Creates a secondary index on one column of a table. Indexes are derived from the rows; only this is replicated. */
+    record CreateIndex(String db, String table, String column, Stamp stamp) implements Op {}
+
+    record DropIndex(String db, String table, String column, Stamp stamp) implements Op {}
+
+    /** True for ops a 2.0 node can read: everything but the index ops added in 2.2. */
+    static boolean legacy(Op op) {
+        return !(op instanceof CreateIndex || op instanceof DropIndex);
+    }
+
+    /** The index ops of {@code ops}. */
+    static List<Op> indexOnly(List<Op> ops) {
+        List<Op> out = new ArrayList<>();
+        for (Op op : ops) {
+            if (!legacy(op)) {
+                out.add(op);
+            }
+        }
+        return out;
+    }
+
+    /** The ops of {@code ops} that a 2.0 node can read. */
+    static List<Op> legacyOnly(List<Op> ops) {
+        List<Op> out = new ArrayList<>(ops.size());
+        for (Op op : ops) {
+            if (legacy(op)) {
+                out.add(op);
+            }
+        }
+        return out;
+    }
+
     /**
      * A row write: {@link Put} or {@link Delete}. {@code seen} is its causal context: for each node, the newest
      * stamp of that node's writes to this row that the writer had seen, plus {@code "~"} for writes from
@@ -88,6 +120,14 @@ public sealed interface Op {
         } else if (op instanceof DropTable o) {
             m.put("op", "drop_table");
             m.put("table", o.table());
+        } else if (op instanceof CreateIndex o) {
+            m.put("op", "create_index");
+            m.put("table", o.table());
+            m.put("column", o.column());
+        } else if (op instanceof DropIndex o) {
+            m.put("op", "drop_index");
+            m.put("table", o.table());
+            m.put("column", o.column());
         } else if (op instanceof Put o) {
             m.put("op", "put");
             m.put("table", o.table());
@@ -153,6 +193,10 @@ public sealed interface Op {
                 return new CreateTable(db, str(m, "table"), at);
             case "drop_table":
                 return new DropTable(db, str(m, "table"), at);
+            case "create_index":
+                return new CreateIndex(db, str(m, "table"), str(m, "column"), at);
+            case "drop_index":
+                return new DropIndex(db, str(m, "table"), str(m, "column"), at);
             case "put":
                 Object row = m.get("row");
                 if (!(row instanceof Map)) {

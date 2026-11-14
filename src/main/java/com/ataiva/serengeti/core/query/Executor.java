@@ -108,6 +108,39 @@ public final class Executor {
                 return one(new Op.CreateTable(c.db(), c.table(), stamp(store)));
             });
         }
+        if (s instanceof Statement.CreateIndex c) {
+            return engine.update(store -> {
+                requireTable(store, c.db(), c.table());
+                if (c.column().equals(ID)) {
+                    throw new QueryException("_id needs no index: lookups by _id never scan");
+                }
+                if (store.indexExists(c.db(), c.table(), c.column())) {
+                    if (c.ifNotExists()) {
+                        return none();
+                    }
+                    throw new QueryException("'" + c.db() + "." + c.table() + "' already has an index on " + c.column());
+                }
+                return one(new Op.CreateIndex(c.db(), c.table(), c.column(), stamp(store)));
+            });
+        }
+        if (s instanceof Statement.DropIndex d) {
+            return engine.update(store -> {
+                requireTable(store, d.db(), d.table());
+                if (!store.indexExists(d.db(), d.table(), d.column())) {
+                    if (d.ifExists()) {
+                        return none();
+                    }
+                    throw new QueryException("'" + d.db() + "." + d.table() + "' has no index on " + d.column());
+                }
+                return one(new Op.DropIndex(d.db(), d.table(), d.column(), stamp(store)));
+            });
+        }
+        if (s instanceof Statement.ShowIndexes i) {
+            return engine.read(store -> {
+                requireTable(store, i.db(), i.table());
+                return names("column", store.indexes(i.db(), i.table()));
+            });
+        }
         if (s instanceof Statement.DropTable d) {
             return engine.update(store -> {
                 if (!store.tableExists(d.db(), d.table())) {
@@ -174,7 +207,7 @@ public final class Executor {
         }
         List<Op> ops = new ArrayList<>();
         Stamp at = stamp(store);
-        store.forEachRow(u.db(), u.table(), (id, row) -> {
+        scan(store, u.db(), u.table(), u.where(), (id, row) -> {
             if (matches(u.where(), id, row)) {
                 Map<String, Object> changed = new LinkedHashMap<>(row);
                 for (Statement.Assignment a : u.assignments()) {
@@ -217,12 +250,47 @@ public final class Executor {
         requireTable(store, d.db(), d.table());
         List<Op> ops = new ArrayList<>();
         Stamp at = stamp(store);
-        store.forEachRow(d.db(), d.table(), (id, row) -> {
+        scan(store, d.db(), d.table(), d.where(), (id, row) -> {
             if (matches(d.where(), id, row)) {
                 ops.add(new Op.Delete(d.db(), d.table(), id, at));
             }
         });
         return new StorageEngine.Planned<>(ops, new Result.Write(ops.size()));
+    }
+
+    /**
+     * Visits, in _id order, the live rows that may match {@code where}: through an index when one term of
+     * it (the whole condition, or one term of a top-level AND) compares an indexed column or _id with a
+     * value, else every row. Visitors still check the whole condition, so the choice changes only speed.
+     */
+    private static void scan(Store store, String db, String table, Expr where,
+            java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
+        java.util.SortedSet<String> ids = candidates(store, db, table, where);
+        if (ids == null) {
+            store.forEachRow(db, table, visitor);
+            return;
+        }
+        for (String id : ids) {
+            Map<String, Object> row = store.row(db, table, id);
+            if (row != null) {
+                visitor.accept(id, row);
+            }
+        }
+    }
+
+    /** The smallest candidate set any indexed term of {@code where} gives, or null to scan. */
+    static java.util.SortedSet<String> candidates(Store store, String db, String table, Expr where) {
+        List<Expr> terms = where instanceof Expr.And a ? a.terms() : where == null ? List.of() : List.of(where);
+        java.util.SortedSet<String> best = null;
+        for (Expr t : terms) {
+            if (t instanceof Expr.Compare c && c.op() != Expr.Cmp.NE) {
+                java.util.SortedSet<String> ids = store.indexLookup(db, table, c.column(), c.op().symbol(), c.value());
+                if (ids != null && (best == null || ids.size() < best.size())) {
+                    best = ids;
+                }
+            }
+        }
+        return best;
     }
 
     private record Match(String id, Map<String, Object> row) {}
@@ -231,7 +299,7 @@ public final class Executor {
         requireTable(store, q.db(), q.table());
         if (q.projection() instanceof Statement.Projection.Count) {
             long[] n = {0};
-            store.forEachRow(q.db(), q.table(), (id, row) -> {
+            scan(store, q.db(), q.table(), q.where(), (id, row) -> {
                 if (matches(q.where(), id, row)) {
                     n[0]++;
                 }
@@ -245,7 +313,7 @@ public final class Executor {
         // Without ORDER BY rows come in _id order, so one past the cap is enough to know about truncation.
         long keep = q.orderBy() == null ? cap + 1 : Long.MAX_VALUE;
         List<Match> found = new ArrayList<>();
-        store.forEachRow(q.db(), q.table(), (id, row) -> {
+        scan(store, q.db(), q.table(), q.where(), (id, row) -> {
             if (found.size() < keep && matches(q.where(), id, row)) {
                 found.add(new Match(id, row));
             }

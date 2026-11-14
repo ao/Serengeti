@@ -345,4 +345,71 @@ class ExecutorTest {
         assertEquals(List.of(2L), column("SELECT qty FROM shop.items", "qty"));
         assertEquals(List.of(), rows("SHOW CONFLICTS IN shop.items").rows());
     }
+
+    @Test
+    void indexesChangeNoResultOnlyHowRowsAreFound() throws IOException {
+        run("CREATE DATABASE shop");
+        run("CREATE TABLE shop.items");
+        StringBuilder values = new StringBuilder();
+        for (int i = 0; i < 200; i++) {
+            String qty = i % 7 == 0 ? "'" + i + "'" : i % 11 == 0 ? "null" : i % 5 == 0 ? (i + 0.5) + "" : i + "";
+            values.append(i == 0 ? "" : ", ").append("('r").append(1000 + i).append("', ").append(qty)
+                    .append(", ").append(i % 3).append(")");
+        }
+        run("INSERT INTO shop.items (_id, qty, kind) VALUES " + values);
+        List<String> queries = List.of(
+                "SELECT _id FROM shop.items WHERE qty = 10",
+                "SELECT _id FROM shop.items WHERE qty = 10.0",
+                "SELECT _id FROM shop.items WHERE qty < 20",
+                "SELECT _id FROM shop.items WHERE qty >= 190.5",
+                "SELECT _id FROM shop.items WHERE qty > '15'",
+                "SELECT _id FROM shop.items WHERE qty <= 50 AND kind = 1",
+                "SELECT _id FROM shop.items WHERE kind = 2 AND qty > 100 ORDER BY qty DESC LIMIT 5",
+                "SELECT COUNT(*) FROM shop.items WHERE qty > 30",
+                "SELECT _id FROM shop.items WHERE qty != 10 AND qty < 13",
+                "SELECT _id FROM shop.items WHERE _id = 'r1005'",
+                "SELECT _id FROM shop.items WHERE _id > 'r1195'",
+                "SELECT _id FROM shop.items WHERE qty = true OR qty = 3");
+        List<Object> before = new ArrayList<>();
+        for (String q : queries) {
+            before.add(rows(q).rows());
+        }
+        assertEquals(1, affected("CREATE INDEX ON shop.items (qty)"));
+        assertEquals(0, affected("CREATE INDEX IF NOT EXISTS ON shop.items (qty)"));
+        assertEquals("'shop.items' already has an index on qty", fails("CREATE INDEX ON shop.items (qty)").getMessage());
+        assertEquals(List.of(List.of("qty")), rows("SHOW INDEXES IN shop.items").rows());
+        for (int i = 0; i < queries.size(); i++) {
+            assertEquals(before.get(i), rows(queries.get(i)).rows(), queries.get(i));
+        }
+        // Writes keep the index in step.
+        assertEquals(1, affected("UPDATE shop.items SET qty = 10 WHERE _id = 'r1003'"));
+        assertEquals(1, affected("DELETE FROM shop.items WHERE _id = 'r1010'"));
+        assertEquals(List.of(List.of("r1003")), rows("SELECT _id FROM shop.items WHERE qty = 10").rows());
+        assertEquals(List.of(List.of("r1000")), rows("SELECT _id FROM shop.items WHERE qty = '0'").rows());
+        assertEquals(1, affected("DROP INDEX ON shop.items (qty)"));
+        assertEquals(0, affected("DROP INDEX IF EXISTS ON shop.items (qty)"));
+        assertEquals("'shop.items' has no index on qty", fails("DROP INDEX ON shop.items (qty)").getMessage());
+        assertEquals(List.of(), rows("SHOW INDEXES IN shop.items").rows());
+        assertEquals(List.of(List.of("r1003")), rows("SELECT _id FROM shop.items WHERE qty = 10").rows());
+        assertEquals("_id needs no index: lookups by _id never scan", fails("CREATE INDEX ON shop.items (_id)").getMessage());
+        assertEquals("table 'shop.nope' does not exist", fails("CREATE INDEX ON shop.nope (qty)").getMessage());
+    }
+
+    @Test
+    void anIndexSurvivesARestartAndADroppedTableTakesItsIndexes() throws IOException {
+        run("CREATE DATABASE shop");
+        run("CREATE TABLE shop.items");
+        run("INSERT INTO shop.items (_id, qty) VALUES ('a', 1), ('b', 2)");
+        run("CREATE INDEX ON shop.items (qty)");
+        engine.checkpoint();
+        run("INSERT INTO shop.items (_id, qty) VALUES ('c', 2)");
+        engine.close();
+        engine = StorageEngine.open(dir, FsyncPolicy.ALWAYS);
+        query = new Query(engine, new Hlc("n1"));
+        assertEquals(List.of(List.of("qty")), rows("SHOW INDEXES IN shop.items").rows());
+        assertEquals(List.of(List.of("b"), List.of("c")), rows("SELECT _id FROM shop.items WHERE qty = 2").rows());
+        run("DROP TABLE shop.items");
+        run("CREATE TABLE shop.items");
+        assertEquals(List.of(), rows("SHOW INDEXES IN shop.items").rows());
+    }
 }

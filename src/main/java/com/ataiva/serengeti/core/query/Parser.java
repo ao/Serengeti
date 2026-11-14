@@ -68,7 +68,12 @@ public final class Parser {
             String[] q = qualifiedName();
             return new Statement.CreateTable(q[0], q[1], ifNotExists);
         }
-        throw expected("DATABASE or TABLE");
+        if (acceptWord("index")) {
+            boolean ifNotExists = ifNotExists();
+            String[] t = indexTarget();
+            return new Statement.CreateIndex(t[0], t[1], t[2], ifNotExists);
+        }
+        throw expected("DATABASE, TABLE or INDEX");
     }
 
     private Statement drop() {
@@ -81,7 +86,12 @@ public final class Parser {
             String[] q = qualifiedName();
             return new Statement.DropTable(q[0], q[1], ifExists);
         }
-        throw expected("DATABASE or TABLE");
+        if (acceptWord("index")) {
+            boolean ifExists = ifExists();
+            String[] t = indexTarget();
+            return new Statement.DropIndex(t[0], t[1], t[2], ifExists);
+        }
+        throw expected("DATABASE, TABLE or INDEX");
     }
 
     private boolean ifNotExists() {
@@ -109,6 +119,11 @@ public final class Parser {
             expectKeyword("in");
             return new Statement.ShowTables(name());
         }
+        if (acceptWord("indexes")) {
+            expectKeyword("in");
+            String[] q = qualifiedName();
+            return new Statement.ShowIndexes(q[0], q[1]);
+        }
         // CONFLICTS is not a reserved word, so tables and columns may still be called that.
         if (tok.kind() == Token.Kind.NAME && tok.text().equalsIgnoreCase("conflicts")) {
             advance();
@@ -116,7 +131,28 @@ public final class Parser {
             String[] q = qualifiedName();
             return new Statement.ShowConflicts(q[0], q[1]);
         }
-        throw expected("DATABASES, TABLES or CONFLICTS");
+        throw expected("DATABASES, TABLES, INDEXES or CONFLICTS");
+    }
+
+    /** {@code ON db.table (column)} after CREATE INDEX or DROP INDEX: database, table and column. */
+    private String[] indexTarget() {
+        if (!acceptWord("on")) {
+            throw expected("ON");
+        }
+        String[] q = qualifiedName();
+        expectSymbol("(");
+        String column = name();
+        expectSymbol(")");
+        return new String[] {q[0], q[1], column};
+    }
+
+    /** Accepts a word that is not reserved (INDEX, ON, INDEXES), so names may still use it. */
+    private boolean acceptWord(String w) {
+        if (tok.kind() == Token.Kind.NAME && tok.text().equalsIgnoreCase(w)) {
+            advance();
+            return true;
+        }
+        return false;
     }
 
     private Statement insert() {

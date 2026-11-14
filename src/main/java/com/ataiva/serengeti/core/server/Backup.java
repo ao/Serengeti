@@ -68,14 +68,19 @@ public final class Backup {
         } catch (IOException | RuntimeException e) {
             throw new IOException("backup " + file + " is not valid, nothing was written: " + e.getMessage(), e);
         }
-        for (String name : List.of(StorageEngine.WAL_FILE, StorageEngine.SNAPSHOT_FILE)) {
+        for (String name : List.of(StorageEngine.WAL_FILE, StorageEngine.SNAPSHOT_FILE, StorageEngine.INDEX_FILE)) {
             if (Files.exists(dataDir.resolve(name))) {
                 throw new IOException(dataDir.toAbsolutePath() + " already holds " + name
                         + "; restore needs an empty data directory");
             }
         }
         Files.createDirectories(dataDir);
-        Snapshot.writeAtomically(ops, dataDir.resolve(StorageEngine.SNAPSHOT_FILE));
+        // Index definitions go to their own file, as the engine keeps them (see StorageEngine.INDEX_FILE).
+        List<Op> indexes = Op.indexOnly(ops);
+        if (!indexes.isEmpty()) {
+            Snapshot.writeAtomically(indexes, dataDir.resolve(StorageEngine.INDEX_FILE));
+        }
+        Snapshot.writeAtomically(Op.legacyOnly(ops), dataDir.resolve(StorageEngine.SNAPSHOT_FILE));
         return ops.size();
     }
 }

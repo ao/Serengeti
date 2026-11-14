@@ -44,23 +44,46 @@ public final class Store {
             return created.after(dropped);
         }
 
+        /** Indexes by column, dropped ones included (their stamps still replicate). */
+        final TreeMap<String, IndexState> indexes = new TreeMap<>();
+
+        IndexState index(String column) {
+            return indexes.computeIfAbsent(column, c -> new IndexState(c, dropped));
+        }
+
         void drop(Stamp at) {
             if (at.after(dropped)) {
                 dropped = at;
-                var it = rows.entrySet().iterator();
-                while (it.hasNext()) {
-                    var e = it.next();
-                    RowState r = e.getValue();
+                for (IndexState ix : indexes.values()) {
+                    ix.setDropped(at, rows);
+                }
+                for (String id : new ArrayList<>(rows.keySet())) {
+                    RowState r = rows.get(id);
                     RowState kept = r.newerThan(at);
-                    if (kept == r) {
-                        continue;
+                    if (kept != r) {
+                        replace(id, r, kept);
                     }
-                    unaccount(e.getKey(), r);
-                    if (kept == null) {
-                        it.remove();
-                    } else {
-                        account(e.getKey(), kept);
-                        e.setValue(kept);
+                }
+            }
+        }
+
+        /** Replaces a row's state ({@code next} null removes it), keeping bucket sums and indexes in step. */
+        void replace(String id, RowState old, RowState next) {
+            if (old != null) {
+                unaccount(id, old);
+            }
+            if (next == null) {
+                rows.remove(id);
+            } else {
+                account(id, next);
+                rows.put(id, next);
+            }
+            Map<String, Object> was = old == null ? null : old.winner().value();
+            Map<String, Object> now = next == null ? null : next.winner().value();
+            if (was != now) {
+                for (IndexState ix : indexes.values()) {
+                    if (ix.exists()) {
+                        ix.move(id, was, now);
                     }
                 }
             }
@@ -114,6 +137,103 @@ public final class Store {
             throw new IllegalStateException(e);
         }
     });
+
+    /**
+     * A secondary index on one column: for each boolean, number and string value, the ids of the rows whose
+     * current value holds it. Like a table it exists while its newest create is newer than its newest drop
+     * (or its table's); its entries are rebuilt from the rows when it comes into existence, and only its
+     * create and drop stamps replicate.
+     */
+    private static final class IndexState {
+        final String column;
+        Stamp created = Stamp.ZERO;
+        Stamp dropped;
+        final TreeMap<Boolean, java.util.TreeSet<String>> bools = new TreeMap<>();
+        final TreeMap<Number, java.util.TreeSet<String>> numbers = new TreeMap<>(ScalarOrder::compareNumbers);
+        final TreeMap<String, java.util.TreeSet<String>> strings = new TreeMap<>();
+
+        IndexState(String column, Stamp dropped) {
+            this.column = column;
+            this.dropped = dropped;
+        }
+
+        boolean exists() {
+            return created.after(dropped);
+        }
+
+        void setCreated(Stamp at, Map<String, RowState> rows) {
+            boolean was = exists();
+            created = Stamp.max(created, at);
+            if (!was && exists()) {
+                rows.forEach((id, r) -> add(id, r.winner().value()));
+            }
+        }
+
+        void setDropped(Stamp at, Map<String, RowState> rows) {
+            boolean was = exists();
+            dropped = Stamp.max(dropped, at);
+            if (was && !exists()) {
+                bools.clear();
+                numbers.clear();
+                strings.clear();
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        <K> TreeMap<K, java.util.TreeSet<String>> mapFor(Object v) {
+            return (TreeMap<K, java.util.TreeSet<String>>) (v instanceof Boolean ? bools
+                    : v instanceof Number ? numbers : v instanceof String ? strings : null);
+        }
+
+        void add(String id, Map<String, Object> row) {
+            Object v = row == null ? null : row.get(column);
+            TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
+            if (m != null) {
+                m.computeIfAbsent(v, k -> new java.util.TreeSet<>()).add(id);
+            }
+        }
+
+        void remove(String id, Map<String, Object> row) {
+            Object v = row == null ? null : row.get(column);
+            TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
+            if (m == null) {
+                return;
+            }
+            java.util.TreeSet<String> ids = m.get(v);
+            if (ids != null && ids.remove(id) && ids.isEmpty()) {
+                m.remove(v);
+            }
+        }
+
+        void move(String id, Map<String, Object> was, Map<String, Object> now) {
+            remove(id, was);
+            add(id, now);
+        }
+
+        /** The ids whose value compares to {@code v} by {@code op} ("=", "<", "<=", ">", ">="), in id order. */
+        java.util.SortedSet<String> lookup(String op, Object v) {
+            java.util.TreeSet<String> out = new java.util.TreeSet<>();
+            TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
+            if (m == null) {
+                return out; // a comparison with null, or with a value of no indexed type, is never true
+            }
+            java.util.Collection<java.util.TreeSet<String>> sets = switch (op) {
+                case "=" -> {
+                    java.util.TreeSet<String> s = m.get(v);
+                    yield s == null ? List.of() : List.of(s);
+                }
+                case "<" -> m.headMap(v, false).values();
+                case "<=" -> m.headMap(v, true).values();
+                case ">" -> m.tailMap(v, false).values();
+                case ">=" -> m.tailMap(v, true).values();
+                default -> throw new IllegalArgumentException("no index lookup for " + op);
+            };
+            for (java.util.TreeSet<String> s : sets) {
+                out.addAll(s);
+            }
+            return out;
+        }
+    }
 
     private static final class DbState {
         Stamp created = Stamp.ZERO;
@@ -278,6 +398,12 @@ public final class Store {
             t.created = Stamp.max(t.created, o.stamp());
         } else if (op instanceof Op.DropTable o) {
             d.table(o.table()).drop(o.stamp());
+        } else if (op instanceof Op.CreateIndex o) {
+            TableState t = d.table(o.table());
+            t.index(o.column()).setCreated(o.stamp(), t.rows);
+        } else if (op instanceof Op.DropIndex o) {
+            TableState t = d.table(o.table());
+            t.index(o.column()).setDropped(o.stamp(), t.rows);
         } else if (op instanceof Op.RowOp o) {
             putRow(d.table(o.table()), o.id(), Version.of(o));
         }
@@ -296,11 +422,7 @@ public final class Store {
         RowState r = t.rows.get(id);
         RowState next = r == null ? new RowState(List.of(in)) : r.with(in);
         if (next != r) {
-            if (r != null) {
-                t.unaccount(id, r);
-            }
-            t.account(id, next);
-            t.rows.put(id, next);
+            t.replace(id, r, next);
         }
     }
 
@@ -347,6 +469,8 @@ public final class Store {
         for (Op op : schemaOps(db)) {
             String key = op instanceof Op.CreateTable o ? "ct\u0000" + o.table()
                     : op instanceof Op.DropTable o ? "dt\u0000" + o.table()
+                    : op instanceof Op.CreateIndex o ? "ci\u0000" + o.table() + "\u0000" + o.column()
+                    : op instanceof Op.DropIndex o ? "di\u0000" + o.table() + "\u0000" + o.column()
                     : op instanceof Op.CreateDb ? "cd" : "dd";
             h += rowHash(key, op.stamp());
         }
@@ -396,8 +520,20 @@ public final class Store {
             if (t.dropped.after(d.dropped)) {
                 out.add(new Op.DropTable(db, name, t.dropped));
             }
+            indexOps(db, name, t, out);
         });
         return out;
+    }
+
+    private static void indexOps(String db, String table, TableState t, List<Op> out) {
+        t.indexes.forEach((column, ix) -> {
+            if (ix.created.after(Stamp.ZERO)) {
+                out.add(new Op.CreateIndex(db, table, column, ix.created));
+            }
+            if (ix.dropped.after(t.dropped)) {
+                out.add(new Op.DropIndex(db, table, column, ix.dropped));
+            }
+        });
     }
 
     /** The rows (values and tombstones) of the given buckets of a table, as ops. */
@@ -469,10 +605,19 @@ public final class Store {
         }
         String table = op instanceof Op.CreateTable o ? o.table()
                 : op instanceof Op.DropTable o ? o.table()
-                : op instanceof Op.Put o ? o.table()
-                : ((Op.Delete) op).table();
+                : op instanceof Op.CreateIndex o ? o.table()
+                : op instanceof Op.DropIndex o ? o.table()
+                : ((Op.RowOp) op).table();
         TableState t = d == null ? null : d.tables.get(table);
         Stamp dropped = t != null ? t.dropped : d != null ? d.dropped : Stamp.ZERO;
+        if (op instanceof Op.CreateIndex o) {
+            IndexState ix = t == null ? null : t.indexes.get(o.column());
+            return ix == null || o.stamp().after(ix.created);
+        }
+        if (op instanceof Op.DropIndex o) {
+            IndexState ix = t == null ? null : t.indexes.get(o.column());
+            return o.stamp().after(ix != null ? ix.dropped : dropped);
+        }
         if (op instanceof Op.CreateTable o) {
             return t == null || o.stamp().after(t.created);
         }
@@ -565,6 +710,58 @@ public final class Store {
         });
     }
 
+    /** The columns of a table that have an index, in name order. */
+    public List<String> indexes(String db, String table) {
+        List<String> out = new ArrayList<>();
+        if (tableExists(db, table)) {
+            dbs.get(db).tables.get(table).indexes.forEach((column, ix) -> {
+                if (ix.exists()) {
+                    out.add(column);
+                }
+            });
+        }
+        return out;
+    }
+
+    public boolean indexExists(String db, String table, String column) {
+        return indexes(db, table).contains(column);
+    }
+
+    /**
+     * The ids, in id order, of the rows whose current value of {@code column} compares to {@code value} by
+     * {@code op} ("=", "<", "<=", ">", ">="), from an index; null when the column has none (scan instead).
+     * {@code _id} always has one. A caller still checks its whole condition on each row: the set is exact
+     * for the one comparison, by the rules of docs/QUERY.md.
+     */
+    public java.util.SortedSet<String> indexLookup(String db, String table, String column, String op, Object value) {
+        if (!tableExists(db, table)) {
+            return null;
+        }
+        TableState t = dbs.get(db).tables.get(table);
+        if (column.equals("_id")) {
+            java.util.TreeSet<String> out = new java.util.TreeSet<>();
+            if (!(value instanceof String v)) {
+                return out; // _id is a string; other types never compare equal or ordered with it
+            }
+            java.util.NavigableMap<String, RowState> range = switch (op) {
+                case "=" -> t.rows.subMap(v, true, v, true);
+                case "<" -> t.rows.headMap(v, false);
+                case "<=" -> t.rows.headMap(v, true);
+                case ">" -> t.rows.tailMap(v, false);
+                case ">=" -> t.rows.tailMap(v, true);
+                default -> throw new IllegalArgumentException("no index lookup for " + op);
+            };
+            range.forEach((id, r) -> {
+                if (r.winner().value() != null) {
+                    out.add(id);
+                }
+            });
+            return out;
+        }
+        IndexState ix = t.indexes.get(column);
+        return ix == null || !ix.exists() ? null : ix.lookup(op, value);
+    }
+
     /** Number of rows, over every table, that hold more than one version; for metrics. */
     public long conflicts() {
         long n = 0;
@@ -618,6 +815,7 @@ public final class Store {
             if (t.dropped.after(d.dropped)) {
                 out.add(new Op.DropTable(db, name, t.dropped));
             }
+            indexOps(db, name, t, out);
             t.rows.forEach((id, r) -> {
                 for (Version v : r.versions()) {
                     out.add(v.toOp(db, name, id));
@@ -643,7 +841,8 @@ public final class Store {
     public String digest(String db) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            for (Op op : toOps(db)) {
+            // What a 2.0 node holds and hashes for the same state: no index ops, no causal contexts.
+            for (Op op : Op.legacyOnly(toOps(db))) {
                 md.update(Json.write(Op.toLegacyJson(op)).getBytes(StandardCharsets.UTF_8));
                 md.update((byte) '\n');
             }

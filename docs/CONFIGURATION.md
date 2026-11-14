@@ -58,6 +58,7 @@ The admin password is only used when there is no account yet. Once `users.json` 
 |---|---|
 | `wal.log` | Write-ahead log: length, CRC32C and JSON per batch. |
 | `snapshot.jsonl` | The state at the last checkpoint. The log is folded into it after 64 MiB. |
+| `indexes.jsonl` | Index definitions, rewritten whenever an index is created or dropped. Kept out of the log so a 2.0 binary can still open the directory. Present once an index has been created. |
 | `users.json` | Accounts as bcrypt hashes (cost 12). Mode 0600; a node refuses to start if others can read it. |
 | `setup-token` | One-time setup token (mode 0600), present only until the first admin password is set. |
 | `node-id` | A random id for this node, kept across restarts. |

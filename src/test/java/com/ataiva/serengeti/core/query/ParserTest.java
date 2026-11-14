@@ -64,6 +64,23 @@ class ParserTest {
     }
 
     @Test
+    void indexStatements() {
+        assertEquals(new Statement.CreateIndex("shop", "items", "qty", false), parse("CREATE INDEX ON shop.items (qty)"));
+        assertEquals(new Statement.CreateIndex("shop", "items", "qty", true),
+                parse("create index if not exists on Shop.Items (QTY);"));
+        assertEquals(new Statement.DropIndex("shop", "items", "qty", false), parse("DROP INDEX ON shop.items (qty)"));
+        assertEquals(new Statement.DropIndex("shop", "items", "qty", true), parse("DROP INDEX IF EXISTS ON shop.items (qty)"));
+        assertEquals(new Statement.ShowIndexes("shop", "items"), parse("SHOW INDEXES IN shop.items"));
+        fails("CREATE INDEX shop.items (qty)");
+        fails("CREATE INDEX ON shop.items qty");
+        fails("CREATE INDEX ON shop.items (qty, kind)");
+        fails("SHOW INDEXES IN shop");
+        // None of index, indexes or on is reserved.
+        assertEquals(new Statement.CreateTable("index", "on", false), parse("CREATE TABLE index.on"));
+        assertEquals(new Statement.CreateIndex("on", "index", "indexes", false), parse("CREATE INDEX ON on.index (indexes)"));
+    }
+
+    @Test
     void insert() {
         Statement s = parse("INSERT INTO shop.items (name, price, ok, note) VALUES ('Tea', 3, true, null), "
                 + "('It''s', -1.5e2, FALSE, 'x')");

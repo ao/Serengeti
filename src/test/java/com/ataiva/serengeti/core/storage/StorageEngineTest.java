@@ -168,4 +168,40 @@ class StorageEngineTest {
             assertEquals(2L, count(e));
         }
     }
+
+    /** Every op in the log and the snapshot, as a 2.0 binary would read them. */
+    private static List<Op> loggedOps(Path dir) throws IOException {
+        List<Op> out = new java.util.ArrayList<>();
+        if (java.nio.file.Files.exists(dir.resolve(StorageEngine.SNAPSHOT_FILE))) {
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(dir.resolve(StorageEngine.SNAPSHOT_FILE))) {
+                out.addAll(Snapshot.read(in));
+            }
+        }
+        try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(dir.resolve(StorageEngine.WAL_FILE))) {
+            Wal.read(ch).batches().forEach(out::addAll);
+        }
+        return out;
+    }
+
+    @Test
+    void indexDefinitionsStayOutOfTheLogAndTheSnapshot() throws IOException {
+        try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS, 4096, 0)) {
+            seed(e, 40);
+            e.update(s -> new StorageEngine.Planned<>(List.of(new Op.CreateIndex("d", "t", "i", at(100))), null));
+            e.merge(List.of(new Op.CreateIndex("d", "t", "j", at(101)),
+                    new Op.Put("d", "t", "late", Map.of("i", (Object) 7L), at(102))));
+            e.apply(List.of(new Op.DropIndex("d", "t", "j", at(103))));
+            e.checkpoint();
+            e.apply(List.of(new Op.Put("d", "t", "after", Map.of("i", (Object) 7L), at(104))));
+        }
+        for (Op op : loggedOps(dir)) {
+            assertTrue(Op.legacy(op), "a 2.0 binary could not read " + op);
+        }
+        try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
+            assertEquals(List.of("i"), e.read(s -> s.indexes("d", "t")));
+            assertEquals(new java.util.TreeSet<>(List.of("after", "late", "r7")),
+                    e.read(s -> s.indexLookup("d", "t", "i", "=", 7L)));
+            assertEquals(42L, count(e));
+        }
+    }
 }

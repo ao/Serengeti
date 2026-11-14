@@ -16,6 +16,12 @@ GitHub release notes and tags.
   before, and `SHOW CONFLICTS IN db.table` lists all versions until the next write to the row resolves
   them. New metric `serengeti_conflicts`. Log and snapshot records gain an optional `seen` field; 2.0
   ignores it, and 2.1 reads 2.0's files and peers.
+- Indexes: `CREATE INDEX ON db.table (column)`, `DROP INDEX ON db.table (column)` and `SHOW INDEXES IN
+  db.table`. A WHERE clause that compares an indexed column with a value (or one term of an AND that does)
+  reads only the matching rows instead of scanning the table; results do not change. `_id` lookups and
+  ranges never scan. Definitions replicate, each node builds its own, and nodes still on 2.0 in a cluster
+  being upgraded are not sent them. They live in `indexes.jsonl`, not in the log, so a 2.0 binary can
+  still open the data directory after a rollback. See docs/QUERY.md, "Indexes".
 - `tests/upgrade/run.sh`, run in CI: a 2.0.0 node's data opened by this build, and a 3-node 2.0.0 cluster
   upgraded one node at a time under writes.
 - Tombstones are dropped after `tombstone_ttl_hours` (default 168). A cluster node that has not synced

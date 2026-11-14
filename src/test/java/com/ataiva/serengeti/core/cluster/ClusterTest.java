@@ -373,6 +373,32 @@ class ClusterTest {
     }
 
     @Test
+    void anIndexCreatedOnOneNodeIsBuiltOnEveryNode() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        waitWritable(0);
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES ('a', 1), ('b', 2), ('c', 2)").statusCode());
+        assertEquals(200, query(1, "CREATE INDEX ON d.t (n)").statusCode());
+        stop(2);
+        start(2); // a node that restarts rebuilds it from its log
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has the index", () -> has(n, "SHOW INDEXES IN d.t", List.of(List.of("n"))));
+            eventually("node " + n + " finds rows through it",
+                    () -> has(n, "SELECT _id FROM d.t WHERE n = 2", List.of(List.of("b"), List.of("c"))));
+        }
+        waitWritable(2);
+        assertEquals(200, query(2, "DROP INDEX ON d.t (n)").statusCode());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " dropped the index", () -> has(n, "SHOW INDEXES IN d.t", List.of()));
+        }
+    }
+
+    @Test
     void localWritesOnNodesThatRanAloneConvergeWhenTheyMeet() throws Exception {
         start(0);
         Thread.sleep(1200);

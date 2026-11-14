@@ -134,6 +134,19 @@ replace 1 "$IMAGE" -
 wait_up 1
 expect "a restart keeps old and new writes" 46 "$(count 1)"
 expect "and the update" 1 "$(count 1 'n = 700')"
+expect "create an index" 200 "$(q 1 'CREATE INDEX ON d.t (n)')"
+expect "a write after it" 200 "$(q 1 "INSERT INTO d.t (_id, n) VALUES ('post-index', 800)")"
+replace 1 "$OLD_IMAGE" -
+wait_up 1
+expect "rolled back to $OLD_IMAGE, every row is still there" 47 "$(count 1)"
+expect "including the one written after the index" 1 "$(count 1 'n = 800')"
+if docker logs "$RUN-n1" 2>&1 | grep -q discarded; then bad "rollback" "$OLD_IMAGE discarded part of its log"
+else ok "$OLD_IMAGE discarded nothing from the log"; fi
+replace 1 "$IMAGE" -
+wait_up 1
+q 1 'SHOW INDEXES IN d.t' >/dev/null
+case "$(body)" in *'"rows":[["n"]]'*) ok "upgraded again, the index is back" ;; *) bad "index after rollback" "$(body)" ;; esac
+expect "and finds rows" 1 "$(count 1 'n = 800')"
 docker rm -f "$RUN-n1" >/dev/null
 docker volume rm "$RUN-data1" >/dev/null
 
@@ -161,6 +174,8 @@ for i in 1 2 3; do
   sleep 3
   if [ "$i" = 1 ]; then
     expect "a write through the upgraded node reaches a majority" 200 "$(q 1 "INSERT INTO d.t (_id, n) VALUES ('mixed-new', 0)")"
+    # 2.0 cannot read index ops: they are kept from its nodes, which still take and pass on writes.
+    expect "CREATE INDEX through the upgraded node while 2.0 nodes remain" 200 "$(q 1 'CREATE INDEX ON d.t (n)')"
     expect "a write through an old node too" 200 "$(q 2 "INSERT INTO d.t (_id, n) VALUES ('mixed-old', 0)")"
   fi
 done
@@ -183,6 +198,11 @@ for i in 1 2 3; do
 done
 for i in 1 2 3; do
   expect "n$i lists no conflicts (every row was written once)" 0 "$(conflict_rows "$i")"
+done
+for i in 1 2 3; do
+  q "$i" 'SHOW INDEXES IN d.t' >/dev/null
+  case "$(body)" in *'"rows":[["n"]]'*) ok "n$i has the index created while the versions were mixed" ;; *) bad "index on n$i" "$(body)" ;; esac
+  expect "n$i finds the mixed-version rows through it" 2 "$(count "$i" "n = 0")"
 done
 if [ "$acked" -gt 20 ]; then ok "the writer got $acked acknowledgements during the upgrade"; else bad "writer" "only $acked acknowledgements"; fi
 

@@ -41,6 +41,32 @@ public sealed interface Statement {
         }
     }
 
+    /** {@code CREATE INDEX [IF NOT EXISTS] ON db.table (column)}. */
+    record CreateIndex(String db, String table, String column, boolean ifNotExists) implements Statement {
+        public CreateIndex {
+            Objects.requireNonNull(db, "db");
+            Objects.requireNonNull(table, "table");
+            Objects.requireNonNull(column, "column");
+        }
+    }
+
+    /** {@code DROP INDEX [IF EXISTS] ON db.table (column)}. */
+    record DropIndex(String db, String table, String column, boolean ifExists) implements Statement {
+        public DropIndex {
+            Objects.requireNonNull(db, "db");
+            Objects.requireNonNull(table, "table");
+            Objects.requireNonNull(column, "column");
+        }
+    }
+
+    /** {@code SHOW INDEXES IN db.table}: the indexed columns. */
+    record ShowIndexes(String db, String table) implements Statement {
+        public ShowIndexes {
+            Objects.requireNonNull(db, "db");
+            Objects.requireNonNull(table, "table");
+        }
+    }
+
     /** The rows of a table that hold conflicting versions, one result row per version. */
     record ShowConflicts(String db, String table) implements Statement {
         public ShowConflicts {

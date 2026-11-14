@@ -284,6 +284,16 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         }
     }
 
+    /**
+     * Sends a committed batch to a peer. A 2.0 peer gets it without the index ops, which it cannot read;
+     * indexes are derived from the rows, so it still holds the same data, and it learns the indexes from
+     * the schema sync once it runs 2.2.
+     */
+    private CompletableFuture<?> send(Peer p, List<Op> ops) {
+        List<Op> batch = p.protocol1 ? Op.legacyOnly(ops) : ops;
+        return batch.isEmpty() ? CompletableFuture.completedFuture(null) : client.apply(p.address, batch);
+    }
+
     @Override
     public void after(List<Op> committed) {
         if (quorum == 1 && peers.isEmpty()) {
@@ -292,7 +302,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         if (localAck()) {
             // Try to pass it on now, but do not wait: the client has its answer once this node has it.
             for (Peer p : List.copyOf(peers)) {
-                client.apply(p.address, committed).whenComplete((v, err) -> {
+                send(p, committed).whenComplete((v, err) -> {
                     if (err == null) {
                         p.lastContact = clock.getAsLong();
                     }
@@ -309,7 +319,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             settled.complete(null);
         }
         for (Peer p : targets) {
-            client.apply(p.address, committed).whenComplete((v, err) -> {
+            send(p, committed).whenComplete((v, err) -> {
                 if (err == null) {
                     p.lastContact = clock.getAsLong();
                     if (acks.incrementAndGet() >= quorum) {
@@ -720,7 +730,8 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 if (db == null || db.isEmpty()) {
                     throw new QueryService.Rejected(400, "db is required");
                 }
-                List<Op> ops = engine.read(s -> s.toOps(db));
+                // A 2.0 route, so only ops a 2.0 node can read (no index ops).
+                List<Op> ops = Op.legacyOnly(engine.read(s -> s.toOps(db)));
                 return Map.of("ops", Op.toJson(ops));
             }
             case "/internal/apply" -> {

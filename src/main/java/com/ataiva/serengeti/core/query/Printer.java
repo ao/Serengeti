@@ -32,6 +32,17 @@ public final class Printer {
         if (s instanceof Statement.ShowConflicts c) {
             return "SHOW CONFLICTS IN " + c.db() + "." + c.table();
         }
+        if (s instanceof Statement.CreateIndex c) {
+            return "CREATE INDEX " + (c.ifNotExists() ? "IF NOT EXISTS " : "") + "ON " + c.db() + "." + c.table()
+                    + " (" + c.column() + ")";
+        }
+        if (s instanceof Statement.DropIndex d) {
+            return "DROP INDEX " + (d.ifExists() ? "IF EXISTS " : "") + "ON " + d.db() + "." + d.table()
+                    + " (" + d.column() + ")";
+        }
+        if (s instanceof Statement.ShowIndexes i) {
+            return "SHOW INDEXES IN " + i.db() + "." + i.table();
+        }
         if (s instanceof Statement.Insert i) {
             StringBuilder b = new StringBuilder("INSERT INTO ").append(i.db()).append('.').append(i.table())
                     .append(" (").append(String.join(", ", i.columns())).append(") VALUES ");

@@ -14,11 +14,14 @@ A statement may end with one `;`.
 statement   = ( create | drop | show | insert | select | update | delete ) [ ";" ] ;
 
 create      = "CREATE" "DATABASE" [ "IF" "NOT" "EXISTS" ] name
-            | "CREATE" "TABLE" [ "IF" "NOT" "EXISTS" ] table ;
+            | "CREATE" "TABLE" [ "IF" "NOT" "EXISTS" ] table
+            | "CREATE" "INDEX" [ "IF" "NOT" "EXISTS" ] "ON" table "(" name ")" ;
 drop        = "DROP" "DATABASE" [ "IF" "EXISTS" ] name
-            | "DROP" "TABLE" [ "IF" "EXISTS" ] table ;
+            | "DROP" "TABLE" [ "IF" "EXISTS" ] table
+            | "DROP" "INDEX" [ "IF" "EXISTS" ] "ON" table "(" name ")" ;
 show        = "SHOW" "DATABASES"
             | "SHOW" "TABLES" "IN" name
+            | "SHOW" "INDEXES" "IN" table
             | "SHOW" "CONFLICTS" "IN" table ;
 
 insert      = "INSERT" "INTO" table "(" name { "," name } ")"
@@ -48,8 +51,8 @@ integer     = digits ;
 
 The keywords are: AND, ASC, BY, COUNT, CREATE, DATABASE, DATABASES, DELETE, DESC, DROP, EXISTS,
 FALSE, FROM, IF, IN, INSERT, INTO, IS, LIMIT, NOT, NULL, OR, ORDER, SELECT, SET, SHOW, TABLE, TABLES,
-TRUE, UPDATE, VALUES, WHERE. They cannot be used as names. CONFLICTS is not one: it has its meaning only
-after SHOW.
+TRUE, UPDATE, VALUES, WHERE. They cannot be used as names. CONFLICTS, INDEX, INDEXES and ON are not
+reserved: they have their meaning only where the grammar puts them.
 
 A condition compares a column with a literal value; the left side is always a column. `NOT`
 binds tighter than `AND`, which binds tighter than `OR`.
@@ -104,6 +107,23 @@ the whole condition is true.
 
 So `price != 3` matches a row whose price is the string `'3'`. Neither `price != 3` nor
 `NOT price = 3` matches a row with no price.
+
+## Indexes
+
+`CREATE INDEX ON shop.items (qty)` keeps, for each value of `qty`, the rows that hold it. SELECT, UPDATE,
+DELETE and COUNT(*) then find rows through the index when the WHERE clause is one comparison of an indexed
+column with a value (`=`, `<`, `<=`, `>`, `>=`), or an AND of terms of which one is; with several, the term
+that matches the fewest rows is used. The rest of the condition is checked on those rows, so an index
+changes how fast a query runs, never its result. `!=`, OR, NOT and IS NULL scan the table.
+
+An index holds the booleans, numbers and strings of its column, compared as above (`qty = 10` also
+finds 10.0). Rows where the column is missing, null, an object or an array are not in it, which is right:
+no comparison of those with a value is true. `_id` needs no index; `WHERE _id = 'x'` and ranges of `_id`
+never scan.
+
+An index is built from the rows when it is created and kept up to date by every write. In a cluster the
+definition replicates like a table's, and each node builds its own. Dropping the table drops its indexes.
+`SHOW INDEXES IN db.table` returns the column `column`.
 
 ## Ordering
 

@@ -25,6 +25,12 @@ public final class StorageEngine implements AutoCloseable {
     private static final Logger LOG = Logger.getLogger(StorageEngine.class.getName());
     public static final String WAL_FILE = "wal.log";
     public static final String SNAPSHOT_FILE = "snapshot.jsonl";
+    /**
+     * Index definitions (create and drop ops), kept out of the log and the snapshot so that a 2.0 binary,
+     * which cannot read them, can still open this data directory: 2.0 cuts its log at the first record it
+     * cannot read. Rewritten whole, atomically, whenever an index is created or dropped.
+     */
+    public static final String INDEX_FILE = "indexes.jsonl";
 
     private final Path dir;
     private final Store store = new Store();
@@ -58,6 +64,12 @@ public final class StorageEngine implements AutoCloseable {
         this.wal = Wal.open(dir.resolve(WAL_FILE), policy, testFsyncDelayMs, batches);
         for (List<Op> b : batches) {
             store.applyAll(b);
+        }
+        Path indexes = dir.resolve(INDEX_FILE);
+        if (Files.exists(indexes)) {
+            try (InputStream in = Files.newInputStream(indexes)) {
+                store.applyAll(Snapshot.read(in));
+            }
         }
         this.openStats = new OpenStats(snapOps, batches.size(), before - wal.size());
         if (policy == FsyncPolicy.INTERVAL) {
@@ -103,15 +115,13 @@ public final class StorageEngine implements AutoCloseable {
         lock.writeLock().lock();
         try {
             ensureOpen();
-            pos = wal.write(batch);
-            store.applyAll(batch);
-            if (wal.size() >= checkpointBytes) {
-                checkpointLocked();
-            }
+            pos = commitLocked(batch);
         } finally {
             lock.writeLock().unlock();
         }
-        wal.awaitDurable(pos);
+        if (pos >= 0) {
+            wal.awaitDurable(pos);
+        }
     }
 
     /**
@@ -133,11 +143,7 @@ public final class StorageEngine implements AutoCloseable {
             // from a concurrent one (see Store).
             ops = store.withContext(p.ops());
             if (!ops.isEmpty()) {
-                pos = wal.write(ops);
-                store.applyAll(ops);
-                if (wal.size() >= checkpointBytes) {
-                    checkpointLocked();
-                }
+                pos = commitLocked(ops);
             }
         } finally {
             lock.writeLock().unlock();
@@ -195,11 +201,7 @@ public final class StorageEngine implements AutoCloseable {
                 }
             }
             if (!fresh.isEmpty()) {
-                pos = wal.write(fresh);
-                store.applyAll(fresh);
-                if (wal.size() >= checkpointBytes) {
-                    checkpointLocked();
-                }
+                pos = commitLocked(fresh);
             }
             count = fresh.size();
         } finally {
@@ -254,10 +256,28 @@ public final class StorageEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * Logs the batch's ops except index definitions, applies all of it, and rewrites the index file when the
+     * batch holds index ops. Returns the log position to wait for, or -1 if nothing was logged. Under the
+     * write lock.
+     */
+    private long commitLocked(List<Op> ops) throws IOException {
+        List<Op> logged = Op.legacyOnly(ops);
+        long pos = logged.isEmpty() ? -1 : wal.write(logged);
+        store.applyAll(ops);
+        if (logged.size() != ops.size()) {
+            Snapshot.writeAtomically(Op.indexOnly(store.toOps()), dir.resolve(INDEX_FILE));
+        }
+        if (wal.size() >= checkpointBytes) {
+            checkpointLocked();
+        }
+        return pos;
+    }
+
     private void checkpointLocked() throws IOException {
         // If the process dies between these two steps, the log is replayed over the new snapshot on the
         // next start; that is harmless because applying an op twice changes nothing.
-        Snapshot.writeAtomically(store.toOps(), dir.resolve(SNAPSHOT_FILE));
+        Snapshot.writeAtomically(Op.legacyOnly(store.toOps()), dir.resolve(SNAPSHOT_FILE));
         wal.reset();
     }
 
