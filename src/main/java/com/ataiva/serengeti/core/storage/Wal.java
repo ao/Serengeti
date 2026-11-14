@@ -122,28 +122,87 @@ public final class Wal implements AutoCloseable {
         return b.array();
     }
 
-    /** Appends one batch. With {@link FsyncPolicy#ALWAYS} it is on disk when this returns. */
-    public synchronized void append(List<Op> batch) throws IOException {
+    /** Appends one batch and forces it before returning ({@link #write} then {@link #awaitDurable}). */
+    public void append(List<Op> batch) throws IOException {
+        awaitDurable(write(batch));
+    }
+
+    /**
+     * Writes one batch to the file without forcing it, and returns a position to pass to
+     * {@link #awaitDurable}. Callers write under their own lock and wait outside it, so that writers who
+     * arrive while one force is running share the next force (group commit).
+     */
+    public synchronized long write(List<Op> batch) throws IOException {
+        checkHealthy();
         ByteBuffer b = ByteBuffer.wrap(encode(batch));
         while (b.hasRemaining()) {
             ch.write(b);
         }
         size = ch.position();
-        if (policy == FsyncPolicy.ALWAYS) {
-            force();
-        } else {
-            dirty = true;
+        written += b.capacity();
+        dirty = true;
+        return written;
+    }
+
+    /**
+     * Returns once everything up to {@code position} is on disk (with {@link FsyncPolicy#ALWAYS}; other
+     * policies return at once). One caller forces everything written so far; callers waiting behind it
+     * usually find their write already covered. A failed force is permanent: after it, every write and
+     * wait throws, because the kernel may have dropped the unwritten pages and a later force that
+     * succeeds would not bring them back.
+     */
+    public void awaitDurable(long position) throws IOException {
+        if (policy != FsyncPolicy.ALWAYS) {
+            return;
+        }
+        synchronized (syncLock) {
+            checkHealthy();
+            if (durable >= position) {
+                return;
+            }
+            long target;
+            synchronized (this) {
+                target = written;
+            }
+            forceNow();
+            durable = Math.max(durable, target);
         }
     }
 
     /** For {@link FsyncPolicy#INTERVAL}: called by a timer. */
-    public synchronized void flushIfDirty() throws IOException {
-        if (dirty && ch.isOpen()) {
-            force();
+    public void flushIfDirty() throws IOException {
+        synchronized (syncLock) {
+            if (dirty && ch.isOpen() && failure == null) {
+                long target;
+                synchronized (this) {
+                    target = written;
+                }
+                forceNow();
+                durable = Math.max(durable, target);
+            }
         }
     }
 
-    private void force() throws IOException {
+    private final Object syncLock = new Object();
+    /** Bytes written since the log was opened, across resets; positions handed out by {@link #write}. */
+    private long written;
+    private volatile long durable;
+    private volatile IOException failure;
+
+    private volatile IOException injectedFailure;
+
+    void failNextForceForTest(IOException e) {
+        injectedFailure = e;
+    }
+
+    private void checkHealthy() throws IOException {
+        IOException f = failure;
+        if (f != null) {
+            throw new IOException("the write-ahead log is unusable after a failed fsync: " + f.getMessage(), f);
+        }
+    }
+
+    private void forceNow() throws IOException {
         long started = System.nanoTime();
         if (testFsyncDelayMs > 0) {
             try {
@@ -152,8 +211,19 @@ public final class Wal implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
-        ch.force(false);
-        dirty = false;
+        try {
+            dirty = false;
+            IOException injected = injectedFailure;
+            if (injected != null) {
+                injectedFailure = null;
+                throw injected;
+            }
+            ch.force(false);
+        } catch (IOException e) {
+            failure = e;
+            LOG.severe("fsync of " + path + " failed; refusing further writes: " + e);
+            throw e;
+        }
         fsyncs.incrementAndGet();
         fsyncNanos.addAndGet(System.nanoTime() - started);
     }
@@ -164,12 +234,19 @@ public final class Wal implements AutoCloseable {
     }
 
     /** Empties the log, after a snapshot made its contents redundant. */
-    public synchronized void reset() throws IOException {
-        ch.truncate(0);
-        ch.position(0);
-        ch.force(true);
-        size = 0;
-        dirty = false;
+    public void reset() throws IOException {
+        // The caller has just written and forced a snapshot that holds everything in the log, so all
+        // positions handed out so far are durable through it.
+        synchronized (syncLock) {
+            synchronized (this) {
+                ch.truncate(0);
+                ch.position(0);
+                ch.force(true);
+                size = 0;
+                dirty = false;
+                durable = written;
+            }
+        }
     }
 
     public synchronized long size() {

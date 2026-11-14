@@ -23,10 +23,18 @@ import java.util.function.BiConsumer;
  * <p>Not thread-safe; {@link StorageEngine} guards it with a lock.
  */
 public final class Store {
+    /**
+     * Rows of a table are spread over this many buckets by a hash of their id. Each bucket keeps the sum
+     * (mod 2^64) of {@link #rowHash} over its live rows, updated as rows change, so replicas compare a
+     * table in O(1) and find the differing rows by bucket without hashing the whole table.
+     */
+    public static final int BUCKETS = 1024;
+
     private static final class TableState {
         Stamp created = Stamp.ZERO;
         Stamp dropped;
         final TreeMap<String, RowState> rows = new TreeMap<>();
+        final long[] buckets = new long[BUCKETS];
 
         TableState(Stamp dropped) {
             this.dropped = dropped;
@@ -39,10 +47,68 @@ public final class Store {
         void drop(Stamp at) {
             if (at.after(dropped)) {
                 dropped = at;
-                rows.values().removeIf(r -> !r.stamp.after(at));
+                rows.entrySet().removeIf(e -> {
+                    if (e.getValue().stamp.after(at)) {
+                        return false;
+                    }
+                    unaccount(e.getKey(), e.getValue());
+                    return true;
+                });
             }
         }
+
+        void account(String id, RowState r) {
+            if (r.value != null) {
+                buckets[bucket(id)] += rowHash(id, r.stamp);
+            }
+        }
+
+        void unaccount(String id, RowState r) {
+            if (r.value != null) {
+                buckets[bucket(id)] -= rowHash(id, r.stamp);
+            }
+        }
+
+        long root() {
+            long sum = 0;
+            for (long b : buckets) {
+                sum = sum * 31 + b;
+            }
+            return sum;
+        }
     }
+
+    /** The bucket of a row id. Stable across nodes and versions (String.hashCode is specified). */
+    public static int bucket(String id) {
+        int h = id.hashCode();
+        h ^= h >>> 16;
+        h *= 0x85ebca6b;
+        h ^= h >>> 13;
+        return Math.floorMod(h, BUCKETS);
+    }
+
+    /** 64 bits of SHA-256 over the id and the stamp. A row's version is identified by its stamp. */
+    static long rowHash(String id, Stamp at) {
+        MessageDigest md = SHA256.get();
+        md.reset();
+        md.update(id.getBytes(StandardCharsets.UTF_8));
+        md.update((byte) 0);
+        md.update(at.toString().getBytes(StandardCharsets.UTF_8));
+        byte[] d = md.digest();
+        long v = 0;
+        for (int i = 0; i < 8; i++) {
+            v = (v << 8) | (d[i] & 0xff);
+        }
+        return v;
+    }
+
+    private static final ThreadLocal<MessageDigest> SHA256 = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    });
 
     private static final class DbState {
         Stamp created = Stamp.ZERO;
@@ -97,8 +163,132 @@ public final class Store {
         }
         RowState r = t.rows.get(id);
         if (r == null || at.after(r.stamp)) {
-            t.rows.put(id, new RowState(value, at));
+            RowState next = new RowState(value, at);
+            if (r != null) {
+                t.unaccount(id, r);
+            }
+            t.account(id, next);
+            t.rows.put(id, next);
         }
+    }
+
+    // ---- replica comparison ----
+
+    /** Order-independent hash of a database's schema: its own and its tables' create and drop stamps. */
+    public long schemaHash(String db) {
+        // Hashes exactly what schemaOps would send, so an entry that apply() created as a placeholder
+        // (a rejected stale write, say) on one replica and not on another does not count as a difference.
+        long h = 0;
+        for (Op op : schemaOps(db)) {
+            String key = op instanceof Op.CreateTable o ? "ct\u0000" + o.table()
+                    : op instanceof Op.DropTable o ? "dt\u0000" + o.table()
+                    : op instanceof Op.CreateDb ? "cd" : "dd";
+            h += rowHash(key, op.stamp());
+        }
+        return h;
+    }
+
+    /** For each known database (dropped ones too): its schema hash and one root hash per table. */
+    public Map<String, Map<String, Object>> rootHashes() {
+        Map<String, Map<String, Object>> out = new TreeMap<>();
+        for (Map.Entry<String, DbState> e : dbs.entrySet()) {
+            Map<String, Object> tables = new TreeMap<>();
+            for (Map.Entry<String, TableState> t : e.getValue().tables.entrySet()) {
+                tables.put(t.getKey(), t.getValue().root());
+            }
+            Map<String, Object> m = new TreeMap<>();
+            m.put("schema", schemaHash(e.getKey()));
+            m.put("tables", tables);
+            out.put(e.getKey(), m);
+        }
+        return out;
+    }
+
+    /** The bucket sums of a table, or all zeros if it is unknown. A copy. */
+    public long[] bucketSums(String db, String table) {
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        return t == null ? new long[BUCKETS] : t.buckets.clone();
+    }
+
+    /** The database's create and drop ops, and its tables' (no rows). */
+    public List<Op> schemaOps(String db) {
+        List<Op> out = new ArrayList<>();
+        DbState d = dbs.get(db);
+        if (d == null) {
+            return out;
+        }
+        if (d.created.after(Stamp.ZERO)) {
+            out.add(new Op.CreateDb(db, d.created));
+        }
+        if (d.dropped.after(Stamp.ZERO)) {
+            out.add(new Op.DropDb(db, d.dropped));
+        }
+        d.tables.forEach((name, t) -> {
+            if (t.created.after(Stamp.ZERO)) {
+                out.add(new Op.CreateTable(db, name, t.created));
+            }
+            if (t.dropped.after(d.dropped)) {
+                out.add(new Op.DropTable(db, name, t.dropped));
+            }
+        });
+        return out;
+    }
+
+    /** The rows (values and tombstones) of the given buckets of a table, as ops. */
+    public List<Op> bucketOps(String db, String table, java.util.Set<Integer> wanted) {
+        List<Op> out = new ArrayList<>();
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        if (t == null) {
+            return out;
+        }
+        t.rows.forEach((id, r) -> {
+            if (wanted.contains(bucket(id))) {
+                out.add(r.value == null ? new Op.Delete(db, table, id, r.stamp) : new Op.Put(db, table, id, r.value, r.stamp));
+            }
+        });
+        return out;
+    }
+
+    /**
+     * Forgets row tombstones written before {@code cutoffWallMillis}. A delete must have reached every
+     * replica before its tombstone goes, or an older copy of the row could come back from a replica that
+     * missed it; {@code Cluster} refuses to sync with a node that was away longer than the cutoff. Live
+     * rows and the digests are not affected: tombstones are not counted in the bucket sums.
+     *
+     * @return the number of tombstones removed
+     */
+    public int collectTombstones(long cutoffWallMillis) {
+        int n = 0;
+        for (DbState d : dbs.values()) {
+            for (TableState t : d.tables.values()) {
+                var it = t.rows.values().iterator();
+                while (it.hasNext()) {
+                    RowState r = it.next();
+                    if (r.value == null && r.stamp.wall() < cutoffWallMillis) {
+                        it.remove();
+                        n++;
+                    }
+                }
+            }
+        }
+        return n;
+    }
+
+    /** Number of row tombstones held, for metrics. */
+    public long tombstones() {
+        long n = 0;
+        for (DbState d : dbs.values()) {
+            for (TableState t : d.tables.values()) {
+                for (RowState r : t.rows.values()) {
+                    if (r.value == null) {
+                        n++;
+                    }
+                }
+            }
+        }
+        return n;
     }
 
     /** True if applying {@code op} would change the state. Does not change anything itself. */

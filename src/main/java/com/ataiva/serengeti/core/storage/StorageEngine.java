@@ -99,10 +99,11 @@ public final class StorageEngine implements AutoCloseable {
         if (batch.isEmpty()) {
             return;
         }
+        long pos;
         lock.writeLock().lock();
         try {
             ensureOpen();
-            wal.append(batch);
+            pos = wal.write(batch);
             store.applyAll(batch);
             if (wal.size() >= checkpointBytes) {
                 checkpointLocked();
@@ -110,6 +111,7 @@ public final class StorageEngine implements AutoCloseable {
         } finally {
             lock.writeLock().unlock();
         }
+        wal.awaitDurable(pos);
     }
 
     /**
@@ -121,12 +123,13 @@ public final class StorageEngine implements AutoCloseable {
         WriteHooks h = hooks;
         h.before();
         Planned<T> p;
+        long pos = -1;
         lock.writeLock().lock();
         try {
             ensureOpen();
             p = plan.apply(store);
             if (!p.ops().isEmpty()) {
-                wal.append(p.ops());
+                pos = wal.write(p.ops());
                 store.applyAll(p.ops());
                 if (wal.size() >= checkpointBytes) {
                     checkpointLocked();
@@ -134,6 +137,10 @@ public final class StorageEngine implements AutoCloseable {
             }
         } finally {
             lock.writeLock().unlock();
+        }
+        if (pos >= 0) {
+            // Outside the lock: writers that arrive during one fsync share the next (group commit).
+            wal.awaitDurable(pos);
         }
         if (!p.ops().isEmpty()) {
             h.after(p.ops());
@@ -172,6 +179,8 @@ public final class StorageEngine implements AutoCloseable {
      * from replicas and catch-up, where most of a peer's state is usually known already.
      */
     public int merge(List<Op> ops) throws IOException {
+        long pos = -1;
+        int count;
         lock.writeLock().lock();
         try {
             ensureOpen();
@@ -182,13 +191,37 @@ public final class StorageEngine implements AutoCloseable {
                 }
             }
             if (!fresh.isEmpty()) {
-                wal.append(fresh);
+                pos = wal.write(fresh);
                 store.applyAll(fresh);
                 if (wal.size() >= checkpointBytes) {
                     checkpointLocked();
                 }
             }
-            return fresh.size();
+            count = fresh.size();
+        } finally {
+            lock.writeLock().unlock();
+        }
+        if (pos >= 0) {
+            wal.awaitDurable(pos);
+        }
+        return count;
+    }
+
+    /** Makes the next fsync fail with {@code e}, for tests of the failure path. */
+    void failNextFsyncForTest(IOException e) {
+        wal.failNextForceForTest(e);
+    }
+
+    /**
+     * Drops row tombstones older than {@code ttlMillis}. Nothing is logged: a restart replays them from
+     * the log or snapshot and the next collection drops them again.
+     */
+    public int collectTombstones(long ttlMillis) {
+        long cutoff = System.currentTimeMillis() - ttlMillis;
+        lock.writeLock().lock();
+        try {
+            ensureOpen();
+            return store.collectTombstones(cutoff);
         } finally {
             lock.writeLock().unlock();
         }
