@@ -36,6 +36,10 @@ GitHub release notes and tags.
   every peer in turn, so while a cut-off peer's calls ran to their timeout the reachable peers went
   uncontacted for longer than the 3-second window, and a node that had a majority refused writes with
   503. Each peer now syncs on its own. 2.0.0 has this bug.
+- Responses no longer wait about 40 ms on a kept-alive connection. The JDK's HTTP server leaves Nagle's
+  algorithm on unless `sun.net.httpserver.nodelay` is set, so each response waited for the client's delayed
+  ACK and one connection did about 24 requests a second, node-to-node calls included. The node now sets it
+  (an explicit `-Dsun.net.httpserver.nodelay=false` still wins). 2.0.0 has this bug.
 - A log record with a valid checksum that cannot be read no longer counts as a torn tail. 2.0 truncated
   the log there, dropping that record and every one after it; such a record now stops the node from
   starting and nothing is discarded. Ops of a kind this version does not know (from a newer version, on

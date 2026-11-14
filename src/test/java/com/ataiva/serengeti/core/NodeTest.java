@@ -113,6 +113,26 @@ class NodeTest {
     }
 
     @Test
+    void requestsOnAKeptAliveConnectionDoNotWaitForDelayedAcks() throws Exception {
+        // With Nagle's algorithm on (the JDK server's default), each response on a kept-alive connection
+        // waited about 40 ms for the client's delayed ACK: 40 requests took about 1.6 s.
+        try (Node n = Node.start(config(tmp.resolve("data"), "SERENGETI_ADMIN_PASSWORD", PW), Node.QUERIES)) {
+            HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
+            // /health needs no password, so no password hashing sits in the timing.
+            HttpRequest req = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + n.address().getPort() + "/health")).build();
+            for (int i = 0; i < 5; i++) {
+                client.send(req, HttpResponse.BodyHandlers.ofString()); // warm up, open the connection
+            }
+            long start = System.nanoTime();
+            for (int i = 0; i < 40; i++) {
+                assertEquals(200, client.send(req, HttpResponse.BodyHandlers.ofString()).statusCode());
+            }
+            long millis = (System.nanoTime() - start) / 1_000_000;
+            assertTrue(millis < 600, "40 requests on one connection took " + millis + " ms");
+        }
+    }
+
+    @Test
     void afterAFailedFsyncTheNodeServesNothingFromItsDataUntilRestarted() throws Exception {
         Path data = tmp.resolve("data");
         Config c = config(data, "SERENGETI_ADMIN_PASSWORD", PW);

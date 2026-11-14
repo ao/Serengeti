@@ -96,6 +96,16 @@ public final class HttpApi implements AutoCloseable {
         return start(bind, port, null, deps);
     }
 
+    static {
+        // The JDK server leaves Nagle's algorithm on unless told otherwise. A response on a kept-alive
+        // connection then waits for the client's delayed ACK, about 40 ms on Linux, so one connection did about
+        // 24 requests a second, node-to-node calls included. Read when the server classes load, so set before
+        // the first server is made; an operator's own -D setting wins.
+        if (System.getProperty("sun.net.httpserver.nodelay") == null) {
+            System.setProperty("sun.net.httpserver.nodelay", "true");
+        }
+    }
+
     /** With {@code tls} set, serves HTTPS only (TLS 1.2 and 1.3); there is no plaintext listener. */
     public static HttpApi start(String bind, int port, javax.net.ssl.SSLContext tls, Deps deps) throws IOException {
         HttpServer s;

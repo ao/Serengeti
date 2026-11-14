@@ -137,7 +137,7 @@ side 503, on the majority side 200, it catches up after healing), one node's fsy
 (writes through the others are not slowed), local writes on both sides of a partition (both kept, the
 conflict listed on every node, then resolved by one write), and all three restarted. Every insert that
 got a 200 must be on every node at the end. Three runs of 2.1 on an EC2 c7g.4xlarge (Ubuntu 24.04, Docker
-29): 37 of 37 checks each time, with 228, 237 and 229 acknowledged inserts and none lost.
+29): 37 of 37 checks each time, with 626, 623 and 549 acknowledged inserts and none lost.
 
 `tests/upgrade/run.sh` opens a 2.0.0 node's data directory with this build, and upgrades a 3-node 2.0.0
 cluster one node at a time while a writer inserts through all three; every acknowledged insert must be on
