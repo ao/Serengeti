@@ -113,7 +113,10 @@ public final class Snapshot {
                 return ops;
             }
             try {
-                ops.add(Op.fromJson(m));
+                Op op = Op.fromJson(m);
+                if (op != null) {
+                    ops.add(op);
+                }
             } catch (RuntimeException e) {
                 throw new IOException("snapshot line " + lineNo + ": " + e.getMessage(), e);
             }

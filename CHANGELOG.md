@@ -26,6 +26,10 @@ GitHub release notes and tags.
   every peer in turn, so while a cut-off peer's calls ran to their timeout the reachable peers went
   uncontacted for longer than the 3-second window, and a node that had a majority refused writes with
   503. Each peer now syncs on its own. 2.0.0 has this bug.
+- A log record with a valid checksum that cannot be read no longer counts as a torn tail. 2.0 truncated
+  the log there, dropping that record and every one after it; such a record now stops the node from
+  starting and nothing is discarded. Ops of a kind this version does not know (from a newer version, on
+  the wire or in files after a downgrade) are skipped instead of failing the whole batch.
 
 ### Changed
 - Sync compares one hash per table, then per-bucket sums, and pulls only the rows that differ. 2.0

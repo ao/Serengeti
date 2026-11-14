@@ -138,6 +138,7 @@ public sealed interface Op {
         return out;
     }
 
+    /** One op from its JSON form; null for a well-formed kind this version does not know (see listFromJson). */
     @SuppressWarnings("unchecked")
     static Op fromJson(Map<String, Object> m) {
         String kind = str(m, "op");
@@ -161,7 +162,10 @@ public sealed interface Op {
             case "delete":
                 return new Delete(db, str(m, "table"), str(m, "id"), at, seen(m));
             default:
-                throw new IllegalArgumentException("unknown op " + kind);
+                if (!kind.matches("[a-z][a-z0-9_]{0,31}")) {
+                    throw new IllegalArgumentException("unknown op " + kind);
+                }
+                return null; // a kind added by a newer version: skipped, see listFromJson
         }
     }
 
@@ -173,6 +177,11 @@ public sealed interface Op {
         return out;
     }
 
+    /**
+     * Parses a list of ops. Ops of a kind this version does not know (a well-formed lowercase name, from a
+     * newer version) are left out, so a newer peer's batches, and a newer version's log after a downgrade,
+     * still load: such kinds (index definitions, say) never carry row data a reader of this version needs.
+     */
     @SuppressWarnings("unchecked")
     static List<Op> listFromJson(Object json) {
         if (!(json instanceof List)) {
@@ -183,7 +192,10 @@ public sealed interface Op {
             if (!(o instanceof Map)) {
                 throw new IllegalArgumentException("expected an op object");
             }
-            out.add(fromJson((Map<String, Object>) o));
+            Op op = fromJson((Map<String, Object>) o);
+            if (op != null) {
+                out.add(op);
+            }
         }
         return out;
     }

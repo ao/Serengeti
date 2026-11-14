@@ -48,8 +48,10 @@ public final class Wal implements AutoCloseable {
     }
 
     /**
-     * Opens or creates the log, returning it with the batches it held. A torn or corrupt tail is
-     * truncated and reported in {@link Recovered#discardedBytes()}.
+     * Opens or creates the log, returning it with the batches it held. A torn or corrupt tail (a short
+     * record, or one whose checksum does not match) is truncated and reported in
+     * {@link Recovered#discardedBytes()}. A record with a valid checksum that cannot be parsed is not a
+     * torn write: opening fails with an IOException and nothing is truncated.
      */
     public static Wal open(Path path, FsyncPolicy policy, long testFsyncDelayMs, List<List<Op>> out)
             throws IOException {
@@ -93,7 +95,11 @@ public final class Wal implements AutoCloseable {
             try {
                 batch = Op.listFromJson(Json.parse(new String(bytes, StandardCharsets.UTF_8)));
             } catch (RuntimeException e) {
-                break;
+                // The checksum matched, so this is not a torn write: discarding it, and every record after
+                // it, would throw away acknowledged writes. Refuse to open instead.
+                throw new IOException("write-ahead log record at byte " + pos + " has a valid checksum but cannot be"
+                        + " read (" + e.getMessage() + "). It may have been written by a newer version of"
+                        + " Serengeti. Nothing was discarded; start that version, or move the data directory aside.", e);
             }
             batches.add(batch);
             pos += HEADER + len;

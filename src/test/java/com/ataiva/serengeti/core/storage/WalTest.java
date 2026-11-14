@@ -119,4 +119,35 @@ class WalTest {
         }
         assertEquals(List.of(batch(1)), reopen(p));
     }
+
+    /** Appends one record with a correct checksum around {@code json}, as Wal writes them. */
+    private static void appendRaw(Path p, String json) throws IOException {
+        byte[] payload = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        java.util.zip.CRC32C c = new java.util.zip.CRC32C();
+        c.update(payload);
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(Wal.HEADER + payload.length);
+        b.putInt(payload.length).putInt((int) c.getValue()).put(payload);
+        Files.write(p, b.array(), java.nio.file.StandardOpenOption.APPEND);
+    }
+
+    @Test
+    void opsOfAKindFromANewerVersionAreSkippedAndTheRestIsKept() throws IOException {
+        Path p = writeBatches(2);
+        appendRaw(p, "[{\"op\":\"create_view\",\"db\":\"d\",\"table\":\"t\",\"view\":\"v\",\"at\":\"50.0.n2\"},"
+                + com.ataiva.serengeti.core.json.Json.write(Op.toJson(batch(7).get(0))) + "]");
+        try (Wal w = Wal.open(p, FsyncPolicy.ALWAYS, 0, new ArrayList<>())) {
+            w.append(batch(3));
+        }
+        assertEquals(List.of(batch(0), batch(1), batch(7), batch(3)), reopen(p));
+    }
+
+    @Test
+    void aRecordWithAValidChecksumThatCannotBeReadStopsTheOpenAndKeepsTheFile() throws IOException {
+        Path p = writeBatches(2);
+        appendRaw(p, "[{\"op\":\"put\",\"db\":\"d\",\"at\":\"not a stamp\"}]");
+        long size = Files.size(p);
+        IOException e = org.junit.jupiter.api.Assertions.assertThrows(IOException.class, () -> reopen(p));
+        org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("valid checksum"), e.getMessage());
+        assertEquals(size, Files.size(p), "nothing was truncated");
+    }
 }

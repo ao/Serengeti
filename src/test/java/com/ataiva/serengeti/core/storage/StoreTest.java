@@ -132,6 +132,19 @@ class StoreTest {
         assertTrue(assertThrowsIae(bad).contains("at most"));
     }
 
+    @Test
+    void opsOfAnUnknownKindAreSkippedOnlyIfTheKindIsAPlainName() {
+        Map<String, Object> newer = new java.util.LinkedHashMap<>();
+        newer.put("op", "create_view");
+        newer.put("db", "shop");
+        newer.put("table", "items");
+        newer.put("at", "5.0.n2");
+        Op.Put p = new Op.Put("shop", "items", "a", row("v", 1), at(10, "n1"));
+        assertEquals(List.of(p), Op.listFromJson(List.of(newer, Op.toJson(p))));
+        newer.put("op", "Drop Everything");
+        assertTrue(assertThrowsIae(newer).contains("unknown op"));
+    }
+
     private static String assertThrowsIae(Map<String, Object> json) {
         return org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> Op.fromJson(json))
                 .getMessage();
