@@ -73,8 +73,8 @@ lost: `SHOW CONFLICTS IN db.table` lists every version of every such row, and th
 ```
 SHOW CONFLICTS IN shop.items
 {"columns":["_id","current","deleted","node","at","row"],
- "rows":[["bolt",true,false,"n1",1731400012000,{"qty":90}],
-         ["bolt",false,false,"n3",1731400011000,{"qty":150}]], ...}
+ "rows":[["bolt",true,false,"0b6f3c2e-5d1a-4e8b-9a7c-2f4d6e8a1b3c",1731400012000,{"qty":90}],
+         ["bolt",false,false,"9e2d7a41-c3b8-4f06-8d5e-7a1c3b9f0e24",1731400011000,{"qty":150}]], ...}
 ```
 
 The next write to the row resolves the conflict: the node writing it has seen every version, so its

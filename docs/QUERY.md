@@ -147,8 +147,8 @@ SELECT and SHOW return rows. Each row is an array with one value per column:
 - `SHOW DATABASES` returns the column `database`; `SHOW TABLES IN db` returns `table`.
 - `SHOW CONFLICTS IN db.table` returns one row per version of each row that has more than one
   (writes made on nodes that had not seen each other's; see CONSISTENCY.md), with the columns `_id`,
-  `current` (true for the version that is the row's value, listed first), `deleted`, `node` (the node
-  that wrote it), `at` (Unix milliseconds) and `row` (the version's value, or null for a delete).
+  `current` (true for the version that is the row's value, listed first), `deleted`, `node` (the id of
+  the node that wrote it, from its `node-id` file), `at` (Unix milliseconds) and `row` (the version's value, or null for a delete).
 
 Writes return the number of databases, tables or rows changed. INSERT also lists the `_id` of each
 row, in insert order:
