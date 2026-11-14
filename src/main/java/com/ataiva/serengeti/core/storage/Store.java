@@ -165,7 +165,7 @@ public final class Store {
             boolean was = exists();
             created = Stamp.max(created, at);
             if (!was && exists()) {
-                rows.forEach((id, r) -> add(id, r.winner().value()));
+                rows.forEach((id, r) -> add(id, r.value()));
             }
         }
 
@@ -369,7 +369,13 @@ public final class Store {
      * writes on nodes that had not seen each other's (a conflict). The newest is the row's value, so the
      * outcome of a conflict is last-writer-wins as in 2.0, and the others stay until a write resolves them.
      */
-    private record RowState(List<Version> versions) {
+    private record RowState(List<Version> versions, Map<String, Object> value) {
+        /** {@code value} is the current version's value (null for a delete), kept here so scans read it
+         * without going through the list. */
+        RowState(List<Version> versions) {
+            this(versions, versions.get(0).value());
+        }
+
         Version winner() {
             return versions.get(0);
         }
@@ -782,7 +788,7 @@ public final class Store {
             return null;
         }
         RowState r = dbs.get(db).tables.get(table).rows.get(id);
-        return r == null ? null : r.winner().value();
+        return r == null ? null : r.value();
     }
 
     /** Visits the live rows of a table in id order. */
@@ -791,8 +797,8 @@ public final class Store {
             return;
         }
         dbs.get(db).tables.get(table).rows.forEach((id, r) -> {
-            if (r.winner().value() != null) {
-                visitor.accept(id, r.winner().value());
+            if (r.value() != null) {
+                visitor.accept(id, r.value());
             }
         });
     }
@@ -855,7 +861,7 @@ public final class Store {
                 default -> throw new IllegalArgumentException("no index lookup for " + op);
             };
             range.forEach((id, r) -> {
-                if (r.winner().value() != null) {
+                if (r.value() != null) {
                     out.add(id);
                 }
             });
@@ -922,8 +928,8 @@ public final class Store {
         }
         for (String id : ids) {
             RowState r = t.rows.get(id);
-            if (r != null && r.winner().value() != null) {
-                visitor.accept(id, r.winner().value());
+            if (r != null && r.value() != null) {
+                visitor.accept(id, r.value());
             }
         }
         return true;

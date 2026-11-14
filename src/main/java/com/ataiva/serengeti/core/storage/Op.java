@@ -76,7 +76,8 @@ public sealed interface Op {
             implements RowOp {
         public Put {
             row = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(row));
-            seen = seen == null ? null : java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(seen));
+            seen = seen == null ? null : seen.isEmpty() ? Map.of() // one shared instance: most rows have none
+                    : java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(seen));
         }
 
         public Put(String db, String table, String id, Map<String, Object> row, Stamp stamp) {
@@ -92,7 +93,8 @@ public sealed interface Op {
     /** Deletes a row; kept as a tombstone so an older {@link Put} cannot bring it back. */
     record Delete(String db, String table, String id, Stamp stamp, Map<String, Stamp> seen) implements RowOp {
         public Delete {
-            seen = seen == null ? null : java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(seen));
+            seen = seen == null ? null : seen.isEmpty() ? Map.of() // one shared instance: most rows have none
+                    : java.util.Collections.unmodifiableMap(new java.util.TreeMap<>(seen));
         }
 
         public Delete(String db, String table, String id, Stamp stamp) {
