@@ -213,9 +213,34 @@ fi
 expect "write on the majority side (n1) succeeds" 200 "$(q 1 "INSERT INTO d.t (_id) VALUES ('majority')")"
 expect "majority read on n2 sees it" 200 "$(q 2 "SELECT _id FROM d.t WHERE _id = 'majority'" majority)"
 case "$(body)" in *'"count":1'*) ok "and returns the row" ;; *) bad "majority read" "$(body)" ;; esac
+echo "# local acknowledgement: writes on both sides of the partition, merged after it heals"
+ql() { # i query -> status; the write is acknowledged once it is on node i
+  docker exec "$RUN-client" curl -s -o /tmp/body -w '%{http_code}' --max-time 20 --cacert /tmp/ca.pem \
+    -u "admin:$PW" -H 'Content-Type: application/json' \
+    --data-binary "{\"query\": \"$2\", \"ack\": \"local\"}" "https://c$1:1985/v1/query" || true
+}
+expect "a local write on the minority side (n3) is accepted" 200 \
+  "$(ql 3 "INSERT INTO d.t (_id, side) VALUES ('island-1', 'minority'), ('island-2', 'minority')")"
+expect "a local write on the majority side (n1) is accepted" 200 \
+  "$(ql 1 "INSERT INTO d.t (_id, side) VALUES ('main-1', 'majority')")"
+expect "conflicting local writes to one row, minority side" 200 "$(ql 3 "INSERT INTO d.t (_id, side) VALUES ('both', 'n3')")"
+sleep 1
+expect "conflicting local writes to one row, majority side" 200 "$(ql 1 "INSERT INTO d.t (_id, side) VALUES ('both', 'n1')")"
+expect "the majority side does not see the island's rows yet" 200 "$(q 1 "SELECT COUNT(*) FROM d.t WHERE side = 'minority'")"
+case "$(body)" in *'"rows":[[0]]'*) ok "and it has none of them" ;; *) bad "isolation" "$(body)" ;; esac
 netfault heal
 wait_writable 3
 ok "n3 accepts writes again after the partition heals"
+converged_rows() { # every node has the island's rows, the main side's row, and the same winner for 'both'
+  for i in 1 2 3; do
+    q "$i" "SELECT _id, side FROM d.t WHERE _id = 'island-1' OR _id = 'island-2' OR _id = 'main-1' OR _id = 'both' ORDER BY _id" >/dev/null
+    b=$(body)
+    case "$b" in *'["both","n1"],["island-1","minority"],["island-2","minority"],["main-1","majority"]'*) ;; *) return 1 ;; esac
+  done
+}
+for _ in $(seq 1 60); do converged_rows && break; sleep 0.5; done
+if converged_rows; then ok "after healing, every node has both sides' writes, and the later write to 'both' won"
+else bad "local-write merge" "$(body)"; fi
 
 median_write() { # i tag -> median seconds of five inserts through node i (each curl includes a TLS handshake)
   for k in 1 2 3 4 5; do

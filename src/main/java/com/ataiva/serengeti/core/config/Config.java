@@ -27,7 +27,7 @@ public final class Config {
     private static final Set<String> KEYS = Set.of("bind", "port", "data_dir", "fsync", "peers", "advertise",
             "discovery_cidr", "cluster_size", "cluster_key_file", "cluster_plaintext", "admin_password_file",
             "tls_keystore", "tls_keystore_password_file", "tls_truststore", "tls_truststore_password_file",
-            "test_fsync_delay_ms");
+            "test_fsync_delay_ms", "tombstone_ttl_hours", "write_ack");
 
     public final String bind;
     public final int port;
@@ -45,6 +45,10 @@ public final class Config {
     public final Path tlsTruststore;
     public final char[] tlsTruststorePassword;
     public final long testFsyncDelayMs;
+    /** How long a delete's tombstone is kept; also the longest a cluster node may be away and still rejoin. */
+    public final long tombstoneTtlMillis;
+    /** Default acknowledgement for writes in a cluster: a majority of nodes, or this node only. */
+    public final boolean localWriteAck;
 
     private final boolean explicitSize;
 
@@ -69,6 +73,13 @@ public final class Config {
         tlsTruststore = pathOrNull(v.get("tls_truststore"));
         tlsTruststorePassword = toChars(secrets.get("tls_truststore_password"));
         testFsyncDelayMs = parseInt(v.getOrDefault("test_fsync_delay_ms", "0"), "test_fsync_delay_ms", 0, 60_000);
+        tombstoneTtlMillis = parseInt(v.getOrDefault("tombstone_ttl_hours", "168"), "tombstone_ttl_hours", 1, 24 * 3650)
+                * 3_600_000L;
+        String ack = v.getOrDefault("write_ack", "majority").trim();
+        if (!ack.equals("majority") && !ack.equals("local")) {
+            throw new ConfigException("write_ack must be majority or local, not '" + ack + "'");
+        }
+        localWriteAck = ack.equals("local");
         String size = v.get("cluster_size");
         clusterSize = size == null ? peers.size() + 1 : parseInt(size, "cluster_size", 1, 7);
         validate();

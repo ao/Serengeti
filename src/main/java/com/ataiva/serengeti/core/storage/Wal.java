@@ -155,33 +155,56 @@ public final class Wal implements AutoCloseable {
         if (policy != FsyncPolicy.ALWAYS) {
             return;
         }
-        synchronized (syncLock) {
-            checkHealthy();
-            if (durable >= position) {
-                return;
+        // Leader and followers: one caller forces, outside the monitor; the others wait on it and wake when
+        // it is done, so a caller whose write that force covered returns without a force of its own.
+        while (true) {
+            synchronized (syncLock) {
+                checkHealthy();
+                if (durable >= position) {
+                    return;
+                }
+                if (forcing) {
+                    try {
+                        syncLock.wait();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("interrupted while waiting for fsync", e);
+                    }
+                    continue;
+                }
+                forcing = true;
             }
-            long target;
-            synchronized (this) {
-                target = written;
+            forceAsLeader();
+        }
+    }
+
+    private void forceAsLeader() throws IOException {
+        long covered = -1;
+        try {
+            covered = forceNow();
+        } finally {
+            synchronized (syncLock) {
+                forcing = false;
+                if (covered >= 0) {
+                    durable = Math.max(durable, covered);
+                }
+                syncLock.notifyAll();
             }
-            forceNow();
-            durable = Math.max(durable, target);
         }
     }
 
     /** For {@link FsyncPolicy#INTERVAL}: called by a timer. */
     public void flushIfDirty() throws IOException {
         synchronized (syncLock) {
-            if (dirty && ch.isOpen() && failure == null) {
-                long target;
-                synchronized (this) {
-                    target = written;
-                }
-                forceNow();
-                durable = Math.max(durable, target);
+            if (!dirty || !ch.isOpen() || failure != null || forcing) {
+                return;
             }
+            forcing = true;
         }
+        forceAsLeader();
     }
+
+    private boolean forcing;
 
     private final Object syncLock = new Object();
     /** Bytes written since the log was opened, across resets; positions handed out by {@link #write}. */
@@ -202,7 +225,8 @@ public final class Wal implements AutoCloseable {
         }
     }
 
-    private void forceNow() throws IOException {
+    /** Forces the file and returns the position it covers: everything written before the force began. */
+    private long forceNow() throws IOException {
         long started = System.nanoTime();
         if (testFsyncDelayMs > 0) {
             try {
@@ -210,6 +234,10 @@ public final class Wal implements AutoCloseable {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+        }
+        long covered;
+        synchronized (this) {
+            covered = written;
         }
         try {
             dirty = false;
@@ -226,6 +254,7 @@ public final class Wal implements AutoCloseable {
         }
         fsyncs.incrementAndGet();
         fsyncNanos.addAndGet(System.nanoTime() - started);
+        return covered;
     }
 
     /** The log's size and its forces so far. Two clock reads per force; nothing is counted per record. */
@@ -246,6 +275,7 @@ public final class Wal implements AutoCloseable {
                 dirty = false;
                 durable = written;
             }
+            syncLock.notifyAll();
         }
     }
 

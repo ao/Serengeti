@@ -312,4 +312,117 @@ class ClusterTest {
                     .header(InternalRoutes.KEY_HEADER, KEY).build(), HttpResponse.BodyHandlers.ofString()).statusCode());
         }
     }
+
+    // ---- 2.1: bucket sync, local acknowledgement, tombstone TTL ----
+
+    private HttpResponse<String> write(int i, String q, String ack) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("query", q);
+        if (ack != null) {
+            body.put("ack", ack);
+        }
+        return HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[i] + "/v1/query"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Basic " + Base64.getEncoder()
+                        .encodeToString(("admin:" + PW).getBytes(StandardCharsets.UTF_8)))
+                .timeout(Duration.ofSeconds(20))
+                .POST(HttpRequest.BodyPublishers.ofString(Json.write(body))).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void localWritesOnNodesThatRanAloneConvergeWhenTheyMeet() throws Exception {
+        start(0);
+        Thread.sleep(1200);
+        assertEquals(503, write(0, "CREATE DATABASE d", null).statusCode(), "a lone node refuses majority writes");
+        assertEquals(200, write(0, "CREATE DATABASE d", "local").statusCode());
+        assertEquals(200, write(0, "CREATE TABLE d.t", "local").statusCode());
+        assertEquals(200, write(0, "INSERT INTO d.t (_id, side) VALUES ('a', 'zero')", "local").statusCode());
+        stop(0);
+        // Node 1 has never seen node 0's data: it was down while node 0 ran alone.
+        start(1);
+        Thread.sleep(1200);
+        assertEquals(200, write(1, "CREATE DATABASE d", "local").statusCode());
+        assertEquals(200, write(1, "CREATE TABLE d.t", "local").statusCode());
+        assertEquals(200, write(1, "INSERT INTO d.t (_id, side) VALUES ('b', 'one')", "local").statusCode());
+        assertEquals(400, write(1, "SHOW DATABASES", "eventually").statusCode());
+        start(0);
+        start(2);
+        List<Object> both = List.of(List.of("a", "zero"), List.of("b", "one"));
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has both sides' rows", () -> has(n, "SELECT _id, side FROM d.t", both));
+        }
+    }
+
+    @Test
+    void aSteadyClusterPullsNoRows() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        waitWritable(0);
+        query(0, "CREATE DATABASE d");
+        query(0, "CREATE TABLE d.t");
+        StringBuilder values = new StringBuilder();
+        for (int k = 0; k < 2000; k++) {
+            values.append(k == 0 ? "" : ", ").append("('r").append(k).append("', ").append(k).append(')');
+        }
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES " + values).statusCode());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has 2000 rows", () -> has(n, "SELECT COUNT(*) FROM d.t", List.of(List.of(2000L))));
+        }
+        Thread.sleep(2500);
+        long[] before = new long[3];
+        for (int i = 0; i < 3; i++) {
+            before[i] = nodes[i].cluster().pulledOps();
+        }
+        Thread.sleep(3500);
+        for (int i = 0; i < 3; i++) {
+            assertEquals(before[i], nodes[i].cluster().pulledOps(), "node " + i + " pulled ops while nothing changed");
+        }
+        // One row changed on one node reaches the others by push; nothing like the whole table is pulled.
+        stop(2);
+        assertEquals(200, query(0, "UPDATE d.t SET n = -1 WHERE _id = 'r7'").statusCode());
+        start(2);
+        eventually("node 2 has the update", () -> has(2, "SELECT n FROM d.t WHERE _id = 'r7'", List.of(List.of(-1L))));
+        Thread.sleep(1500);
+        assertTrue(nodes[2].cluster().pulledOps() < 200, "pulled " + nodes[2].cluster().pulledOps() + " ops to catch up one row");
+    }
+
+    @Test
+    void aNodeThatWasAwayLongerThanTheTombstoneTtlRefusesToStart() throws Exception {
+        Path data = dir.resolve("n0");
+        java.nio.file.Files.createDirectories(data);
+        long longAgo = System.currentTimeMillis() - 2 * 3_600_000L;
+        java.nio.file.Files.writeString(data.resolve(Cluster.LAST_SYNC_FILE), longAgo + "\n");
+        Map<String, String> env = new HashMap<>();
+        env.put("SERENGETI_DATA_DIR", data.toString());
+        env.put("SERENGETI_PORT", Integer.toString(ports[0]));
+        env.put("SERENGETI_PEERS", "127.0.0.1:" + ports[1]);
+        env.put("SERENGETI_CLUSTER_KEY", KEY);
+        env.put("SERENGETI_CLUSTER_PLAINTEXT", "allow");
+        env.put("SERENGETI_ADMIN_PASSWORD", PW);
+        env.put("SERENGETI_TOMBSTONE_TTL_HOURS", "1");
+        com.ataiva.serengeti.core.config.ConfigException e = org.junit.jupiter.api.Assertions.assertThrows(
+                com.ataiva.serengeti.core.config.ConfigException.class, () -> Node.start(Config.load(null, env), Node.QUERIES));
+        assertTrue(e.getMessage().contains("tombstone_ttl_hours"), e.getMessage());
+        // With a recent sync, the same node starts.
+        java.nio.file.Files.writeString(data.resolve(Cluster.LAST_SYNC_FILE), System.currentTimeMillis() + "\n");
+        try (Node n = Node.start(Config.load(null, env), Node.QUERIES)) {
+            assertFalse(n.cluster().stale());
+        }
+    }
+
+    @Test
+    void the20RoutesStillAnswerForRollingUpgrades() throws Exception {
+        start(0);
+        for (String path : List.of("/internal/digests", "/internal/state?db=x", "/internal/v2/roots",
+                "/internal/v2/schema?db=x", "/internal/v2/buckets?db=x&table=t", "/internal/v2/rows?db=x&table=t&buckets=1,2")) {
+            assertEquals(200, HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[0] + path))
+                    .header(InternalRoutes.KEY_HEADER, KEY).build(), HttpResponse.BodyHandlers.ofString()).statusCode(), path);
+        }
+        assertEquals(400, HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[0]
+                + "/internal/v2/rows?db=x&table=t&buckets=9999")).header(InternalRoutes.KEY_HEADER, KEY).build(),
+                HttpResponse.BodyHandlers.ofString()).statusCode());
+    }
 }

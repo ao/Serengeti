@@ -61,6 +61,60 @@ final class PeerClient {
                 .thenApply(m -> Op.listFromJson(m.get("ops")));
     }
 
+    // ---- protocol 2: bucket digests ----
+
+    /** A peer that answers 404 to the protocol 2 routes runs 2.0; the caller falls back to whole-database sync. */
+    static final class NotSupported extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        NotSupported() {
+            super("peer has no protocol 2 routes", null, false, false);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    CompletableFuture<Map<String, Map<String, Object>>> roots(String peer) {
+        return send(request(peer, "/internal/v2/roots", CALL_TIMEOUT).GET().build(), true).thenApply(m -> {
+            if (!(m.get("dbs") instanceof Map<?, ?> d)) {
+                throw new IllegalStateException("peer sent no roots");
+            }
+            return (Map<String, Map<String, Object>>) d;
+        });
+    }
+
+    CompletableFuture<List<Op>> schema(String peer, String db) {
+        return get(peer, "/internal/v2/schema?db=" + enc(db), CALL_TIMEOUT).thenApply(m -> Op.listFromJson(m.get("ops")));
+    }
+
+    CompletableFuture<long[]> buckets(String peer, String db, String table) {
+        return get(peer, "/internal/v2/buckets?db=" + enc(db) + "&table=" + enc(table), CALL_TIMEOUT).thenApply(m -> {
+            if (!(m.get("sums") instanceof List<?> l) || l.size() != com.ataiva.serengeti.core.storage.Store.BUCKETS) {
+                throw new IllegalStateException("peer sent bad bucket sums");
+            }
+            long[] out = new long[l.size()];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = ((Number) l.get(i)).longValue();
+            }
+            return out;
+        });
+    }
+
+    CompletableFuture<List<Op>> rows(String peer, String db, String table, java.util.Collection<Integer> buckets) {
+        StringBuilder b = new StringBuilder();
+        for (int i : buckets) {
+            if (b.length() > 0) {
+                b.append(',');
+            }
+            b.append(i);
+        }
+        return get(peer, "/internal/v2/rows?db=" + enc(db) + "&table=" + enc(table) + "&buckets=" + b, STATE_TIMEOUT)
+                .thenApply(m -> Op.listFromJson(m.get("ops")));
+    }
+
+    private static String enc(String s) {
+        return URLEncoder.encode(s, StandardCharsets.UTF_8);
+    }
+
     CompletableFuture<Void> apply(String peer, List<Op> ops) {
         String body = Json.write(Map.of("ops", Op.toJson(ops)));
         HttpRequest r = request(peer, "/internal/apply", CALL_TIMEOUT)
@@ -79,7 +133,14 @@ final class PeerClient {
     }
 
     private CompletableFuture<Map<String, Object>> send(HttpRequest r) {
+        return send(r, false);
+    }
+
+    private CompletableFuture<Map<String, Object>> send(HttpRequest r, boolean probe) {
         return http.sendAsync(r, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).thenApply(res -> {
+            if (probe && res.statusCode() == 404) {
+                throw new NotSupported();
+            }
             if (res.statusCode() != 200) {
                 throw new PeerError(r.uri().getAuthority() + " answered " + res.statusCode() + " to "
                         + r.uri().getPath());

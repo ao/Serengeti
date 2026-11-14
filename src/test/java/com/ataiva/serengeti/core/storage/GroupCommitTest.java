@@ -61,8 +61,10 @@ class GroupCommitTest {
             long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
             pool.shutdown();
             long fsyncs = e.walStats().fsyncs() - fsyncsBefore;
-            assertTrue(fsyncs < threads * each / 2, "expected shared fsyncs, got " + fsyncs + " for " + threads * each);
-            assertTrue(millis < threads * each * 10L / 2, "took " + millis + " ms");
+            System.out.println("group commit: " + threads * each + " writes, " + fsyncs + " fsyncs, " + millis + " ms");
+            // The count, not the time, is the property: the time depends on how busy the machine is.
+            // Measured: about 30 fsyncs for 400 writes. Fewer than 100 means writes clearly share them.
+            assertTrue(fsyncs < 100, "expected shared fsyncs, got " + fsyncs + " for " + threads * each);
         }
         try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
             assertEquals((long) threads * each, (long) e.read(s -> s.rowCount("d", "t")));

@@ -306,9 +306,13 @@ public final class HttpApi implements AutoCloseable {
         if (!"local".equals(c) && !"majority".equals(c)) {
             throw new HttpError(400, "consistency must be \"local\" or \"majority\"");
         }
+        Object ack = body.get("ack");
+        if (ack != null && !"local".equals(ack) && !"majority".equals(ack)) {
+            throw new HttpError(400, "ack must be \"local\" or \"majority\"");
+        }
         Object result;
         try {
-            result = deps.queries().run(q, role, "majority".equals(c));
+            result = deps.queries().run(q, role, "majority".equals(c), (String) ack);
         } catch (QueryService.Rejected r) {
             throw new HttpError(r.status(), r.getMessage());
         }

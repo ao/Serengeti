@@ -59,6 +59,8 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         volatile long lastContact = Long.MIN_VALUE / 2;
         volatile String node;
         volatile String lastError;
+        /** The peer runs 2.0 and has only the whole-database routes. */
+        volatile boolean protocol1;
 
         Peer(String address) {
             this.address = address;
@@ -80,12 +82,63 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     private final int port;
     private volatile boolean caughtUp;
     private volatile boolean closed;
+    /** Away from a majority for longer than the tombstone TTL; refuses to sync until emptied. */
+    private volatile boolean stale;
+    private final long tombstoneTtl;
+    private final boolean localAckByDefault;
+    private final java.nio.file.Path lastSyncFile;
+    private volatile long lastMajoritySync;
+    private volatile long lastSyncWritten;
+
+    /** File in the data directory: when this node last synced with a majority, in Unix milliseconds. */
+    public static final String LAST_SYNC_FILE = "last-sync";
+
+    /**
+     * Acknowledgement for the write being made on this thread: a majority of nodes (the default), or this
+     * node only. Set by the query layer for one statement.
+     */
+    public enum Ack {
+        MAJORITY, LOCAL
+    }
+
+    private static final ThreadLocal<Ack> ACK = new ThreadLocal<>();
+
+    /** Runs {@code body} with this acknowledgement for any write it makes, then restores the previous one. */
+    public static <T, E extends Exception> T withAck(Ack ack, java.util.concurrent.Callable<T> body) throws Exception {
+        Ack before = ACK.get();
+        ACK.set(ack);
+        try {
+            return body.call();
+        } finally {
+            if (before == null) {
+                ACK.remove();
+            } else {
+                ACK.set(before);
+            }
+        }
+    }
+
+    private boolean localAck() {
+        Ack a = ACK.get();
+        return a == null ? localAckByDefault : a == Ack.LOCAL;
+    }
 
     public Cluster(Config config, String nodeId, StorageEngine engine, SSLContext clientTls) {
         this(config, nodeId, engine, clientTls, System::currentTimeMillis);
     }
 
     Cluster(Config config, String nodeId, StorageEngine engine, SSLContext clientTls, LongSupplier clock) {
+        this.tombstoneTtl = config.tombstoneTtlMillis;
+        this.localAckByDefault = config.localWriteAck;
+        this.lastSyncFile = config.dataDir.resolve(LAST_SYNC_FILE);
+        long last = readLastSync(lastSyncFile);
+        if (last > 0 && clock.getAsLong() - last > tombstoneTtl) {
+            throw new com.ataiva.serengeti.core.config.ConfigException("this node last synced with a majority of its "
+                    + "cluster at " + java.time.Instant.ofEpochMilli(last) + ", longer ago than tombstone_ttl_hours ("
+                    + tombstoneTtl / 3_600_000 + "). Rows deleted since then could come back through it. Stop it, "
+                    + "empty its data directory except users.json and node-id, and start it again to resync.");
+        }
+        this.lastMajoritySync = last > 0 ? last : clock.getAsLong();
         this.nodeId = nodeId;
         this.size = config.clusterSize;
         this.quorum = config.quorum();
@@ -108,6 +161,45 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             peers.add(new Peer(p));
         }
         this.discovery = config.discoveryCidr == null ? null : Cidr.parse(config.discoveryCidr);
+    }
+
+    private static long readLastSync(java.nio.file.Path f) {
+        try {
+            if (!java.nio.file.Files.exists(f)) {
+                return 0;
+            }
+            return Long.parseLong(java.nio.file.Files.readString(f).trim());
+        } catch (IOException | NumberFormatException e) {
+            LOG.warning("cannot read " + f + "; treating this node as freshly synced: " + e.getMessage());
+            return 0;
+        }
+    }
+
+    /** Records a sync with a majority; writes the file at most once a minute. */
+    private void majoritySynced() {
+        long now = clock.getAsLong();
+        lastMajoritySync = now;
+        if (now - lastSyncWritten >= 60_000) {
+            try {
+                java.nio.file.Path tmp = lastSyncFile.resolveSibling(LAST_SYNC_FILE + ".tmp");
+                java.nio.file.Files.writeString(tmp, Long.toString(now) + "\n");
+                java.nio.file.Files.move(tmp, lastSyncFile, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                lastSyncWritten = now;
+            } catch (IOException e) {
+                LOG.warning("cannot write " + lastSyncFile + ": " + e.getMessage());
+            }
+        }
+    }
+
+    /** True if writes on this node are acknowledged locally unless a request asks for a majority. */
+    public boolean localAckByDefault() {
+        return localAckByDefault;
+    }
+
+    /** True if this node has been away from a majority for longer than the tombstone TTL. */
+    public boolean stale() {
+        return stale;
     }
 
     /** Starts syncing (and discovery, if configured). Call once the HTTP API serves {@code /internal/}. */
@@ -150,6 +242,9 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         m.put("quorum", quorum);
         m.put("reachable", reachable());
         m.put("caught_up", caughtUp);
+        m.put("stale", stale);
+        m.put("sync_ops_pulled", pulledOps.get());
+        m.put("write_ack", localAckByDefault ? "local" : "majority");
         List<Object> ps = new ArrayList<>();
         long now = clock.getAsLong();
         for (Peer p : peers) {
@@ -167,18 +262,38 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
 
     @Override
     public void before() {
+        if (stale) {
+            throw new UnavailableException("this node has been away from its cluster for longer than "
+                    + "tombstone_ttl_hours and must be emptied and resynced");
+        }
+        if (localAck()) {
+            // Accepted on this node alone; sync merges it into the others when they are reachable.
+            return;
+        }
         if (!caughtUp) {
             throw new UnavailableException("this node is still catching up with the cluster");
         }
         int r = reachable();
         if (r < quorum) {
-            throw new UnavailableException(r + " of " + size + " nodes are reachable; writes need " + quorum);
+            throw new UnavailableException(r + " of " + size + " nodes are reachable; writes need " + quorum
+                    + " (or send \"ack\": \"local\" to accept it on this node and merge later)");
         }
     }
 
     @Override
     public void after(List<Op> committed) {
         if (quorum == 1 && peers.isEmpty()) {
+            return;
+        }
+        if (localAck()) {
+            // Try to pass it on now, but do not wait: the client has its answer once this node has it.
+            for (Peer p : List.copyOf(peers)) {
+                client.apply(p.address, committed).whenComplete((v, err) -> {
+                    if (err == null) {
+                        p.lastContact = clock.getAsLong();
+                    }
+                });
+            }
             return;
         }
         AtomicInteger acks = new AtomicInteger(1);
@@ -276,9 +391,17 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     // counted as not synced
                 }
             }
-            if (!caughtUp && ok + 1 >= quorum) {
-                caughtUp = true;
-                LOG.info("caught up with " + ok + " of " + peers.size() + " peers; accepting writes");
+            if (ok + 1 >= quorum) {
+                majoritySynced();
+                if (!caughtUp) {
+                    caughtUp = true;
+                    LOG.info("caught up with " + ok + " of " + peers.size() + " peers; accepting writes");
+                }
+            } else if (!stale && clock.getAsLong() - lastMajoritySync > tombstoneTtl) {
+                stale = true;
+                LOG.severe("no sync with a majority for longer than tombstone_ttl_hours; this node now refuses "
+                        + "writes and syncing. Stop it, empty its data directory except users.json and node-id, "
+                        + "and start it again.");
             }
         } catch (RuntimeException e) {
             LOG.log(Level.WARNING, "sync round failed", e);
@@ -287,6 +410,104 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
 
     /** Pulls every database whose digest differs from the peer's. Completes with true if it worked. */
     private CompletableFuture<Boolean> syncWith(Peer p) {
+        if (stale) {
+            return CompletableFuture.completedFuture(false);
+        }
+        CompletableFuture<Integer> run = p.protocol1 ? syncWholeDatabases(p) : syncByBuckets(p).handle((n, err) -> {
+            if (err != null && unwrap(err) instanceof PeerClient.NotSupported) {
+                LOG.info("peer " + p.address + " runs 2.0; syncing with it by whole databases");
+                p.protocol1 = true;
+                return null;
+            }
+            if (err != null) {
+                throw new java.util.concurrent.CompletionException(unwrap(err));
+            }
+            return n;
+        }).thenCompose(n -> n == null ? syncWholeDatabases(p) : CompletableFuture.completedFuture(n));
+        return run.thenApply(merged -> {
+            if (merged > 0) {
+                LOG.fine("merged " + merged + " ops from " + p.address);
+            }
+            p.lastContact = clock.getAsLong();
+            if (p.lastError != null) {
+                LOG.info("peer " + p.address + " is reachable again");
+                p.lastError = null;
+            }
+            return true;
+        }).exceptionally(err -> {
+            String msg = PeerClient.describe(err);
+            if (!msg.equals(p.lastError)) {
+                LOG.warning("peer " + p.address + ": " + msg);
+            }
+            p.lastError = msg;
+            return false;
+        });
+    }
+
+    private static Throwable unwrap(Throwable t) {
+        while ((t instanceof java.util.concurrent.CompletionException
+                || t instanceof java.util.concurrent.ExecutionException) && t.getCause() != null) {
+            t = t.getCause();
+        }
+        return t;
+    }
+
+    /** Max buckets asked for in one request, to keep URLs short. */
+    static final int BUCKETS_PER_REQUEST = 200;
+
+    /**
+     * Protocol 2: compare per-table roots, then bucket sums of the tables that differ, then pull the rows
+     * of the buckets that differ. In a steady cluster this moves only the root map; under writes, only the
+     * buckets that the writes touched. Completes with the number of ops merged.
+     */
+    @SuppressWarnings("unchecked")
+    private CompletableFuture<Integer> syncByBuckets(Peer p) {
+        return client.roots(p.address).thenCompose(theirs -> {
+            Map<String, Map<String, Object>> mine = engine.read(Store::rootHashes);
+            List<CompletableFuture<Integer>> work = new ArrayList<>();
+            for (Map.Entry<String, Map<String, Object>> e : theirs.entrySet()) {
+                String db = e.getKey();
+                Map<String, Object> m = mine.get(db);
+                long mySchema = m == null ? 0 : ((Number) m.get("schema")).longValue();
+                long theirSchema = ((Number) e.getValue().get("schema")).longValue();
+                CompletableFuture<Integer> schemaStep = mySchema == theirSchema
+                        ? CompletableFuture.completedFuture(0)
+                        : client.schema(p.address, db).thenApply(this::mergeOrThrow);
+                Map<String, Object> theirTables = (Map<String, Object>) e.getValue().get("tables");
+                Map<String, Object> myTables = m == null ? Map.of() : (Map<String, Object>) m.get("tables");
+                for (Map.Entry<String, Object> t : theirTables.entrySet()) {
+                    long theirRoot = ((Number) t.getValue()).longValue();
+                    Object mineRoot = myTables.get(t.getKey());
+                    long myRoot = mineRoot == null ? 0 : ((Number) mineRoot).longValue();
+                    if (theirRoot == myRoot) {
+                        continue;
+                    }
+                    String table = t.getKey();
+                    // Schema first, so a drop that removes rows is applied before rows are compared.
+                    work.add(schemaStep.thenCompose(x -> client.buckets(p.address, db, table)).thenCompose(sums -> {
+                        long[] local = engine.read(s -> s.bucketSums(db, table));
+                        List<Integer> differ = new ArrayList<>();
+                        for (int i = 0; i < sums.length; i++) {
+                            if (sums[i] != local[i]) {
+                                differ.add(i);
+                            }
+                        }
+                        List<CompletableFuture<Integer>> pulls = new ArrayList<>();
+                        for (int from = 0; from < differ.size(); from += BUCKETS_PER_REQUEST) {
+                            List<Integer> chunk = differ.subList(from, Math.min(differ.size(), from + BUCKETS_PER_REQUEST));
+                            pulls.add(client.rows(p.address, db, table, List.copyOf(chunk)).thenApply(this::mergeOrThrow));
+                        }
+                        return sum(pulls);
+                    }));
+                }
+                work.add(schemaStep);
+            }
+            return sum(work);
+        });
+    }
+
+    /** Protocol 1 (2.0 peers): compare one SHA-256 per database and pull whole databases that differ. */
+    private CompletableFuture<Integer> syncWholeDatabases(Peer p) {
         return client.digests(p.address).thenCompose(theirs -> {
             Map<String, String> mine = engine.read(Store::digests);
             Set<String> differ = new TreeSet<>();
@@ -299,33 +520,33 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             for (String db : differ) {
                 pulls.add(client.state(p.address, db));
             }
-            return CompletableFuture.allOf(pulls.toArray(CompletableFuture[]::new)).thenApply(v -> {
-                int merged = 0;
-                for (CompletableFuture<List<Op>> f : pulls) {
-                    try {
-                        merged += engine.merge(f.join());
-                    } catch (IOException e) {
-                        throw new java.io.UncheckedIOException(e);
-                    }
-                }
-                if (merged > 0) {
-                    LOG.fine("merged " + merged + " ops from " + p.address);
-                }
-                p.lastContact = clock.getAsLong();
-                if (p.lastError != null) {
-                    LOG.info("peer " + p.address + " is reachable again");
-                    p.lastError = null;
-                }
-                return true;
-            });
-        }).exceptionally(err -> {
-            String msg = PeerClient.describe(err);
-            if (!msg.equals(p.lastError)) {
-                LOG.warning("peer " + p.address + ": " + msg);
+            List<CompletableFuture<Integer>> merged = new ArrayList<>();
+            for (CompletableFuture<List<Op>> f : pulls) {
+                merged.add(f.thenApply(this::mergeOrThrow));
             }
-            p.lastError = msg;
-            return false;
+            return sum(merged);
         });
+    }
+
+    /** Ops received by sync pulls (not by pushed writes), since start. */
+    private final java.util.concurrent.atomic.AtomicLong pulledOps = new java.util.concurrent.atomic.AtomicLong();
+
+    public long pulledOps() {
+        return pulledOps.get();
+    }
+
+    private int mergeOrThrow(List<Op> ops) {
+        pulledOps.addAndGet(ops.size());
+        try {
+            return engine.merge(ops);
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    private static CompletableFuture<Integer> sum(List<CompletableFuture<Integer>> parts) {
+        return CompletableFuture.allOf(parts.toArray(CompletableFuture[]::new))
+                .thenApply(v -> parts.stream().mapToInt(CompletableFuture::join).sum());
     }
 
     // ---- discovery ----
@@ -393,9 +614,57 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     @Override
     public Object handle(String method, String path, Map<String, String> query, Map<String, Object> body)
             throws QueryService.Rejected {
+        if (stale && !path.equals("/internal/hello")) {
+            // Its rows may include ones the cluster deleted and has since forgotten the tombstones of.
+            throw new QueryService.Rejected(503, "this node is out of date: it must be emptied and resynced");
+        }
         switch (path) {
             case "/internal/hello" -> {
-                return Map.of("node", nodeId, "cluster_size", size);
+                return Map.of("node", nodeId, "cluster_size", size, "protocol", 2);
+            }
+            case "/internal/v2/roots" -> {
+                return Map.of("node", nodeId, "dbs", engine.read(Store::rootHashes));
+            }
+            case "/internal/v2/schema" -> {
+                String db = required(query, "db");
+                List<Op> ops = engine.read(s -> s.schemaOps(db));
+                return Map.of("ops", Op.toJson(ops));
+            }
+            case "/internal/v2/buckets" -> {
+                String db = required(query, "db");
+                String table = required(query, "table");
+                long[] sums = engine.read(s -> s.bucketSums(db, table));
+                List<Object> out = new ArrayList<>(sums.length);
+                for (long v : sums) {
+                    out.add(v);
+                }
+                return Map.of("sums", out);
+            }
+            case "/internal/v2/rows" -> {
+                String db = required(query, "db");
+                String table = required(query, "table");
+                Set<Integer> wanted = new HashSet<>();
+                try {
+                    for (String part : required(query, "buckets").split(",")) {
+                        int b = Integer.parseInt(part.trim());
+                        if (b < 0 || b >= Store.BUCKETS) {
+                            throw new NumberFormatException();
+                        }
+                        wanted.add(b);
+                    }
+                } catch (NumberFormatException e) {
+                    throw new QueryService.Rejected(400, "buckets must be numbers from 0 to " + (Store.BUCKETS - 1));
+                }
+                if (wanted.size() > BUCKETS_PER_REQUEST) {
+                    throw new QueryService.Rejected(400, "at most " + BUCKETS_PER_REQUEST + " buckets per request");
+                }
+                // Schema ops travel with the rows, so the receiver can place rows whose table it has not seen.
+                List<Op> ops = engine.read(s -> {
+                    List<Op> o = new ArrayList<>(s.schemaOps(db));
+                    o.addAll(s.bucketOps(db, table, wanted));
+                    return o;
+                });
+                return Map.of("ops", Op.toJson(ops));
             }
             case "/internal/digests" -> {
                 return Map.of("node", nodeId, "digests", engine.read(Store::digests));
@@ -426,6 +695,14 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             }
             default -> throw new QueryService.Rejected(404, "no such route");
         }
+    }
+
+    private static String required(Map<String, String> query, String name) throws QueryService.Rejected {
+        String v = query.get(name);
+        if (v == null || v.isEmpty()) {
+            throw new QueryService.Rejected(400, name + " is required");
+        }
+        return v;
     }
 
     private static byte[] sha256(String s) {

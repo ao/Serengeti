@@ -68,11 +68,26 @@ public final class Node implements AutoCloseable {
 
             @Override
             public Object run(String text, Users.Role role, boolean majority) throws Rejected {
+                return run(text, role, majority, null);
+            }
+
+            @Override
+            public Object run(String text, Users.Role role, boolean majority, String ack) throws Rejected {
                 try {
                     if (majority && cluster != null) {
                         cluster.syncForRead();
                     }
-                    return q.run(text).toJson();
+                    if (ack == null || cluster == null) {
+                        return q.run(text).toJson();
+                    }
+                    Cluster.Ack a = ack.equals("local") ? Cluster.Ack.LOCAL : Cluster.Ack.MAJORITY;
+                    try {
+                        return Cluster.withAck(a, () -> q.run(text).toJson());
+                    } catch (QueryException | UnavailableException | IOException e) {
+                        throw e;
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                    }
                 } catch (QueryException e) {
                     throw new Rejected(400, e.getMessage());
                 } catch (UnavailableException e) {
@@ -149,6 +164,28 @@ public final class Node implements AutoCloseable {
         if (cluster != null) {
             cluster.start();
         }
+        maintenance = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "tombstone-gc");
+            t.setDaemon(true);
+            return t;
+        });
+        maintenance.scheduleWithFixedDelay(() -> {
+            try {
+                int n = storage.collectTombstones(config.tombstoneTtlMillis);
+                if (n > 0) {
+                    LOG.info("dropped " + n + " tombstones older than " + config.tombstoneTtlMillis / 3_600_000 + " h");
+                }
+            } catch (RuntimeException e) {
+                LOG.log(java.util.logging.Level.WARNING, "tombstone collection failed", e);
+            }
+        }, 1, 10, java.util.concurrent.TimeUnit.MINUTES);
+    }
+
+    private java.util.concurrent.ScheduledExecutorService maintenance;
+
+    /** Runs tombstone collection now, for tests. */
+    int collectTombstonesNow() {
+        return storage.collectTombstones(config.tombstoneTtlMillis);
     }
 
     /** The cluster this node belongs to, or null for a single node. */
@@ -179,9 +216,11 @@ public final class Node implements AutoCloseable {
         return new NodeOps() {
             @Override
             public List<java.util.function.BooleanSupplier> readiness() {
-                // In a cluster, ready means caught up with a majority since start-up and a majority reachable now.
+                // In a cluster, ready means caught up with a majority since start-up and a majority reachable
+                // now; a node that acknowledges writes locally by default only needs to be in date.
                 return cluster == null ? List.of()
-                        : List.of(() -> cluster.caughtUp() && cluster.reachable() >= cluster.quorum());
+                        : List.of(() -> !cluster.stale() && (cluster.localAckByDefault()
+                                || cluster.caughtUp() && cluster.reachable() >= cluster.quorum()));
             }
 
             @Override
@@ -221,6 +260,9 @@ public final class Node implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        if (maintenance != null) {
+            maintenance.shutdownNow();
+        }
         if (cluster != null) {
             cluster.close();
         }

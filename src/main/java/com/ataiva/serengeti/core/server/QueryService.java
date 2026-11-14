@@ -19,6 +19,14 @@ public interface QueryService {
         return run(query, role);
     }
 
+    /**
+     * As above; {@code ack} is "majority", "local", or null for the node's default. With "local", a write is
+     * acknowledged once it is in this node's log, and reaches the other nodes when they are reachable.
+     */
+    default Object run(String query, Users.Role role, boolean majority, String ack) throws Rejected {
+        return run(query, role, majority);
+    }
+
     /** A query the client got wrong, with the HTTP status to return. */
     final class Rejected extends Exception {
         private static final long serialVersionUID = 1L;
