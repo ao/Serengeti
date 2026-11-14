@@ -3,16 +3,20 @@
 #
 #   tests/bench/report.sh DIR                          one run (run.sh writes this to DIR/results.md)
 #   tests/bench/report.sh NAME=DIR NAME=DIR ...        one table per scenario, a column per run for each figure
-#   UPDATE_DOC=1 tests/bench/report.sh NAME=DIR ...    also put the output between the bench markers in
+#   UPDATE_DOC=1 tests/bench/report.sh NAME=DIR ...    also put the output between the markers
+#                                                      <!-- bench:begin --> and <!-- bench:end --> in
 #                                                      docs/BENCHMARKS.md (refused for QUICK=1 runs)
+#   DOC_MARK=name                                      use <!-- name:begin --> and <!-- name:end --> instead
+#   METHOD=0                                           leave out the machine and method block
 #
 # DIR is the OUT directory of a run (results.tsv and meta.tsv). NAME labels the run's columns; the
 # default is the version the image reports. Needs bash, awk and sed only.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 DOC=docs/BENCHMARKS.md
+MARK=${DOC_MARK:-bench}
 
-[ $# -ge 1 ] || { sed -n '2,10p' "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,13p' "$0"; exit 2; }
 m() { awk -F'\t' -v k="$2" '$1 == k { sub(/^[^\t]*\t/, ""); v = $0 } END { print v }' "$1/meta.tsv"; }
 NAMES=() DIRS=() TSVS=()
 for a in "$@"; do
@@ -232,29 +236,37 @@ e_tables() {
     }' "${TSVS[@]}"
 }
 
+run_line() { # index: what was run, from which commit, when
+  local d=${DIRS[$1]}
+  echo "- ${NAMES[$1]}: image \`$(m "$d" image)\` ($(m "$d" image_arch), id $(m "$d" image_id | cut -c1-19)), version $(m "$d" version), built from commit $(m "$d" image_commit). Run from $(m "$d" start) to $(m "$d" end) (UTC) with the harness at commit $(m "$d" harness_commit)."
+}
+
 has() { cat "${TSVS[@]}" | awk -F'\t' -v s="$1" '(($1 == "L" || $1 == "S") && $2 == s) || ($1 == "E" && s == "e") { f = 1 } END { exit !f }'; }
 
 report() {
   local i reps secs warm
   reps=$(fact reps); secs=$(fact secs); warm=$(fact warm)
+  if [ "${METHOD:-1}" = 0 ]; then
+    for i in "${!DIRS[@]}"; do run_line "$i"; done
+    if [ -n "$(fact node_args)" ]; then echo "- Extra arguments for every node (not the image default): \`$(fact node_args)\`."; fi
+    echo
+  else
   echo "### Machine and method"
   echo
   echo "- Machine: $(fact machine). Docker: $(fact docker). Containers see $(fact in_docker)."
   echo "- Disk: $(fact disk). Data volumes are on $(fact fs) under $(fact docker_root). One 4 KiB O_DSYNC write there (\`dd oflag=dsync\`, one write at a time, in a data volume of the image) took on average $(per_run dd_of), the least one \`fsync=always\` write can take.$( [ "$(fact host_os)" = Darwin ] && printf ' Whether the Docker VM passes the flush on to the SSD was not tested.')"
-  for i in "${!DIRS[@]}"; do
-    local d=${DIRS[$i]}
-    echo "- ${NAMES[$i]}: image \`$(m "$d" image)\` ($(m "$d" image_arch), id $(m "$d" image_id | cut -c1-19)), version $(m "$d" version), built from commit $(m "$d" image_commit). Run from $(m "$d" start) to $(m "$d" end) (UTC) with the harness at commit $(m "$d" harness_commit)."
-  done
+  for i in "${!DIRS[@]}"; do run_line "$i"; done
   echo "- Other load: $(per_run load_of)."
   echo "- Memory caps: $(fact node_mem) per Serengeti node (the JVM's maximum heap is then $(fact heap) MiB), $(fact tools_mem) for the load generator. No CPU limits. Java: $(fact java)."
   echo "- Load generator: $(fact tool) from \`$(fact oha_image)\`, in a container on the same private Docker network as the nodes. HTTP/1.1 with keep-alive, Basic auth, one connection per concurrent request."
   echo "- Runs: each figure in scenarios a to d is from $reps run(s) of $secs s, each after a $warm s warm-up that is not counted, each on a new table. Requests/s is the median of the runs, with the lowest and highest in brackets; the latencies and fsync figures are those of the run with the median rate. Latency is the time from sending a request to the end of its response, as the load generator saw it. Errors (non-200 answers and failed requests) are listed under a table when there were any."
   echo "- Scenario e: $(fact e_reps) run(s) for each table size, each on a new cluster; each figure is the median of the runs, with the lowest and highest in brackets."
-  echo "- Rows: \`{\"_id\": <uuid>, \"n\": <integer>, \"s\": <28-character string>}\`. After each insert run the table's row count is checked against the number of acknowledged inserts, and in a cluster every node must reach that count before the next run."
+  echo "- Rows: \`{\"_id\": <uuid>, \"n\": <integer>, \"s\": <28-character string>}\`. After each insert run the table's row count is checked against the number of acknowledged inserts, and in a cluster every node must reach that count; then the table is dropped, so every run starts with the same rows in memory."
   echo "- Settings: defaults except \`SERENGETI_FSYNC\`, the cluster settings and TLS. The server keeps a verified password for 60 s, so a run may include one bcrypt check; the server answers on 16 threads, so concurrency 32 queues."
   if [ -n "$(fact node_args)" ]; then echo "- Extra arguments for every node (not the image default): \`$(fact node_args)\`."; fi
   echo "- Reproduce: \`tests/bench/run.sh\` (\`QUICK=1\` for a short run; \`IMAGE=name:tag\` for another image), then \`tests/bench/report.sh NAME=OUT ...\` to put runs side by side."
   echo
+  fi
   if has a; then
     echo "### a. Single node, plain HTTP, fsync=always: INSERT"; echo
     latency_table a Concurrency "" fsync; echo
@@ -290,14 +302,14 @@ report() {
 }
 
 if [ "${UPDATE_DOC:-0}" = 1 ]; then
-  if ! grep -q '<!-- bench:begin -->' "$DOC" || ! grep -q '<!-- bench:end -->' "$DOC"; then
-    echo "report: $DOC has no bench markers" >&2; exit 1
+  if ! grep -qF "<!-- $MARK:begin -->" "$DOC" || ! grep -qF "<!-- $MARK:end -->" "$DOC"; then
+    echo "report: $DOC has no <!-- $MARK:begin --> and <!-- $MARK:end --> markers" >&2; exit 1
   fi
   tmp=$(mktemp)
   report > "$tmp"
-  awk -v report="$tmp" '
-    /<!-- bench:begin -->/ { print; while ((getline line < report) > 0) print line; skip = 1; next }
-    /<!-- bench:end -->/ { skip = 0 }
+  awk -v report="$tmp" -v b="<!-- $MARK:begin -->" -v e="<!-- $MARK:end -->" '
+    $0 == b { print; while ((getline line < report) > 0) print line; skip = 1; next }
+    $0 == e { skip = 0 }
     !skip { print }' "$DOC" > "$tmp.doc" && cp "$tmp.doc" "$DOC"
   cat "$tmp"; rm -f "$tmp" "$tmp.doc"
   echo "updated $DOC" >&2

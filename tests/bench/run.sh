@@ -82,7 +82,19 @@ cleanup() {
   docker volume ls -q --filter "label=serengeti-bench=$RUN" | xargs -r docker volume rm >/dev/null 2>&1 || true
   docker network ls -q --filter "label=serengeti-bench=$RUN" | xargs -r docker network rm >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+# on_exit: when the harness fails, say what state the nodes were in (a node stopped by its memory cap or by
+# -XX:+ExitOnOutOfMemoryError otherwise shows up only as a failed request), then clean up.
+on_exit() {
+  local rc=$? c
+  if [ "$rc" != 0 ]; then
+    for c in $(docker ps -aq --filter "label=serengeti-bench=$RUN" --filter "name=$RUN-node"); do
+      echo "harness: exit $rc; node $(docker inspect -f '{{.Name}}: {{.State.Status}}, exit code {{.State.ExitCode}}, OOM-killed {{.State.OOMKilled}}' "$c")" >&2
+      docker logs --tail 5 "$c" 2>&1 | sed 's/^/    /' >&2
+    done
+  fi
+  cleanup
+}
+trap on_exit EXIT
 trap 'exit 130' INT TERM
 
 T0=$(date +%s)
@@ -256,7 +268,9 @@ result() { # scenario config key rep ok errors rps p50 p95 p99 max fsyncs fsync_
 }
 
 # measure_writes scenario config conc rep base_url: INSERT without _id, new table per run. BODY_EXTRA is
-# added to the request body (e.g. ', "ack": "local"'); the table's row count is left in LAST_ROWS.
+# added to the request body (e.g. ', "ack": "local"'); the table's row count is left in LAST_ROWS and its
+# name in LAST_TABLE. The caller drops the table (drop_last) once it is done with it, so that the rows of
+# earlier runs do not fill the node's heap: at fsync=interval one run can insert 200k rows.
 measure_writes() {
   local sc=$1 cfg=$2 c=$3 rep=$4 base=$5
   local tbl="bench.t_${sc//-/_}_c${c}_r${rep}" label="$1-$2-c$3-r$4"
@@ -272,10 +286,11 @@ measure_writes() {
   got=$(drv count "$base" "$tbl")
   if [ "$err" != 0 ]; then check="rows $got of $want acknowledged"
   elif [ "$got" != "$want" ]; then echo "harness: $tbl holds $got rows, $want inserts were acknowledged" >&2; exit 1; fi
-  LAST_ROWS=$got
+  LAST_ROWS=$got LAST_TABLE=$tbl
   DENV=()
   result "$sc" "$cfg" "$c" "$rep" "$ok" "$err" "$rps" "$p50" "$p95" "$p99" "$max" "$f" "$s" "$check" "${detail:-}"
 }
+drop_last() { sql "$1" "DROP TABLE $LAST_TABLE" >/dev/null; }   # base_url
 
 # ---- machine and method ----
 
@@ -435,9 +450,11 @@ single_writes() { # scenario fsync tls label
   DENV+=(-e "BODY={\"query\": \"INSERT INTO bench.warmup (n) VALUES (1)\"}")
   drv run "$sc-warmup" >/dev/null
   DENV=()
+  sql "$BASE" "DROP TABLE bench.warmup" >/dev/null
   for rep in $(seq 1 "$REPS"); do
     for c in $WRITE_CONCURRENCY; do
       measure_writes "$sc" "$cfg" "$c" "$rep" "$BASE"
+      drop_last "$BASE"
     done
   done
   drop_nodes
@@ -497,13 +514,16 @@ cluster_writes() {
     -e "BODY={\"query\": \"INSERT INTO bench.warmup (n) VALUES (1)\"${BODY_EXTRA:-}}")
   drv run "$sc-warmup" >/dev/null
   DENV=()
+  wait_converged bench.warmup || { echo "harness: the nodes did not converge after the $sc warm-up" >&2; exit 1; }
+  sql "$BASE" "DROP TABLE bench.warmup" >/dev/null
   for rep in $(seq 1 "$REPS"); do
     for c in $WRITE_CONCURRENCY; do
       measure_writes "$sc" "$cfg" "$c" "$rep" "$BASE"
-      wait_converged "bench.t_${sc//-/_}_c${c}_r${rep}" "$LAST_ROWS" ||
+      wait_converged "$LAST_TABLE" "$LAST_ROWS" ||
         { echo "harness: the nodes did not converge after $sc, concurrency $c, run $rep" >&2; exit 1; }
       record C "$sc" "$c" "$rep" "$CONVERGED_SECS"
       say "RESULT $sc | $c | run $rep | all three nodes held the $LAST_ROWS rows $CONVERGED_SECS s after the run"
+      drop_last "$BASE"
     done
   done
 }
@@ -631,7 +651,7 @@ for size in $E_SIZES; do
   docker exec "$TOOLS" cat "/work/$label.json" > "$OUT/raw/$label.json"
   record EW "$size" "$rep" "$ok" "$err" "$rps" "$p50" "$p95" "$p99"
   say "RESULT e | $size rows | run $rep | writes: $ok ok, $err errors, $rps/s, p50 $p50 ms, p95 $p95 ms, p99 $p99 ms ${detail:+| $detail}"
-  mem=$(for n in "${CNODES[@]}"; do mem_mib "$n"; done)
+  mem=$(for n in "${CNODES[@]}"; do mem_mib "$n"; done | tr '\n' ' ' | sed 's/ $//')
   record EM2 "$size" "$rep" $mem
   say "RESULT e | $size rows | run $rep | memory in use at the end, n1 n2 n3: $mem MiB"
   wait_converged bench.e || { echo "harness: the nodes did not converge after the writes" >&2; exit 1; }
