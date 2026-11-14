@@ -1,0 +1,9 @@
+# Load generator for tests/bench/run.sh: the oha binary from its pinned release image, plus curl and jq
+# for the driver scripts. oha needs glibc 2.39 or newer, so the base is Ubuntu 24.04.
+ARG OHA_IMAGE=ghcr.io/hatoo/oha:1.16.0
+FROM ${OHA_IMAGE} AS oha
+
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends curl jq ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=oha /bin/oha /usr/local/bin/oha
