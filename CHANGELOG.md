@@ -21,11 +21,13 @@ GitHub release notes and tags.
 - Tombstones are dropped after `tombstone_ttl_hours` (default 168). A cluster node that has not synced
   with a majority for longer than that refuses to start or keep syncing, so deleted rows cannot come back.
 
-### Changed
+### Fixed
 - A peer that does not answer no longer makes the others look unreachable. Each sync round waited for
   every peer in turn, so while a cut-off peer's calls ran to their timeout the reachable peers went
   uncontacted for longer than the 3-second window, and a node that had a majority refused writes with
-  503. Each peer now syncs on its own.
+  503. Each peer now syncs on its own. 2.0.0 has this bug.
+
+### Changed
 - Sync compares one hash per table, then per-bucket sums, and pulls only the rows that differ. 2.0
   pulled every database whose digest differed, so its traffic grew with the data under steady writes.
   Nodes still sync with 2.0 peers the old way, so a cluster can be upgraded one node at a time.
