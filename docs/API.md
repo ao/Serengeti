@@ -104,8 +104,17 @@ POST /v1/query
 
 In a cluster, add `"consistency": "majority"` to read only after syncing with a majority of nodes, so
 the result includes every acknowledged write (see [CONSISTENCY.md](CONSISTENCY.md)). The default,
-`"local"`, answers from the node's own data. Writes return 503 when fewer than a majority of nodes are
-reachable.
+`"local"`, answers from the node's own data.
+
+Writes return 503 when fewer than a majority of nodes are reachable. Add `"ack": "local"` to have the
+write acknowledged once it is in this node's log instead; it reaches the other nodes when they are
+reachable. `"ack": "majority"` asks for the majority on a node whose default (`write_ack`) is local. On a
+single node, `ack` changes nothing.
+
+```
+POST /v1/query
+{"query": "INSERT INTO shop.items (name) VALUES ('bolt')", "ack": "local"}
+```
 
 Reads return the column names and one array per row:
 

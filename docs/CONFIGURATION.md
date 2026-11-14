@@ -20,6 +20,8 @@ setting makes the node exit with status 2 and a one-line message.
 | `peers` | none | The other nodes of the cluster, `host:port,host:port`. Not this node itself. See [CONSISTENCY.md](CONSISTENCY.md). |
 | `cluster_size` | peers + 1 | Number of nodes, 1 to 7. Writes need a majority of it. Required with `discovery_cidr`. |
 | `discovery_cidr` | none | Opt-in: find peers by asking `/internal/hello` on `port` at every address in this range, at most 256 addresses (a /24 or /120). Needs TLS and `cluster_size`. |
+| `write_ack` | `majority` | In a cluster: `majority` acknowledges a write once a majority of nodes has it; `local` once this node has it, even with no peer reachable. Requests override it with `"ack"`. See [CONSISTENCY.md](CONSISTENCY.md). |
+| `tombstone_ttl_hours` | `168` | How long a delete's tombstone is kept, and so the longest a cluster node may be away and still rejoin with its data. |
 | `cluster_plaintext` | none | `allow` lets a node with peers run without TLS, sending the cluster key and data in clear. For a private network only. |
 | `tls_truststore` | JDK CAs | PKCS#12 file with the CA certificates that peers' certificates must chain to. Needs its password below. |
 | `tls_keystore` | none | PKCS#12 file with this node's key and certificate chain. When set, the node serves HTTPS only (TLS 1.2 and 1.3) and there is no plaintext listener. Needs the keystore password below. |
@@ -59,6 +61,7 @@ The admin password is only used when there is no account yet. Once `users.json` 
 | `users.json` | Accounts as bcrypt hashes (cost 12). Mode 0600; a node refuses to start if others can read it. |
 | `setup-token` | One-time setup token (mode 0600), present only until the first admin password is set. |
 | `node-id` | A random id for this node, kept across restarts. |
+| `last-sync` | In a cluster: when this node last synced with a majority (Unix milliseconds), written at most once a minute. |
 
 Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md#backup)). Copying the directory
 of a stopped node also works. A backup holds the data only: `users.json`, `node-id` and `setup-token` are not in it.

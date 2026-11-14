@@ -4,6 +4,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases up to 1.3.4 are described in their
 GitHub release notes and tags.
 
+## [Unreleased] - 2.1.0
+
+### Added
+- Writes that do not wait for a majority: `"ack": "local"` on a query, or `SERENGETI_WRITE_ACK=local` as a
+  node's default. The write is acknowledged once it is in this node's log, also when no peer is
+  reachable, and reaches the other nodes through sync. Nodes cut off from each other keep taking writes
+  and converge when they meet. See docs/CONSISTENCY.md.
+- Tombstones are dropped after `tombstone_ttl_hours` (default 168). A cluster node that has not synced
+  with a majority for longer than that refuses to start or keep syncing, so deleted rows cannot come back.
+
+### Changed
+- Sync compares one hash per table, then per-bucket sums, and pulls only the rows that differ. 2.0
+  pulled every database whose digest differed, so its traffic grew with the data under steady writes.
+  Nodes still sync with 2.0 peers the old way, so a cluster can be upgraded one node at a time.
+- Concurrent writes share fsyncs (group commit) instead of each waiting for its own under a lock. A write
+  is still acknowledged only once it is on disk.
+- A failed fsync now stops all further writes on the node instead of being retried.
+
+### Removed
+- org.json, lz4-java and snappy-java, which the 2.0 jar contained but did not use.
+
 ## [2.0.0] - 2026-11-13
 
 2.0 replaces the storage, query and server code of 1.x. It is not compatible with 1.x: the HTTP routes,

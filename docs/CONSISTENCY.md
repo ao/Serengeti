@@ -21,16 +21,42 @@ DELETE; an INSERT with an explicit `_id` then fails with "already exists" if the
 With 3 nodes, writes need 2; with 5, they need 3. A cluster with 2 nodes needs both, so either one being
 down stops writes.
 
+## Writes that do not wait for a majority
+
+With `"ack": "local"` in the request, or `SERENGETI_WRITE_ACK=local` as a node's default, steps 1 and 4
+change: the node accepts the write whatever it can reach, answers 200 once the write is in its own log,
+and sends it to the peers it can reach without waiting for them. Peers it cannot reach get it through sync
+when the network comes back. A node cut off from the others keeps taking writes, and so does the rest of
+the cluster; when they meet again, every node ends up with both sides' writes.
+
+The cost is the usual one for this kind of system: a write acknowledged this way is on one disk until it
+has spread, and two sides that change the same row while apart keep only the later change (see
+Conflicts). Use it where staying writable matters more than that, such as a site whose uplink drops, and
+keep the default where it does not. A request can still ask for `"ack": "majority"` on a node whose
+default is local.
+
 ## Sync
 
-Every second each node compares a SHA-256 digest of each database with each peer and pulls the full
-state of any database whose digest differs. The state is a CRDT: rows, tables and databases keep their
-newest version (a value or a tombstone), merging is idempotent and order-independent, and the merge only
-logs what is new. This is how a node that was down or partitioned catches up, and how a write that missed
-a peer gets there.
+The state is a CRDT: rows, tables and databases keep their newest version (a value or a tombstone),
+merging is idempotent and order-independent, and the merge only logs what is new. This is how a node
+that was down or partitioned catches up, and how a write that missed a peer gets there.
 
-Pulling a whole database when one row differs is simple and correct, but costs bandwidth that grows with
-the database. Serengeti is meant for databases that fit comfortably in memory on each node.
+Each table spreads its rows over 1024 buckets by a hash of their id, and keeps, per bucket, a sum of
+hashes of its live rows' versions, updated on every change. Every second each node asks each peer for one
+root value per table, compares, asks for the 1024 bucket sums of any table that differs, and pulls only
+the rows of the buckets that differ. A cluster where nothing changed exchanges the roots and nothing else;
+catching up after one row changed pulls that row's bucket. Nodes running 2.0 do not have these routes,
+and are synced the 2.0 way (one digest per database, whole databases pulled), so a cluster can be upgraded
+one node at a time.
+
+## Deletes and how long a node may be away
+
+A delete leaves a tombstone so that an older copy of the row cannot come back from a node that missed the
+delete. Tombstones are kept for `tombstone_ttl_hours` (default 168, one week) and then dropped. A node
+that has not synced with a majority for longer than that might hold rows deleted meanwhile whose
+tombstones are already gone, so it refuses to start, and a running node that crosses the limit stops
+syncing and taking writes. To bring it back, stop it, empty its data directory except `users.json` and
+`node-id`, and start it; it resyncs from its peers. The time of its last sync is kept in `last-sync`.
 
 ## Conflicts
 
@@ -41,7 +67,7 @@ removes every row older than D.
 
 ## Reads
 
-By default a read is answered from the local node and may miss writes that it has not received yet.
+By default a read is answered from the node's own data and may miss writes that it has not received yet.
 With `"consistency": "majority"` in the request, the node first syncs with enough peers to form a
 majority, so the read sees every write that was acknowledged before it began. That read fails with 503
 when no majority is reachable.
