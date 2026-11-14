@@ -3,23 +3,37 @@
 # (no outside access, nothing published to the host). A load-generator container on the same network
 # drives the nodes with oha; see tests/bench/Dockerfile.tools and docs/BENCHMARKS.md.
 #
-#   tests/bench/run.sh                         builds serengeti:bench, then runs everything (about 40 minutes)
+#   tests/bench/run.sh                         builds serengeti:bench, then runs everything (about 50 minutes)
 #   QUICK=1 tests/bench/run.sh                 a tiny version of every scenario (about 3 minutes)
 #   IMAGE=repo/name:tag tests/bench/run.sh     uses that image as it is and builds nothing
+#   tests/bench/report.sh A=dir B=dir          the results of two runs side by side (see report.sh)
+#
+# The report names the commit the image was built from: IMAGE_COMMIT if set, else the image's
+# org.opencontainers.image.revision label. A build by this script sets that label to HEAD. For another
+# image, build it with --label org.opencontainers.image.revision=<commit> or pass IMAGE_COMMIT.
+#
+# Machine description, for the report:
+#   INSTANCE_TYPE      the EC2 instance type; read from the instance metadata service (IMDSv2, from a
+#                      container on the host network) when not set, and left out off EC2
+#   DISK="..."         what the Docker data root is on, as provisioned, e.g. "gp3 EBS, 3000 IOPS, 125 MB/s";
+#                      the device model and size are added from /sys on Linux
 #
 # Other settings:
 #   SKIP_BUILD=1       reuse the local serengeti:bench
-#   SCENARIOS="a b c"  run only these (a, a-tls, b, c, d, e; the default is all, and a-tls is left out of QUICK)
+#   SCENARIOS="a b c"  run only these (a, a-tls, b, c, d, d-local, e; the default is all, and a-tls is left
+#                      out of QUICK). d-local needs an image that accepts "ack": "local" (2.1 and later); with
+#                      an older one it is skipped and the report says so
 #   NODE_ARGS="..."    extra docker run arguments for every node, split on spaces, e.g.
 #                      NODE_ARGS="-e JDK_JAVA_OPTIONS=-Dsome.property=1"; they are printed in the report
-#   OUT=dir            where the markdown report, the per-run results (TSV) and oha's raw JSON go
-#                      (default tests/bench/out)
-#   UPDATE_DOC=1       put the report between the bench markers in docs/BENCHMARKS.md
+#   OUT=dir            where the markdown report (results.md), the per-run results (results.tsv), the
+#                      facts about the machine and image (meta.tsv) and oha's raw JSON go (default
+#                      tests/bench/out). tests/bench/report.sh renders one or more of these directories.
 #   MAX_BUSY_PCT, QUIET_WAIT_SECS, SCENARIO_WAIT_SECS
-#                      the run starts once the Docker VM CPUs are at most this busy (default 25 percent),
-#                      or after waiting this long (default 900 s; 0 in QUICK), and each scenario waits up to
-#                      SCENARIO_WAIT_SECS (default 300 s; 0 in QUICK) the same way; the report says how busy it was
-#   REPS WARM SECS READ_SIZES E_SIZES E_IDLE E_SECS E_RATE WRITE_CONCURRENCY READ_CONCURRENCY NODE_MEM
+#                      the run starts once the CPUs Docker runs on (the Docker VM's on macOS) are at most
+#                      this busy (default 25 percent), or after waiting this long (default 900 s; 0 in QUICK),
+#                      and each scenario waits up to SCENARIO_WAIT_SECS (default 300 s; 0 in QUICK) the same
+#                      way; the report says how busy it was
+#   REPS WARM SECS READ_SIZES E_SIZES E_REPS E_IDLE E_SECS E_RATE WRITE_CONCURRENCY READ_CONCURRENCY NODE_MEM
 #                      sizes and durations; see the defaults below
 #
 # The exit status is non-zero only when the harness fails (a node does not start, a statement is refused,
@@ -31,16 +45,16 @@ QUICK=${QUICK:-0}
 if [ "$QUICK" = 1 ]; then
   REPS=${REPS:-1}; WARM=${WARM:-1}; SECS=${SECS:-2}
   READ_SIZES=${READ_SIZES:-"200 1000 5000"}
-  E_SIZES=${E_SIZES:-"2000"}; E_IDLE=${E_IDLE:-4}; E_SECS=${E_SECS:-8}; E_SETTLE=${E_SETTLE:-2}
+  E_SIZES=${E_SIZES:-"2000"}; E_REPS=${E_REPS:-1}; E_IDLE=${E_IDLE:-4}; E_SECS=${E_SECS:-8}; E_SETTLE=${E_SETTLE:-2}
   DD_COUNT=${DD_COUNT:-100}
-  SCENARIOS=${SCENARIOS:-"a b c d e"}
+  SCENARIOS=${SCENARIOS:-"a b c d d-local e"}
   QUIET_WAIT_SECS=${QUIET_WAIT_SECS:-0}; SCENARIO_WAIT_SECS=${SCENARIO_WAIT_SECS:-0}
 else
   REPS=${REPS:-3}; WARM=${WARM:-5}; SECS=${SECS:-15}
   READ_SIZES=${READ_SIZES:-"1000 10000 100000"}
-  E_SIZES=${E_SIZES:-"10000 100000"}; E_IDLE=${E_IDLE:-30}; E_SECS=${E_SECS:-60}; E_SETTLE=${E_SETTLE:-15}
+  E_SIZES=${E_SIZES:-"10000 100000"}; E_REPS=${E_REPS:-3}; E_IDLE=${E_IDLE:-30}; E_SECS=${E_SECS:-60}; E_SETTLE=${E_SETTLE:-15}
   DD_COUNT=${DD_COUNT:-500}
-  SCENARIOS=${SCENARIOS:-"a a-tls b c d e"}
+  SCENARIOS=${SCENARIOS:-"a a-tls b c d d-local e"}
   QUIET_WAIT_SECS=${QUIET_WAIT_SECS:-900}; SCENARIO_WAIT_SECS=${SCENARIO_WAIT_SECS:-300}
 fi
 MAX_BUSY_PCT=${MAX_BUSY_PCT:-25}
@@ -53,7 +67,6 @@ READ_CONCURRENCY=${READ_CONCURRENCY:-8}
 NODE_MEM=${NODE_MEM:-1g}
 TOOLS_MEM=${TOOLS_MEM:-384m}
 OUT=${OUT:-tests/bench/out}
-DOC=docs/BENCHMARKS.md
 
 RUN=bn$$
 NET=$RUN-net
@@ -63,11 +76,6 @@ random() { LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | head -c "$1" || true; }
 PW=$(random 24)
 CLUSTER_KEY=$(random 40)
 STORE_PW=$(random 20)
-
-if [ "$QUICK" = 1 ] && [ "${UPDATE_DOC:-0}" = 1 ]; then
-  echo "refusing UPDATE_DOC=1 with QUICK=1: the quick numbers are not measurements to publish" >&2
-  exit 2
-fi
 
 cleanup() {
   docker ps -aq --filter "label=serengeti-bench=$RUN" | xargs -r docker rm -f >/dev/null 2>&1 || true
@@ -87,11 +95,18 @@ TSV=$OUT/results.tsv
 
 # ---- images ----
 
+REVISION_LABEL=org.opencontainers.image.revision
 if [ -z "${IMAGE:-}" ]; then
   IMAGE=serengeti:bench
-  if [ "${SKIP_BUILD:-0}" != 1 ]; then docker build -q -t "$IMAGE" . >/dev/null; fi
+  if [ "${SKIP_BUILD:-0}" != 1 ]; then
+    rev=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+    if [ -n "$(git status --porcelain -- src pom.xml Dockerfile 2>/dev/null)" ]; then rev="$rev+uncommitted"; fi
+    docker build -q -t "$IMAGE" --label "$REVISION_LABEL=$rev" . >/dev/null
+  fi
 fi
 docker image inspect "$IMAGE" >/dev/null 2>&1 || { echo "no such image: $IMAGE" >&2; exit 1; }
+IMAGE_COMMIT=${IMAGE_COMMIT:-$(docker image inspect "$IMAGE" --format "{{index .Config.Labels \"$REVISION_LABEL\"}}" | sed 's/^<no value>$//')}
+IMAGE_COMMIT=${IMAGE_COMMIT:-"not recorded (no $REVISION_LABEL label and no IMAGE_COMMIT)"}
 OHA_IMAGE=$(sed -n 's/^ARG OHA_IMAGE=//p' tests/bench/Dockerfile.tools)
 docker build -q -t serengeti-bench-tools -f tests/bench/Dockerfile.tools tests/bench >/dev/null
 
@@ -202,14 +217,25 @@ start_cluster() { # three TLS nodes n1..n3, all writable; $BASE is n1
   sql "$BASE" "CREATE DATABASE bench" >/dev/null
 }
 
-wait_converged() { # table [count]: the three nodes report the same row count (and the given one)
-  local a b c
-  for _ in $(seq 1 240); do
+now() { printf '%s' "${EPOCHREALTIME:-$(date +%s)}"; }
+since() { awk -v a="$1" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }'; }
+
+# wait_converged table [count]: the three nodes report the same row count (and the given one), read one
+# node after the other about four times a second, for up to 240 s. CONVERGED_SECS is left with the time
+# from the first read to the start of the read that found them equal: 0 when they already matched.
+wait_converged() {
+  local a b c t0 tc end=$((SECONDS + 240))
+  t0=$(now)
+  while [ "$SECONDS" -lt "$end" ]; do
+    tc=$(now)
     a=$(drv count https://n1:1985 "$1" 2>/dev/null || true)
     b=$(drv count https://n2:1985 "$1" 2>/dev/null || true)
     c=$(drv count https://n3:1985 "$1" 2>/dev/null || true)
-    if [ -n "$a" ] && [ "$a" = "$b" ] && [ "$b" = "$c" ] && { [ -z "${2:-}" ] || [ "$a" = "$2" ]; }; then return 0; fi
-    sleep 1
+    if [ -n "$a" ] && [ "$a" = "$b" ] && [ "$b" = "$c" ] && { [ -z "${2:-}" ] || [ "$a" = "$2" ]; }; then
+      CONVERGED_SECS=$(awk -v a="$t0" -v b="$tc" 'BEGIN { printf "%.1f", b - a }')
+      return 0
+    fi
+    sleep 0.1
   done
   echo "counts of $1 on n1, n2, n3: $a $b $c (wanted ${2:-equal})"
   return 1
@@ -229,7 +255,8 @@ result() { # scenario config key rep ok errors rps p50 p95 p99 max fsyncs fsync_
     "$1" "$2" "$3" "$4" "$7" "$8" "$9" "${10}" "$6" "$(($5 + $6))" "$fs" "${15:+ | ${15}}"
 }
 
-# measure_writes scenario config conc rep base_url [metrics_url]: INSERT without _id, new table per run
+# measure_writes scenario config conc rep base_url: INSERT without _id, new table per run. BODY_EXTRA is
+# added to the request body (e.g. ', "ack": "local"'); the table's row count is left in LAST_ROWS.
 measure_writes() {
   local sc=$1 cfg=$2 c=$3 rep=$4 base=$5
   local tbl="bench.t_${sc//-/_}_c${c}_r${rep}" label="$1-$2-c$3-r$4"
@@ -237,7 +264,7 @@ measure_writes() {
   sql "$base" "CREATE TABLE $tbl" >/dev/null
   local line ok err rps p50 p95 p99 max warm_ok f s detail
   DENV=(-e "URL=$base" -e "CONC=$c" -e "SECS=$SECS" -e "WARM=$WARM" -e "METRICS_URL=$base"
-    -e "BODY={\"query\": \"INSERT INTO $tbl (n, s) VALUES (1, 'row-0000001-0123456789abcdef')\"}")
+    -e "BODY={\"query\": \"INSERT INTO $tbl (n, s) VALUES (1, 'row-0000001-0123456789abcdef')\"${BODY_EXTRA:-}}")
   line=$(drv run "$label")
   IFS=$'\t' read -r ok err rps p50 p95 p99 max warm_ok f s detail <<< "$line"
   docker exec "$TOOLS" cat "/work/$label.json" > "$OUT/raw/$label.json"
@@ -245,6 +272,7 @@ measure_writes() {
   got=$(drv count "$base" "$tbl")
   if [ "$err" != 0 ]; then check="rows $got of $want acknowledged"
   elif [ "$got" != "$want" ]; then echo "harness: $tbl holds $got rows, $want inserts were acknowledged" >&2; exit 1; fi
+  LAST_ROWS=$got
   DENV=()
   result "$sc" "$cfg" "$c" "$rep" "$ok" "$err" "$rps" "$p50" "$p95" "$p99" "$max" "$f" "$s" "$check" "${detail:-}"
 }
@@ -258,13 +286,40 @@ if [ "$host_os" = Darwin ]; then
   HOST_MEM_GB=$(sysctl -n hw.memsize 2>/dev/null | awk '{ printf "%d", $1 / 1073741824 }' || true)
   HOST_NAME="macOS $(sw_vers -productVersion 2>/dev/null || true) ($(uname -m))"
 else
-  HOST_CPU=$(awk -F': ' '/model name/ { print $2; exit }' /proc/cpuinfo 2>/dev/null || echo unknown)
+  HOST_CPU=$( (lscpu 2>/dev/null || true) | sed -n 's/^Model name: *//p' | head -1)
+  HOST_CPU=${HOST_CPU:-$(awk -F': ' '/model name/ { print $2; exit }' /proc/cpuinfo 2>/dev/null || true)}
+  HOST_CPU=${HOST_CPU:-unknown CPU}
   HOST_CORES=$(nproc 2>/dev/null || echo "?")
-  HOST_MEM_GB=$(awk '/MemTotal/ { printf "%d", $2 / 1048576 }' /proc/meminfo 2>/dev/null || true)
-  HOST_NAME="$host_os $(uname -r) ($(uname -m))"
+  HOST_MEM_GB=$(awk '/MemTotal/ { printf "%.1f", $2 / 1048576 }' /proc/meminfo 2>/dev/null || true)
+  HOST_NAME="$( (. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME, ") || true)$host_os $(uname -r) ($(uname -m))"
 fi
 DOCKER_INFO=$(docker info --format '{{.OperatingSystem}}; Docker {{.ServerVersion}}; kernel {{.KernelVersion}}; {{.NCPU}} CPUs; {{.MemTotal}} bytes; {{.Architecture}}')
 ORB=$(orbctl version 2>/dev/null | tr '\n' ' ' | sed 's/ *$//' || true)
+
+# The EC2 instance type, from IMDSv2. The metadata service answers one network hop away, so the request
+# goes from a container on the host's network; off EC2 it times out after 2 s and stays empty.
+if [ -z "${INSTANCE_TYPE:-}" ] && [ "$host_os" = Linux ]; then
+  INSTANCE_TYPE=$(docker run --rm "${L[@]}" -m 64m --network host --entrypoint sh serengeti-bench-tools -c '
+    m=http://169.254.169.254/latest
+    t=$(curl -sf -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" $m/api/token) || exit 0
+    curl -sf -m 2 -H "X-aws-ec2-metadata-token: $t" $m/meta-data/instance-type' 2>/dev/null || true)
+fi
+INSTANCE_TYPE=${INSTANCE_TYPE:-}
+
+# What the Docker data root (and so every data volume) is on: file system, device model and size from /sys.
+DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}')
+DISK_DEV=""
+ROOT_FS=""
+if [ "$host_os" = Linux ] && [ -d "$DOCKER_ROOT" ]; then
+  ROOT_FS=$(findmnt -no FSTYPE --target "$DOCKER_ROOT" 2>/dev/null || true)
+  DISK_DEV=$(
+    mm=$(mountpoint -d "$(stat -c %m "$DOCKER_ROOT")") || exit 0
+    d=$(readlink -f "/sys/dev/block/$mm") || exit 0
+    if [ -e "$d/partition" ]; then d=$(dirname "$d"); fi
+    model=$(sed 's/ *$//' "$d/device/model" 2>/dev/null || true)
+    printf '%s%s GiB' "${model:+$model, }" "$(awk '{ printf "%d", $1 * 512 / 1073741824 }' "$d/size")") 2>/dev/null || true
+fi
+DISK=${DISK:-}
 IMAGE_ID=$(docker image inspect "$IMAGE" --format '{{.Id}}')
 IMAGE_REPO_DIGEST=$(docker image inspect "$IMAGE" --format '{{join .RepoDigests ", "}}')
 IMAGE_ARCH=$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')
@@ -284,25 +339,45 @@ SERENGETI_VERSION=$(fact version)
 JAVA_VERSION=$(fact java)
 HEAP_MAX=$(fact heap)
 IN_DOCKER=$(fact cpus)
-FS_TYPE=$(fact fs)
+FS_TYPE=${ROOT_FS:-$(fact fs)}
 TOOL_VERSION=$(docker exec "$TOOLS" oha --version)
 OHA_DIGEST=$(docker image inspect "$OHA_IMAGE" --format '{{join .RepoDigests ", "}}' 2>/dev/null || true)
 GIT_COMMIT=$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-GIT_SRC=$(git rev-parse --short=12 HEAD:src 2>/dev/null || echo unknown)
 GIT_DIRTY=""
-if [ -n "$(git status --porcelain -- . ":(exclude)$OUT" 2>/dev/null)" ]; then GIT_DIRTY=" (working tree has uncommitted changes)"; fi
+if [ -n "$(git status --porcelain -- . ':(exclude)tests/bench/out' 2>/dev/null)" ]; then GIT_DIRTY=" (working tree has uncommitted changes)"; fi
 START_UTC=$(date -u +%Y-%m-%dT%H:%MZ)
 OTHER_CONTAINERS=$(( $(docker ps -q | wc -l) - $(docker ps -q --filter "label=serengeti-bench=$RUN" | wc -l) ))
 LOAD_START=$(docker exec "$TOOLS" cut -d' ' -f1-3 /proc/loadavg)
+CPU_WHO="the host's CPUs"
+if [ "$host_os" = Darwin ]; then CPU_WHO="the Docker VM's CPUs"; fi
+MACHINE="$HOST_CPU, $HOST_CORES cores, ${HOST_MEM_GB} GiB memory, $HOST_NAME"
+if [ -n "$INSTANCE_TYPE" ]; then MACHINE="EC2 $INSTANCE_TYPE: $MACHINE"; fi
+DISK_TEXT=$(printf '%s' "${DISK:+$DISK; }${DISK_DEV:+device $DISK_DEV}" | sed 's/; $//')
 
-say "benchmark of $IMAGE ($SERENGETI_VERSION), $START_UTC, QUICK=$QUICK"
-say "host: $HOST_CPU, $HOST_CORES cores, ${HOST_MEM_GB} GB; Docker sees: $IN_DOCKER; $DOCKER_INFO"
-say "image $IMAGE_ID ($IMAGE_ARCH); $JAVA_VERSION; $FS_TYPE data volume; $TOOL_VERSION; commit $GIT_COMMIT$GIT_DIRTY"
+say "benchmark of $IMAGE ($SERENGETI_VERSION, built from $IMAGE_COMMIT), $START_UTC, QUICK=$QUICK"
+say "host: $MACHINE; Docker sees: $IN_DOCKER; $DOCKER_INFO"
+say "disk: ${DISK_TEXT:-not described}; $FS_TYPE under $DOCKER_ROOT"
+say "image $IMAGE_ID ($IMAGE_ARCH); $JAVA_VERSION; $TOOL_VERSION; harness commit $GIT_COMMIT$GIT_DIRTY"
+# The facts tests/bench/report.sh puts in the machine and method block, one "key<TAB>value" per line.
+META=$OUT/meta.tsv
+meta() { printf '%s\t%s\n' "$1" "$2" >> "$META"; }
+: > "$META"
+meta image "$IMAGE"; meta version "$SERENGETI_VERSION"; meta image_commit "$IMAGE_COMMIT"
+meta image_id "$IMAGE_ID"; meta image_arch "$IMAGE_ARCH"; meta image_digest "$IMAGE_REPO_DIGEST"
+meta java "$JAVA_VERSION"; meta heap "$HEAP_MAX"; meta machine "$MACHINE"; meta host_os "$host_os"
+meta docker "$DOCKER_INFO${ORB:+; OrbStack $ORB}"; meta in_docker "$IN_DOCKER"; meta disk "$DISK_TEXT"
+meta fs "$FS_TYPE"; meta docker_root "$DOCKER_ROOT"; meta tool "$TOOL_VERSION"; meta oha_image "$OHA_IMAGE"
+meta oha_digest "$OHA_DIGEST"; meta harness_commit "$GIT_COMMIT$GIT_DIRTY"; meta start "$START_UTC"
+meta load_start "$LOAD_START"; meta other_containers "$OTHER_CONTAINERS"; meta cpu_who "$CPU_WHO"
+meta quick "$QUICK"; meta reps "$REPS"; meta secs "$SECS"; meta warm "$WARM"; meta max_busy "$MAX_BUSY_PCT"
+meta read_conc "$READ_CONCURRENCY"; meta node_mem "$NODE_MEM"; meta tools_mem "$TOOLS_MEM"
+meta e_rate "$E_RATE"; meta e_secs "$E_SECS"; meta e_idle "$E_IDLE"; meta e_conc "$E_CONCURRENCY"
+meta e_reps "$E_REPS"; meta e_settle "$E_SETTLE"; meta node_args "$NODE_ARGS"
 
 # ---- other load on the machine ----
 
-# busy_pct SECONDS: how busy the Docker VM's CPUs were over that time, all containers together (the
-# counters in /proc/stat belong to the VM, not to the container that reads them).
+# busy_pct SECONDS: how busy the CPUs Docker runs on were over that time, all containers together (the
+# counters in /proc/stat belong to the kernel, the Docker VM's on macOS, not to the container that reads them).
 busy_pct() {
   docker exec "$TOOLS" sh -c 'a=$(head -1 /proc/stat); sleep "$1"; b=$(head -1 /proc/stat); echo "$a $b"' sh "$1" |
     awk '{ for (i = 2; i <= 9; i++) { t0 += $i; t1 += $(i + 11) }
@@ -320,7 +395,7 @@ ambient() {
     waited=$((waited + 30))
   done
   record A "$1" "$b" "$waited"
-  say "RESULT ambient | before $1 | the Docker VM's CPUs were $b% busy with no benchmark node running (waited $waited s)"
+  say "RESULT ambient | before $1 | $CPU_WHO were $b% busy with no benchmark node running (waited $waited s)"
 }
 
 waited=0
@@ -328,10 +403,10 @@ while :; do
   b=$(busy_pct 10)
   if [ "$b" -le "$MAX_BUSY_PCT" ]; then break; fi
   if [ "$waited" -ge "$QUIET_WAIT_SECS" ]; then
-    say "the Docker VM stayed $b% busy for $waited s; starting anyway, the numbers are affected by that load"
+    say "$CPU_WHO stayed $b% busy for $waited s; starting anyway, the numbers are affected by that load"
     break
   fi
-  say "waiting for the Docker VM to quiet down: $b% busy (starts at $MAX_BUSY_PCT%)"
+  say "waiting for $CPU_WHO to quiet down: $b% busy (starts at $MAX_BUSY_PCT%)"
   sleep 20
   waited=$((waited + 30))
 done
@@ -413,22 +488,62 @@ fi
 
 # ---- d: three-node TLS cluster writes ----
 
-if want d; then
-ambient d
-step "d: 3-node TLS cluster, majority writes through n1, INSERT concurrency: $WRITE_CONCURRENCY"
-start_cluster
-sql "$BASE" "CREATE TABLE bench.warmup" >/dev/null
-DENV=(-e "URL=$BASE" -e "CONC=8" -e "SECS=$((WARM * 2))" -e "WARM=0"
-  -e "BODY={\"query\": \"INSERT INTO bench.warmup (n) VALUES (1)\"}")
-drv run d-warmup >/dev/null
-DENV=()
-for rep in $(seq 1 "$REPS"); do
-  for c in $WRITE_CONCURRENCY; do
-    measure_writes d "3 nodes, TLS, fsync=always" "$c" "$rep" "$BASE"
-    wait_converged "bench.t_d_c${c}_r${rep}"
+# cluster_writes scenario config: on the running cluster, INSERT through n1 at each concurrency. After each
+# run, every node must reach n1's row count; the time that takes is recorded.
+cluster_writes() {
+  local sc=$1 cfg=$2 c rep
+  sql "$BASE" "CREATE TABLE bench.warmup" >/dev/null
+  DENV=(-e "URL=$BASE" -e "CONC=8" -e "SECS=$((WARM * 2))" -e "WARM=0"
+    -e "BODY={\"query\": \"INSERT INTO bench.warmup (n) VALUES (1)\"${BODY_EXTRA:-}}")
+  drv run "$sc-warmup" >/dev/null
+  DENV=()
+  for rep in $(seq 1 "$REPS"); do
+    for c in $WRITE_CONCURRENCY; do
+      measure_writes "$sc" "$cfg" "$c" "$rep" "$BASE"
+      wait_converged "bench.t_${sc//-/_}_c${c}_r${rep}" "$LAST_ROWS" ||
+        { echo "harness: the nodes did not converge after $sc, concurrency $c, run $rep" >&2; exit 1; }
+      record C "$sc" "$c" "$rep" "$CONVERGED_SECS"
+      say "RESULT $sc | $c | run $rep | all three nodes held the $LAST_ROWS rows $CONVERGED_SECS s after the run"
+    done
   done
-done
-drop_nodes
+}
+
+# ack_support URL: prints "yes" when the node reads the "ack" field of a query (2.1 and later), otherwise
+# why d-local is skipped. A node that reads the field must refuse an invalid value with 400.
+ack_support() {
+  local out code body
+  out=$(drv post "$1" '{"query": "SHOW DATABASES", "ack": "probe"}')
+  code=${out##*$'\n'}; body=${out%$'\n'*}
+  body=$(printf '%s' "$body" | tr -d '\n' | cut -c1-160)
+  case $code in
+    400) case $body in *ack*) echo yes ;; *) echo "the image refused a query with an \"ack\" field: HTTP 400, $body" ;; esac ;;
+    200) echo "the image ignores the \"ack\" field: a query with \"ack\": \"probe\" was answered 200, so \"ack\": \"local\" would measure majority writes" ;;
+    *) echo "the image refused a query with an \"ack\" field: HTTP $code, $body" ;;
+  esac
+}
+
+if want d; then
+  ambient d
+  step "d: 3-node TLS cluster, majority writes through n1, INSERT concurrency: $WRITE_CONCURRENCY"
+  start_cluster
+  cluster_writes d "3 nodes, TLS, fsync=always"
+  drop_nodes
+fi
+
+if want d-local; then
+  ambient d-local
+  step "d-local: 3-node TLS cluster, \"ack\": \"local\" writes through n1, INSERT concurrency: $WRITE_CONCURRENCY"
+  start_cluster
+  ACK=$(ack_support "$BASE")
+  if [ "$ACK" = yes ]; then
+    BODY_EXTRA=', "ack": "local"'
+    cluster_writes d-local "3 nodes, TLS, fsync=always, ack=local"
+    BODY_EXTRA=
+  else
+    record S d-local "$ACK"
+    say "RESULT d-local | not run: $ACK"
+  fi
+  drop_nodes
 fi
 
 # ---- e: what the sync costs ----
@@ -443,184 +558,99 @@ snap() {
     echo "$up $cpu $1 $2"'
 }
 
-# window SIZE PHASE: snapshots before and after, then records per-node CPU and network rates
-e_window_start() { SNAP0=("$(snap "${CNODES[0]}")" "$(snap "${CNODES[1]}")" "$(snap "${CNODES[2]}")" "$(snap "$TOOLS")"); }
-e_window_end() { # size phase
-  local size=$1 phase=$2 i before after client
+# e_window_start / e_window_end SIZE PHASE REP: counters of every node before and after the window, then
+# one E line per node: CPU in cores, peer traffic in and out in bytes/s, the window's length, and the
+# requests per second the node answered on /internal/state (a whole database), /internal/apply,
+# /internal/digests and other routes (2.1's /internal/v2/* sync routes are counted there).
+# mem_mib CONTAINER: memory in use in MiB, counted as docker stats does (the cgroup's usage less inactive
+# file pages).
+mem_mib() {
+  docker exec "$1" sh -c 'awk -v c="$(cat /sys/fs/cgroup/memory.current)" "/^inactive_file / { printf \"%.0f\\n\", (c - \$2) / 1048576 }" /sys/fs/cgroup/memory.stat'
+}
 
-  local -a after_snaps=("$(snap "${CNODES[0]}")" "$(snap "${CNODES[1]}")" "$(snap "${CNODES[2]}")" "$(snap "$TOOLS")")
+# The /metrics requests go from the load generator, so they are made outside the traffic counters' window
+# (before it starts and after it ends); otherwise n1's correction for client traffic would include them.
+lines_to() { IFS=$'\n' read -r -d '' -a "$1" || true; }   # NAME < lines: an array, one element per line
+e_snaps() { snap "${CNODES[0]}"; snap "${CNODES[1]}"; snap "${CNODES[2]}"; snap "$TOOLS"; }
+e_routes() { local i; for i in 1 2 3; do drv routes "https://n$i:1985"; done; }
+e_window_start() { lines_to ROUTES0 < <(e_routes); lines_to SNAP0 < <(e_snaps); }
+e_window_end() {
+  local size=$1 phase=$2 rep=$3 i client
+  local -a snap1 routes1
+  lines_to snap1 < <(e_snaps)
+  lines_to routes1 < <(e_routes)
   for i in 1 2 3; do
-    before=${SNAP0[$((i - 1))]}; after=${after_snaps[$((i - 1))]}
     # Node 1 also carries the client's traffic: take the load generator's counters off its totals.
     client="0 0"
-    if [ "$i" = 1 ]; then client=$(awk -v b="${SNAP0[3]}" -v a="${after_snaps[3]}" 'BEGIN { split(b, x, " "); split(a, y, " "); print y[4] - x[4], y[3] - x[3] }'); fi
-    awk -v size="$size" -v phase="$phase" -v node="n$i" -v b="$before" -v a="$after" -v c="$client" 'BEGIN {
+    if [ "$i" = 1 ]; then client=$(awk -v b="${SNAP0[3]}" -v a="${snap1[3]}" 'BEGIN { split(b, x, " "); split(a, y, " "); print y[4] - x[4], y[3] - x[3] }'); fi
+    awk -v size="$size" -v phase="$phase" -v node="n$i" -v rep="$rep" -v b="${SNAP0[$((i - 1))]} ${ROUTES0[$((i - 1))]}" \
+      -v a="${snap1[$((i - 1))]} ${routes1[$((i - 1))]}" -v c="$client" 'BEGIN {
       split(b, x, " "); split(a, y, " "); split(c, z, " ")
       secs = y[1] - x[1]
-      printf "E\t%s\t%s\t%s\t%.3f\t%.1f\t%.1f\t%.1f\n", size, phase, node, (y[2] - x[2]) / 1e6 / secs,
-        ((y[3] - x[3]) - z[1]) / secs, ((y[4] - x[4]) - z[2]) / secs, secs }' | tee -a "$TSV" | awk -F'\t' '{
-      printf "RESULT e | %s rows | %s | %s | cpu %.2f cores | peer traffic in %.1f KB/s, out %.1f KB/s | over %.1f s\n",
-        $2, $3, $4, $5, $6 / 1000, $7 / 1000, $8 }'
+      printf "E\t%s\t%s\t%s\t%s\t%.3f\t%.1f\t%.1f\t%.1f", size, phase, node, rep, (y[2] - x[2]) / 1e6 / secs,
+        ((y[3] - x[3]) - z[1]) / secs, ((y[4] - x[4]) - z[2]) / secs, secs
+      for (k = 5; k <= 8; k++) printf "\t%.2f", (y[k] - x[k]) / secs
+      printf "\n" }' | tee -a "$TSV" | awk -F'\t' '{
+      printf "RESULT e | %s rows | run %s | %s | %s | cpu %.2f cores | peer traffic in %.1f KB/s, out %.1f KB/s | answered per s: state %s, apply %s, digests %s, other %s | over %.1f s\n",
+        $2, $5, $3, $4, $6, $7 / 1000, $8 / 1000, $10, $11, $12, $13, $9 }'
   done
 }
 
 if want e; then
 ambient e
 for size in $E_SIZES; do
-  step "e: 3-node TLS cluster, table of $size rows, then $E_RATE writes/s for $E_SECS s"
+  for rep in $(seq 1 "$E_REPS"); do
+  step "e: 3-node TLS cluster, table of $size rows, then $E_RATE writes/s for $E_SECS s (run $rep of $E_REPS)"
   start_cluster
   sql "$BASE" "CREATE TABLE bench.e" >/dev/null
+  t0=$(now)
   drv preload "$BASE" bench.e 0 "$size"
   wait_converged bench.e "$size" || { echo "harness: the nodes did not converge after the preload" >&2; exit 1; }
+  took=$(since "$t0")
+  record EP "$size" "$rep" "$took"
+  say "RESULT e | $size rows | run $rep | preload and convergence took $took s"
   sleep "$E_SETTLE"
   pull_bytes=$(drv state-size https://n1:1985 bench)
-  record EM "$size" "$pull_bytes"
-  say "RESULT e | $size rows | one full /internal/state answer from n1: $pull_bytes bytes"
+  record EM "$size" "$rep" "$pull_bytes"
+  say "RESULT e | $size rows | run $rep | one full /internal/state answer from n1: $pull_bytes bytes"
 
   say "# idle: no client requests for $E_IDLE s"
   e_window_start
   sleep "$E_IDLE"
-  e_window_end "$size" idle
+  e_window_end "$size" idle "$rep"
 
   say "# $E_RATE writes/s for $E_SECS s through n1"
+  label="e-$size-r$rep"
   DENV=(-e "URL=$BASE" -e "CONC=$E_CONCURRENCY" -e "SECS=$E_SECS" -e "WARM=0" -e "QPS=$E_RATE"
     -e "BODY={\"query\": \"INSERT INTO bench.e (n, s) VALUES (0, 'row-0000000-0123456789abcdef')\"}")
   e_window_start
-  line=$(drv run "e-$size")
-  e_window_end "$size" "write"
+  line=$(drv run "$label")
+  e_window_end "$size" "write" "$rep"
   DENV=()
   IFS=$'\t' read -r ok err rps p50 p95 p99 max warm_ok f s detail <<< "$line"
-  docker exec "$TOOLS" cat "/work/e-$size.json" > "$OUT/raw/e-$size.json"
-  record EW "$size" "$ok" "$err" "$rps" "$p50" "$p95" "$p99"
-  say "RESULT e | $size rows | writes: $ok ok, $err errors, $rps/s, p50 $p50 ms, p95 $p95 ms, p99 $p99 ms ${detail:+| $detail}"
-  mem=$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' "${CNODES[@]}" | sort |
-    awk '{ sub(/.*-/, "", $1); printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2 }')
-  record EM2 "$size" "$mem"
-  say "RESULT e | $size rows | memory in use at the end: $mem"
+  docker exec "$TOOLS" cat "/work/$label.json" > "$OUT/raw/$label.json"
+  record EW "$size" "$rep" "$ok" "$err" "$rps" "$p50" "$p95" "$p99"
+  say "RESULT e | $size rows | run $rep | writes: $ok ok, $err errors, $rps/s, p50 $p50 ms, p95 $p95 ms, p99 $p99 ms ${detail:+| $detail}"
+  mem=$(for n in "${CNODES[@]}"; do mem_mib "$n"; done)
+  record EM2 "$size" "$rep" $mem
+  say "RESULT e | $size rows | run $rep | memory in use at the end, n1 n2 n3: $mem MiB"
   wait_converged bench.e || { echo "harness: the nodes did not converge after the writes" >&2; exit 1; }
+  record EC "$size" "$rep" "$CONVERGED_SECS"
+  say "RESULT e | $size rows | run $rep | all three nodes held the same rows $CONVERGED_SECS s after the writes"
   drop_nodes
+  done
 done
 fi
 
 LOAD_END=$(docker exec "$TOOLS" cut -d' ' -f1-3 /proc/loadavg)
 END_UTC=$(date -u +%Y-%m-%dT%H:%MZ)
 
+meta end "$END_UTC"; meta load_end "$LOAD_END"
+
 # ---- report ----
 
-# latency_table SCENARIO KEYHEADER MODE [CONFIGHEADER]: one row per (config, key); the run with the median
-# rate stands for the cell. MODE 0: key only; 1: config, key and the mean fsync; 2: config and key.
-latency_table() {
-  local sc=$1 keyname=$2 showcfg=$3 cfgname=${4:-Config}
-  if [ "$showcfg" = 1 ]; then
-    printf '| %s | %s | Requests/s | Range over runs | p50 ms | p95 ms | p99 ms | Errors | Mean fsync ms |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n' "$cfgname" "$keyname"
-  elif [ "$showcfg" = 2 ]; then
-    printf '| %s | %s | Requests/s | Range over runs | p50 ms | p95 ms | p99 ms | Errors |\n|---|---:|---:|---:|---:|---:|---:|---:|\n' "$cfgname" "$keyname"
-  else
-    printf '| %s | Requests/s | Range over runs | p50 ms | p95 ms | p99 ms | Errors |\n|---|---:|---:|---:|---:|---:|---:|\n' "$keyname"
-  fi
-  awk -F'\t' -v sc="$sc" '$1 == "L" && $2 == sc { print $3 "\t" $4 }' "$TSV" | awk '!seen[$0]++' |
-  while IFS=$'\t' read -r cfg key; do
-    awk -F'\t' -v sc="$sc" -v cfg="$cfg" -v key="$key" -v showcfg="$showcfg" '
-      $1 == "L" && $2 == sc && $3 == cfg && $4 == key { rows[++n] = $0; rate[n] = $8; ok += $6; err += $7 }
-      END {
-        # order the runs by rate, then take the middle one
-        for (i = 1; i <= n; i++) idx[i] = i
-        for (i = 2; i <= n; i++) { v = idx[i]; j = i - 1; while (j >= 1 && rate[idx[j]] > rate[v]) { idx[j + 1] = idx[j]; j-- } idx[j + 1] = v }
-        m = idx[int((n + 1) / 2)]
-        split(rows[m], f, "\t")
-        lo = rate[idx[1]]; hi = rate[idx[n]]
-        range = (n > 1) ? sprintf("%.0f to %.0f", lo, hi) : "1 run"
-        fsync = (f[13] > 0) ? sprintf("%.2f", f[14] / f[13] * 1000) : "0 forces"
-        if (showcfg == 1) printf "| %s | %s | %.0f | %s | %.1f | %.1f | %.1f | %d of %d | %s |\n", cfg, key, f[8], range, f[9], f[10], f[11], err, ok + err, fsync
-        else if (showcfg == 2) printf "| %s | %s | %.0f | %s | %.1f | %.1f | %.1f | %d of %d |\n", cfg, key, f[8], range, f[9], f[10], f[11], err, ok + err
-        else printf "| %s | %.0f | %s | %.1f | %.1f | %.1f | %d of %d |\n", key, f[8], range, f[9], f[10], f[11], err, ok + err
-      }' "$TSV"
-  done
-}
-
-has() { awk -F'\t' -v s="$1" '($1 == "L" && $2 == s) || ($1 == "E" && s == "e") { f = 1 } END { exit !f }' "$TSV"; }
-report() {
-  say "### Machine and method"
-  say
-  say "- Date: $START_UTC to $END_UTC (UTC)."
-  say "- Host: $HOST_CPU, $HOST_CORES cores, ${HOST_MEM_GB} GB, $HOST_NAME."
-  say "- Docker: $DOCKER_INFO${ORB:+; OrbStack $ORB}. Containers see $IN_DOCKER."
-  say "- Other load: the machine is shared with other work that the benchmark neither limits nor stops. $OTHER_CONTAINERS other containers were running at the start. Before the first scenario the Docker VM's CPUs were $(awk -F'\t' '$1 == "Q" { print $2 }' "$TSV")% busy, after waiting $(awk -F'\t' '$1 == "Q" { print $3 }' "$TSV") s for at most $MAX_BUSY_PCT%. Busy percentage over 5 s before each scenario, with none of the benchmark's nodes running: $(awk -F'\t' '$1 == "A" { printf "%s%s %s%%", (n++ ? ", " : ""), $2, $3 }' "$TSV"). Load averages (1, 5, 15 minutes) at the start: $LOAD_START; at the end: $LOAD_END."
-  say "- Memory caps: $NODE_MEM per Serengeti node (the JVM's maximum heap is then $HEAP_MAX MiB), $TOOLS_MEM for the load generator. No CPU limits."
-  say "- Image: $IMAGE ($IMAGE_ARCH), id $IMAGE_ID${IMAGE_REPO_DIGEST:+, digest $IMAGE_REPO_DIGEST}. $SERENGETI_VERSION. Java: $JAVA_VERSION."
-  say "- Source: commit $GIT_COMMIT$GIT_DIRTY, tree of src/ $GIT_SRC."
-  say "- Load generator: $TOOL_VERSION from \`$OHA_IMAGE\`${OHA_DIGEST:+ ($OHA_DIGEST)}, in a container on the same private Docker network as the nodes. HTTP/1.1 with keep-alive, Basic auth, one connection per concurrent request."
-  say "- Data directory: a Docker volume on $FS_TYPE inside the Docker VM. One 4 KiB O_DSYNC write there takes $(awk -F'\t' '$1 == "D" { print $3 }' "$TSV") ms on average ($(awk -F'\t' '$1 == "D" { print $2 }' "$TSV") writes, \`dd oflag=dsync\`), the cost of one \`fsync=always\` write at best. Whether the VM passes the flush on to the Mac's SSD was not tested."
-  say "- Runs: each cell is $REPS run(s) of $SECS s after a $WARM s warm-up that is not counted, each on a new table. The table shows the run with the median request rate, with the lowest and highest rate of the runs. Latency is the time from sending a request to the end of its response, as the load generator saw it. Errors are non-200 answers and failed requests, over all runs of the cell, with the number of requests in the cell."
-  say "- Rows: \`{\"_id\": <uuid>, \"n\": <integer>, \"s\": <28-character string>}\`. After each insert run the table's row count is checked against the number of acknowledged inserts."
-  say "- Settings: defaults except \`SERENGETI_FSYNC\`, the cluster settings and TLS. The server keeps a verified password for 60 s, so a run may include one bcrypt check; the server answers on 16 threads, so concurrency 32 queues."
-  if [ -n "$NODE_ARGS" ]; then say "- Extra arguments for every node (not the image default): \`$NODE_ARGS\`."; fi
-  say "- Reproduce: \`tests/bench/run.sh\` (\`QUICK=1\` for a short run; \`IMAGE=name:tag\` for another image)."
-  say
-  if has a; then
-  say "### a. Single node, plain HTTP, fsync=always: INSERT"
-  say
-  latency_table a "Concurrency" 0
-  fi
-  say
-  if has a-tls; then
-  say "### a2. Single node, TLS, fsync=always: INSERT"
-  say
-  latency_table a-tls "Concurrency" 0
-  fi
-  say
-  if has b; then
-  say "### b. Single node, plain HTTP: INSERT with other fsync settings"
-  say
-  latency_table b "Concurrency" 1
-  fi
-  say
-  if has c; then
-  say "### c. Single node reads, concurrency $READ_CONCURRENCY"
-  say
-  say "\`SELECT * FROM t WHERE n = x\` scans the whole table (there are no indexes) and returns one row; x is a random value, the same sequence in every run."
-  say
-  latency_table c "Rows in table" 2 Query
-  fi
-  say
-  if has d; then
-  say "### d. Three-node TLS cluster, fsync=always, majority writes: INSERT through n1"
-  say
-  latency_table d "Concurrency" 0
-  fi
-  say
-  if has e; then
-  say "### e. Sync cost, three-node TLS cluster, table preloaded, $E_RATE writes/s for $E_SECS s through n1"
-  say
-  say "Each size is a new cluster. The idle window ($E_IDLE s) has no client requests. Rates are per node over the window, from the container's cgroup CPU counter and its network counters; for n1 the load generator's own traffic is subtracted, so the network columns are node-to-node traffic only."
-  say
-  printf '| Rows | Window | Node | CPU (cores) | Peer traffic in KB/s | Peer traffic out KB/s |\n|---:|---|---|---:|---:|---:|\n'
-  awk -F'\t' '$1 == "E" { printf "| %s | %s | %s | %.2f | %.1f | %.1f |\n", $2, ($3 == "idle" ? "idle" : "writes"), $4, $5, $6 / 1000, $7 / 1000 }' "$TSV"
-  say
-  printf '| Rows | One full state answer from n1 | Writes ok / errors | Writes/s | Write p50 ms | p95 ms | p99 ms | Memory in use at the end |\n|---:|---:|---:|---:|---:|---:|---:|---|\n'
-  for size in $E_SIZES; do
-    awk -F'\t' -v size="$size" '
-      $1 == "EM" && $2 == size { pull = $3 }
-      $1 == "EW" && $2 == size { w = sprintf("%d / %d | %.1f | %.1f | %.1f | %.1f", $3, $4, $5, $6, $7, $8) }
-      $1 == "EM2" && $2 == size { mem = $3 }
-      END { printf "| %s | %.2f MB | %s | %s |\n", size, pull / 1e6, w, mem }' "$TSV"
-  done
-  fi
-}
-
-report > "$OUT/results.md"
+tests/bench/report.sh "$OUT" > "$OUT/results.md"
 step "report ($OUT/results.md)"
 cat "$OUT/results.md"
-
-if [ "${UPDATE_DOC:-0}" = 1 ]; then
-  if ! grep -q '<!-- bench:begin -->' "$DOC" || ! grep -q '<!-- bench:end -->' "$DOC"; then
-    echo "harness: $DOC has no bench markers" >&2; exit 1
-  fi
-  awk -v report="$OUT/results.md" '
-    /<!-- bench:begin -->/ { print; while ((getline line < report) > 0) print line; skip = 1; next }
-    /<!-- bench:end -->/ { skip = 0 }
-    !skip { print }' "$DOC" > "$OUT/doc.new" && cp "$OUT/doc.new" "$DOC"
-  say "updated $DOC"
-fi
 say
 say "done: $START_UTC to $END_UTC"

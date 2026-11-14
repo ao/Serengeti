@@ -9,6 +9,9 @@
 #   count URL TABLE              print COUNT(*) of db.table
 #   health URL                   print the HTTP status of GET /health (000 if no answer)
 #   status URL                   print GET /v1/status
+#   post URL BODY                POST BODY to /v1/query; print the answer, then the HTTP status on its own line
+#   routes URL                   print the requests the node has answered on /internal/state, /internal/apply,
+#                                /internal/digests and routes /metrics does not name ("other"), from GET /metrics
 #   preload URL TABLE FROM TO    insert rows n=FROM+1..TO, 1000 rows per statement
 #   gen-select TABLE MAX COUNT   print COUNT request bodies, one per line, for WHERE n = <random 1..MAX>
 #   state-size URL DB            print the bytes of one /internal/state answer (needs CLUSTER_KEY)
@@ -43,6 +46,14 @@ case $cmd in
   count) sql "$1" "SELECT COUNT(*) FROM $2" | sed -n 's/.*"rows":\[\[\([0-9]*\)\]\].*/\1/p' ;;
   health) cu -o /dev/null -w '%{http_code}' "$1/health" || true ;;
   status) cu -u "$AUTH" "$1/v1/status" ;;
+  post) cu -u "$AUTH" -H 'Content-Type: application/json' --data-binary "$2" -w '\n%{http_code}' "$1/v1/query" ;;
+  routes)
+    cu -u "$AUTH" "$1/metrics" | awk '
+      /^serengeti_http_requests_total\{/ {
+        r = $0; sub(/.*route="/, "", r); sub(/".*/, "", r)
+        if (r == "/internal/state") s += $NF; else if (r == "/internal/apply") a += $NF
+        else if (r == "/internal/digests") d += $NF; else if (r == "other") o += $NF }
+      END { print s + 0, a + 0, d + 0, o + 0 }' ;;
   state-size) cu -o /dev/null -w '%{size_download}' -H "X-Serengeti-Cluster-Key: ${CLUSTER_KEY:?}" "$1/internal/state?db=$2" ;;
   preload)
     url=$1 table=$2 from=$3 to=$4
