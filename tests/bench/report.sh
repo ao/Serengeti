@@ -52,7 +52,7 @@ per_run() {
   done
   printf '%s' "$out"
 }
-dd_of() { awk -F'\t' '$1 == "D" { printf "%s ms", $3 }' "$2"; }
+dd_of() { awk -F'\t' '$1 == "D" { printf "%s ms (%s writes)", $3, $2 }' "$2"; }
 # CREATE INDEX times. Rows of type CI, from runs before the harness warmed the password cache first, may
 # include a bcrypt check and are not shown.
 ci_of() { awk -F'\t' '$1 == "CIW" { printf "%s%s rows %s s", (n++ ? ", " : ""), $2, $3 } END { if (!n) printf "not run" }' "$2"; }
@@ -258,7 +258,7 @@ report() {
   echo "### Machine and method"
   echo
   echo "- Machine: $(fact machine). Docker: $(fact docker). Containers see $(fact in_docker)."
-  echo "- Disk: $(fact disk). Data volumes are on $(fact fs) under $(fact docker_root). One 4 KiB O_DSYNC write there (\`dd oflag=dsync\`, one write at a time, in a data volume of the image) took on average $(per_run dd_of), the least one \`fsync=always\` write can take.$( [ "$(fact host_os)" = Darwin ] && printf ' Whether the Docker VM passes the flush on to the SSD was not tested.')"
+  echo "- Disk: $(fact disk). Data volumes are on $(fact fs) under $(fact docker_root). The mean time of one 4 KiB O_DSYNC write there (\`dd oflag=dsync\`, one write at a time, in a data volume of the image, at the start of each run), the least one \`fsync=always\` write can take: $(per_run dd_of).$( [ "$(fact host_os)" = Darwin ] && printf ' Whether the Docker VM passes the flush on to the SSD was not tested.')"
   for i in "${!DIRS[@]}"; do run_line "$i"; done
   echo "- Other load: $(per_run load_of)."
   echo "- Memory caps: $(fact node_mem) per Serengeti node (the JVM's maximum heap is then $(fact heap) MiB), $(fact tools_mem) for the load generator. No CPU limits. Java: $(fact java)."
