@@ -123,7 +123,23 @@ GitHub Actions runs these on every change:
   roll a node back to 2.0.0 after it has created an index;
 - the quick start above, the examples and the recorded demo, run as written.
 
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md) has throughput and latency, with the machine and method.
+## Measured
+
+On one dedicated EC2 c7g.2xlarge (8 Graviton3 vCPUs, gp3 EBS at 3000 IOPS), nodes and load generator in
+Docker on that machine, medians of three runs. [docs/BENCHMARKS.md](docs/BENCHMARKS.md) has the method,
+the spread and every table.
+
+| | 2.0.0 | 2.1 |
+|---|---:|---:|
+| One node, each write fsynced, 32 clients | 351 writes/s | 2,661 writes/s |
+| Three nodes, majority writes, 32 clients | 263 writes/s | 1,298 writes/s |
+| Lookup by `_id` in 100,000 rows, 8 clients | 612 reads/s | 16,216 reads/s |
+| Traffic between nodes at 20 writes/s, 100,000 rows | 21.6 MB/s | 64 KB/s |
+| Write latency (p50) in that cluster | 211 ms | 7.2 ms |
+
+A table scan runs at about the same speed in both (2.1 is 3% faster at 10,000 rows, 8% slower at 100,000).
+Both were run with `sun.net.httpserver.nodelay` set; without it 2.0.0 waits about 40 ms per request on a
+kept-alive connection, and 2.1 sets it itself.
 
 ## When not to use it
 

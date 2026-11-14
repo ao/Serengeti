@@ -174,6 +174,15 @@ class MetricsTest {
     }
 
     @Test
+    void everyNodeToNodeRouteHasItsOwnLabel() {
+        for (String path : List.of("/internal/v2/roots", "/internal/v2/schema", "/internal/v2/buckets",
+                "/internal/v2/rows", "/internal/apply", "/internal/hello")) {
+            assertEquals(path, Metrics.route(path));
+        }
+        assertEquals("other", Metrics.route("/internal/v2/nope"));
+    }
+
+    @Test
     void labelValuesAreEscaped() {
         assertEquals("a\\\"b\\\\c\\nd", Metrics.escape("a\"b\\c\nd"));
     }
