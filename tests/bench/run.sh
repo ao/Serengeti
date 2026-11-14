@@ -515,13 +515,16 @@ if want c || want c-index; then
     step "c-index: CREATE INDEX ON each table (n), then the same node reads through it"
     INDEX=yes
     for size in $READ_SIZES; do
+      # The node remembers a checked password for 60 s from the check; a request just before makes sure
+      # the timed one does not include a bcrypt check (a few hundred ms).
+      sql "$BASE" "SHOW DATABASES" >/dev/null
       out=$(drv post "$BASE" "{\"query\": \"CREATE INDEX ON bench.r$size (n)\"}")
       code=${out##*$'\n'}; took=$(awk -v t="${code#* }" 'BEGIN { printf "%.2f", t }'); code=${code%% *}
       if [ "$code" != 200 ]; then
         INDEX="the image does not accept CREATE INDEX: HTTP $code, $(printf '%s' "${out%$'\n'*}" | tr -d '\n' | cut -c1-160)"
         break
       fi
-      record CI "$size" "$took"
+      record CIW "$size" "$took"
       say "RESULT c-index | $size rows | CREATE INDEX took $took s"
     done
     if [ "$INDEX" = yes ]; then
