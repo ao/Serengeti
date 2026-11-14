@@ -166,13 +166,20 @@ for i in 1 2 3; do
 done
 docker exec "$RUN-client" sh -c 'touch /tmp/stop; for i in $(seq 1 60); do [ -e /tmp/stopped ] && break; sleep 0.5; done'
 acked=$(docker exec "$RUN-client" sh -c 'wc -l < /tmp/acked' | tr -d ' ')
-total=$((acked + 2))
+# A write that got a 503 may still have been written (docs/CONSISTENCY.md), so nodes can hold more rows
+# than were acknowledged: check that they agree, and that every acknowledged id is on every one.
 for _ in $(seq 1 120); do
-  [ "$(count 1)" = "$total" ] && [ "$(count 2)" = "$total" ] && [ "$(count 3)" = "$total" ] && break
+  c1=$(count 1)
+  [ -n "$c1" ] && [ "$c1" = "$(count 2)" ] && [ "$c1" = "$(count 3)" ] && break
   sleep 0.5
 done
+expect "all three nodes hold the same number of rows" "$(count 1)" "$(count 2)"
+expect "and the third" "$(count 1)" "$(count 3)"
 for i in 1 2 3; do
-  expect "n$i has every acknowledged insert ($acked) and both mixed-version writes" "$total" "$(count "$i")"
+  q "$i" 'SELECT _id FROM d.t LIMIT 10000' >/dev/null
+  lost=$(docker exec "$RUN-client" sh -c 'tr "[]," "\n\n\n" < /tmp/body | tr -d "\"" | grep -E "^(w-|mixed-)" | sort -u > /tmp/present
+    { sort -u /tmp/acked; echo mixed-new; echo mixed-old; } | sort -u | comm -23 - /tmp/present | wc -l' | tr -d ' ')
+  expect "n$i has every acknowledged insert ($acked) and both mixed-version writes" 0 "$lost"
 done
 for i in 1 2 3; do
   expect "n$i lists no conflicts (every row was written once)" 0 "$(conflict_rows "$i")"
