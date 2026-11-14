@@ -4,7 +4,7 @@ Serengeti uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html), MAJOR
 
 - A release is a Git tag named `vMAJOR.MINOR.PATCH`, such as `v2.0.0`. The tagged commit is the release.
 - Tags are not moved or reused. A wrong release is fixed by the next version.
-- `pom.xml` on main keeps the next version with a `-SNAPSHOT` suffix (`2.0.0-SNAPSHOT`). Nobody commits a
+- `pom.xml` on main keeps the next version with a `-SNAPSHOT` suffix (`2.1.0-SNAPSHOT`). Nobody commits a
   version bump for a release. `release.yml` sets the version from the tag while it builds, so the jar's
   file name, `serengeti --version`, `GET /health` and `GET /v1/status` all show the tag's version.
 - A pre-release is a tag with a suffix, such as `v2.0.0-rc.1`. It is published as a GitHub pre-release and

@@ -65,7 +65,7 @@ The version is the one in `pom.xml`, which stays at the next `-SNAPSHOT` version
 ### Running the Project
 
 ```
-java -jar target/Serengeti-2.0.0-SNAPSHOT-jar-with-dependencies.jar
+java -jar target/Serengeti-2.1.0-SNAPSHOT-jar-with-dependencies.jar
 ```
 
 A node listens on 127.0.0.1:1985 and keeps its data in `./data`. The first start needs an admin password;

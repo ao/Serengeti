@@ -61,6 +61,16 @@ jobs:
       - name: Kill, partition and slow-disk tests on 3 nodes
         run: SKIP_BUILD=1 IMAGE=serengeti:cluster tests/cluster/run.sh
 
+  upgrade:
+    name: Upgrade from 2.0.0
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t serengeti:upgrade .
+      - name: 2.0.0 data opened by this build; a 3-node cluster upgraded one node at a time
+        run: SKIP_BUILD=1 IMAGE=serengeti:upgrade OLD_IMAGE=ataiva/serengeti:2.0.0 tests/upgrade/run.sh
+
   quickstart:
     name: Quick start (amd64)
     runs-on: ubuntu-24.04
