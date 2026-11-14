@@ -414,6 +414,25 @@ class ClusterTest {
     }
 
     @Test
+    void changesStampedFarInTheFutureAreRefused() throws Exception {
+        start(0);
+        long future = System.currentTimeMillis() + 10 * 60_000;
+        String ops = "{\"ops\": [{\"op\": \"create_db\", \"db\": \"ahead\", \"at\": \"" + future + ".0.other\"}]}";
+        HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[0] + "/internal/apply"))
+                .header(InternalRoutes.KEY_HEADER, KEY).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(ops)).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(409, r.statusCode(), r.body());
+        assertTrue(r.body().contains("ahead of this node's clock"), r.body());
+        long now = System.currentTimeMillis();
+        String fine = "{\"ops\": [{\"op\": \"create_db\", \"db\": \"near\", \"at\": \"" + (now + 5_000) + ".0.other\"}]}";
+        HttpResponse<String> ok = HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[0] + "/internal/apply"))
+                .header(InternalRoutes.KEY_HEADER, KEY).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(fine)).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, ok.statusCode(), ok.body());
+        assertEquals(List.of(List.of("near")), rows(0, "SHOW DATABASES"));
+    }
+
+    @Test
     void the20RoutesStillAnswerForRollingUpgrades() throws Exception {
         start(0);
         for (String path : List.of("/internal/digests", "/internal/state?db=x", "/internal/v2/roots",

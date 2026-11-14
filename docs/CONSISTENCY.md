@@ -76,8 +76,9 @@ when no majority is reachable.
 
 It is not linearizable and has no transactions across statements. Insert-unless-exists is checked on the
 receiving node only: two nodes accepting an insert with the same `_id` at the same time both succeed, and
-the higher version wins. Clocks are not trusted for correctness, but a node whose clock runs far ahead
-wins conflicts it should lose.
+the higher version wins. Versions follow wall clocks, so a node whose clock runs ahead wins conflicts it
+should lose; changes stamped more than 60 seconds ahead of the receiving node's clock are refused (and
+logged with the sending node), which bounds how far one bad clock can reach. Keep clocks synced with NTP.
 
 ## Node-to-node security
 

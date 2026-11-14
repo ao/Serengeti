@@ -535,8 +535,39 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         return pulledOps.get();
     }
 
+    /**
+     * Changes stamped further than this ahead of the local clock are refused. Versions come from a hybrid
+     * logical clock, so a node whose wall clock runs ahead would otherwise win every conflict, and every
+     * node that merged its changes would carry its clock forward too.
+     */
+    static final long MAX_CLOCK_AHEAD_MILLIS = 60_000;
+
+    private Op firstTooFarAhead(List<Op> ops) {
+        long limit = clock.getAsLong() + MAX_CLOCK_AHEAD_MILLIS;
+        for (Op op : ops) {
+            if (op.stamp().wall() > limit) {
+                return op;
+            }
+        }
+        return null;
+    }
+
     private int mergeOrThrow(List<Op> ops) {
         pulledOps.addAndGet(ops.size());
+        Op ahead = firstTooFarAhead(ops);
+        if (ahead != null) {
+            List<Op> ok = new ArrayList<>(ops.size());
+            long limit = clock.getAsLong() + MAX_CLOCK_AHEAD_MILLIS;
+            for (Op op : ops) {
+                if (op.stamp().wall() <= limit) {
+                    ok.add(op);
+                }
+            }
+            LOG.warning("skipped " + (ops.size() - ok.size()) + " changes stamped more than "
+                    + MAX_CLOCK_AHEAD_MILLIS / 1000 + " s ahead of this node's clock, from node "
+                    + ahead.stamp().node() + "; check that node's clock");
+            ops = ok;
+        }
         try {
             return engine.merge(ops);
         } catch (IOException e) {
@@ -686,6 +717,12 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     ops = Op.listFromJson(body.get("ops"));
                 } catch (IllegalArgumentException e) {
                     throw new QueryService.Rejected(400, "bad ops: " + e.getMessage());
+                }
+                Op ahead = firstTooFarAhead(ops);
+                if (ahead != null) {
+                    throw new QueryService.Rejected(409, "refused: a change is stamped " + (ahead.stamp().wall()
+                            - clock.getAsLong()) / 1000 + " s ahead of this node's clock (limit "
+                            + MAX_CLOCK_AHEAD_MILLIS / 1000 + " s); check the sender's clock");
                 }
                 try {
                     return Map.of("node", nodeId, "applied", engine.merge(ops));
