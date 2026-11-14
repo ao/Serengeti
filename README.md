@@ -1,11 +1,22 @@
 # Serengeti
 
-Serengeti is a small document-table database in one jar: databases hold tables, tables hold JSON rows,
-and you query them over an authenticated HTTP API with a short SQL-like language. It writes every change
-to a checksummed write-ahead log before answering.
+Serengeti is a small replicated database in one jar. Databases hold tables, tables hold JSON rows, and
+you query them over an authenticated HTTP API with a short SQL-like language. A cluster is 1 to 7 nodes
+that each hold every database.
 
-This is the 2.0 line, a rewrite of 1.x. It runs as one node, or as a cluster of up to 7 that each hold
-every database and acknowledge a write once a majority has it on disk ([docs/CONSISTENCY.md](docs/CONSISTENCY.md)).
+What sets it apart is what happens when the network splits. By default a write needs a majority of the
+nodes, like most replicated databases. Ask for `"ack": "local"` instead and a node that is cut off keeps
+accepting writes; when the network comes back the nodes merge, and every node ends up with the same rows.
+Two writes to the same row that never saw each other are not silently dropped: the newer one becomes the
+row's value everywhere, and `SHOW CONFLICTS` lists both until the next write to the row settles it.
+
+That suits places where the link to the other nodes is the least reliable part: a shop, a depot, a
+vehicle, a site office.
+
+![A three-node cluster: one node is cut off, both sides keep writing, and they converge when the network heals](docs/demo.svg)
+
+The recording is a real run of [docs/demo.sh](docs/demo.sh), which anyone with Docker can run. CI runs it
+on every change.
 
 ## Quick start
 
@@ -44,24 +55,84 @@ q "SELECT name, qty FROM shop.items WHERE qty > 200"
 The console is at http://127.0.0.1:1985/ and asks for the same user name and password.
 
 To set the password when the node first starts, pass `-e SERENGETI_ADMIN_PASSWORD` to `docker run`
-(the value is taken from your shell), and skip the setup step. See docs/CONFIGURATION.md.
+(the value is taken from your shell), and skip the setup step. A cluster is the same image with
+`SERENGETI_PEERS` and a shared cluster key; [docs/CONFIGURATION.md](docs/CONFIGURATION.md) has the
+settings and [docs/demo.sh](docs/demo.sh) starts one.
 
 The [examples](examples/) run the same steps from curl, Python (`urllib`) and JavaScript (`fetch`). The
 quick start is run by [docs/quickstart.sh](docs/quickstart.sh), and the examples by
 [examples/run.sh](examples/run.sh); both are run in CI.
 
 Without Docker, build with `mvn package` (Java 17 or later) and run
-`java -jar target/Serengeti-2.0.0-SNAPSHOT-jar-with-dependencies.jar`. It listens on 127.0.0.1:1985 and
+`java -jar target/Serengeti-2.1.0-SNAPSHOT-jar-with-dependencies.jar`. It listens on 127.0.0.1:1985 and
 keeps its data in `./data`.
 
-## Documentation
+## Writes in a cluster
 
-- [docs/QUERY.md](docs/QUERY.md): the query language, comparison rules and limits.
-- [docs/API.md](docs/API.md): HTTP routes, authentication and errors.
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md): settings, defaults and the data directory.
-- [examples/](examples/): clients for curl, Python and JavaScript.
-- [CHANGELOG.md](CHANGELOG.md), [ROADMAP.md](ROADMAP.md), [VERSIONING.md](VERSIONING.md) and
-  [CONTRIBUTING.md](CONTRIBUTING.md).
+A write goes to any node. With the default, `"ack": "majority"`, the node answers 200 once a majority of
+the cluster has the write on disk, and 503 when it cannot reach a majority. With `"ack": "local"`, it
+answers 200 once the write is on its own disk and passes it on to the nodes it can reach; the rest get it
+through sync when they can. Choose per request, or set `SERENGETI_WRITE_ACK` for a node's default.
+
+```
+POST /v1/query
+{"query": "UPDATE shop.items SET qty = 90 WHERE _id = 'bolt'", "ack": "local"}
+```
+
+Reads answer from the node's own data unless you ask for `"consistency": "majority"`, which syncs with a
+majority first. [docs/CONSISTENCY.md](docs/CONSISTENCY.md) has the details, including how conflicts are
+detected (a version vector per row write) and what a 503 means.
+
+## Indexes
+
+```sh
+q "CREATE INDEX ON shop.items (qty)"
+q "SELECT name FROM shop.items WHERE qty > 200"
+```
+
+A `WHERE` that compares an indexed column with a value, alone or as one term of an AND, reads only the
+matching rows; anything else scans the table. Lookups by `_id` never scan. Indexes change how fast a
+query runs, not what it returns. [docs/QUERY.md](docs/QUERY.md) has the rules.
+
+## How it compares
+
+| | Serengeti 2.1 | rqlite | CouchDB | cr-sqlite |
+|---|---|---|---|---|
+| Shape | one jar or image, HTTP API | one binary, HTTP API | server, HTTP API | SQLite extension |
+| Data and queries | JSON rows, a small SQL-like language with single-column indexes, no joins | SQLite, full SQL | JSON documents, Mango and map/reduce views | SQLite, full SQL |
+| Writes when a node is cut off | refused by default; accepted with `"ack": "local"` | refused on the minority side | accepted | accepted (it is local) |
+| Concurrent writes to one row | newer is the value; both listed by `SHOW CONFLICTS` | serialised through the Raft leader | deterministic winner; the others kept as conflicts | merged per column (last-writer-wins, counters) |
+| Replication | built in, 1 to 7 nodes | built in (Raft) | built in | you move the changes yourself |
+
+rqlite is the better choice when every write must be linearizable; it has also been in production use
+for years. CouchDB has a decade of production use, offline-first clients and a much richer query model.
+Serengeti is smaller than both, and young: 2.0 was its first usable release.
+
+## Tested
+
+GitHub Actions runs these on every change:
+
+- 246 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
+  syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
+  the writes no other write had seen;
+- 58 checks against the built image on amd64 and arm64, including `kill -9` during writes;
+- 37 checks on a 3-node TLS cluster in Docker: nodes killed and restarted, one partitioned with iptables,
+  one with fsync slowed by a second, local writes on both sides of a partition. Every write that was
+  acknowledged must be on every node at the end;
+- 44 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster, one node at a time under writes, and
+  roll a node back to 2.0.0 after it has created an index;
+- the quick start above, the examples and the recorded demo, run as written.
+
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md) has throughput and latency, with the machine and method.
+
+## When not to use it
+
+- The data does not fit in memory on every node: each node keeps all of it in memory.
+- You need joins, transactions across statements, or indexes on more than one column. A `WHERE` without
+  an indexed comparison scans its table.
+- You need every write serialised, such as a balance that must never go below zero across nodes.
+- You need more than 7 nodes, or nodes that hold only part of the data.
+- You need more than one user: there is one admin account per node, and accounts are not replicated.
 
 ## Security defaults
 
@@ -71,30 +142,25 @@ keeps its data in `./data`.
   a minute block it for the rest of that minute.
 - The jar listens on 127.0.0.1 unless `SERENGETI_BIND` says otherwise. The image binds all interfaces
   inside its container and publishes nothing; publish to 127.0.0.1 unless other machines need it.
-- Without TLS, passwords cross the network in clear. Set `SERENGETI_TLS_KEYSTORE` (see
+- Nodes authenticate each other with a shared cluster key and talk over TLS, unless you explicitly allow
+  plaintext on a private network.
+- Without TLS on the client API, passwords cross the network in clear. Set `SERENGETI_TLS_KEYSTORE` (see
   docs/CONFIGURATION.md) before other machines connect, or reach the node through an SSH tunnel.
 
-## Status
+## Documentation
 
-What works in this branch, with tests (`mvn verify`, and `tests/container/run.sh` against the image):
+- [docs/QUERY.md](docs/QUERY.md): the query language, comparison rules and limits.
+- [docs/API.md](docs/API.md): HTTP routes, authentication, metrics and errors.
+- [docs/CONSISTENCY.md](docs/CONSISTENCY.md): replication, write acknowledgement, conflicts and what was tested.
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md): settings, defaults and the data directory.
+- [docs/BENCHMARKS.md](docs/BENCHMARKS.md): measured throughput and latency.
+- [examples/](examples/): clients for curl, Python and JavaScript.
+- [CHANGELOG.md](CHANGELOG.md), [ROADMAP.md](ROADMAP.md), [VERSIONING.md](VERSIONING.md) and
+  [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- single-node storage: write-ahead log with CRC32C, fsync before acknowledging by default, snapshots,
-  recovery that drops a torn tail; five rounds of `kill -9` during inserts lose no acknowledged insert;
-- the query language in docs/QUERY.md, with property tests on the parser;
-- the authenticated API and console;
-- HTTPS with a PKCS#12 key store, TLS 1.2 and 1.3 only;
-- replication across 1 to 7 nodes with majority writes, catch-up after restarts and partitions, and
-  majority reads; `tests/cluster/run.sh` kills, partitions and slows nodes of a 3-node TLS cluster in
-  Docker and checks that no acknowledged write is lost;
-- `GET /ready`, Prometheus metrics at `GET /metrics`, and one request log line per request;
-- backup over HTTP (`GET /v1/backup`, admin) and `serengeti restore` into an empty data directory;
-- one image for linux/amd64 and linux/arm64.
-
-What it does not do: there are no indexes, so every `WHERE` scans the table; there are no joins and no
-transactions across statements; concurrent writes to one row are not serialised: the newer one becomes
-the row's value and the other is kept for `SHOW CONFLICTS`; accounts are not replicated.
-
-1.x (up to v1.3.4) is not compatible: its HTTP routes, on-disk files and `admin`/`admin` login are gone.
+Upgrading from 2.0: 2.1 reads 2.0's data directory and syncs with 2.0 nodes, so a cluster can be upgraded
+one node at a time. 1.x (up to v1.3.4) is not compatible: its HTTP routes, on-disk files and
+`admin`/`admin` login are gone.
 
 ## Licence
 
