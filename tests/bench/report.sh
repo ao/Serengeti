@@ -53,6 +53,7 @@ per_run() {
   printf '%s' "$out"
 }
 dd_of() { awk -F'\t' '$1 == "D" { printf "%s ms", $3 }' "$2"; }
+ci_of() { awk -F'\t' '$1 == "CI" { printf "%s%s rows %s s", (n++ ? ", " : ""), $2, $3 } END { if (!n) printf "not run" }' "$2"; }
 load_of() {
   awk -F'\t' -v cpu="$(m "$1" cpu_who)" -v oc="$(m "$1" other_containers)" -v ls="$(m "$1" load_start)" -v le="$(m "$1" load_end)" '
     $1 == "Q" { q = $2; qw = $3 }
@@ -281,8 +282,13 @@ report() {
   fi
   if has c; then
     echo "### c. Single node reads, concurrency $(fact read_conc)"; echo
-    echo "\`SELECT * FROM t WHERE n = x\` scans the whole table (there are no indexes) and returns one row; x is a random value, the same sequence in every run."; echo
+    echo "No indexes. \`SELECT * FROM t WHERE n = x\` returns one row; x is a random value, the same sequence in every run. \`WHERE _id = x\` looks up a random id of the table, also the same sequence in every run."; echo
     latency_table c "Rows in table" Query; echo
+  fi
+  if has c-index; then
+    echo "### c-index. Single node reads through an index on n, concurrency $(fact read_conc)"; echo
+    echo "The same node and tables as c, after \`CREATE INDEX ON t (n)\` on each. Both queries compare n with a random value, the same sequence in every run. Time each CREATE INDEX took: $(per_run ci_of)."; echo
+    latency_table c-index "Rows in table" Query; echo
   fi
   if has d; then
     echo "### d. Three-node TLS cluster, fsync=always, majority writes: INSERT through n1"; echo

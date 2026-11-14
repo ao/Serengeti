@@ -20,9 +20,10 @@
 #
 # Other settings:
 #   SKIP_BUILD=1       reuse the local serengeti:bench
-#   SCENARIOS="a b c"  run only these (a, a-tls, b, c, d, d-local, e; the default is all, and a-tls is left
-#                      out of QUICK). d-local needs an image that accepts "ack": "local" (2.1 and later); with
-#                      an older one it is skipped and the report says so
+#   SCENARIOS="a b c"  run only these (a, a-tls, b, c, c-index, d, d-local, e; the default is all, and a-tls
+#                      is left out of QUICK). d-local needs an image that accepts "ack": "local", and c-index
+#                      one that accepts CREATE INDEX (2.1 and later); with an older one they are skipped and
+#                      the report says so
 #   NODE_ARGS="..."    extra docker run arguments for every node, split on spaces, e.g.
 #                      NODE_ARGS="-e JDK_JAVA_OPTIONS=-Dsome.property=1"; they are printed in the report
 #   OUT=dir            where the markdown report (results.md), the per-run results (results.tsv), the
@@ -44,17 +45,17 @@ cd "$(dirname "$0")/../.."
 QUICK=${QUICK:-0}
 if [ "$QUICK" = 1 ]; then
   REPS=${REPS:-1}; WARM=${WARM:-1}; SECS=${SECS:-2}
-  READ_SIZES=${READ_SIZES:-"200 1000 5000"}
+  READ_SIZES=${READ_SIZES:-"1000 5000"}
   E_SIZES=${E_SIZES:-"2000"}; E_REPS=${E_REPS:-1}; E_IDLE=${E_IDLE:-4}; E_SECS=${E_SECS:-8}; E_SETTLE=${E_SETTLE:-2}
   DD_COUNT=${DD_COUNT:-100}
-  SCENARIOS=${SCENARIOS:-"a b c d d-local e"}
+  SCENARIOS=${SCENARIOS:-"a b c c-index d d-local e"}
   QUIET_WAIT_SECS=${QUIET_WAIT_SECS:-0}; SCENARIO_WAIT_SECS=${SCENARIO_WAIT_SECS:-0}
 else
   REPS=${REPS:-3}; WARM=${WARM:-5}; SECS=${SECS:-15}
   READ_SIZES=${READ_SIZES:-"1000 10000 100000"}
   E_SIZES=${E_SIZES:-"10000 100000"}; E_REPS=${E_REPS:-3}; E_IDLE=${E_IDLE:-30}; E_SECS=${E_SECS:-60}; E_SETTLE=${E_SETTLE:-15}
   DD_COUNT=${DD_COUNT:-500}
-  SCENARIOS=${SCENARIOS:-"a a-tls b c d d-local e"}
+  SCENARIOS=${SCENARIOS:-"a a-tls b c c-index d d-local e"}
   QUIET_WAIT_SECS=${QUIET_WAIT_SECS:-900}; SCENARIO_WAIT_SECS=${SCENARIO_WAIT_SECS:-300}
 fi
 MAX_BUSY_PCT=${MAX_BUSY_PCT:-25}
@@ -468,39 +469,73 @@ if want b; then
   single_writes b off 0 "fsync=off"
 fi
 
-# ---- c: single node reads ----
+# ---- c, c-index: single node reads ----
 
-if want c; then
-ambient c
-step "c: single node reads, concurrency $READ_CONCURRENCY, tables of $READ_SIZES rows"
-start_single always 0
-for size in $READ_SIZES; do
-  tbl=bench.r$size
-  sql "$BASE" "CREATE TABLE $tbl" >/dev/null
-  drv preload "$BASE" "$tbl" 0 "$size"
-  [ "$(drv count "$BASE" "$tbl")" = "$size" ] || { echo "harness: preload of $tbl is short" >&2; exit 1; }
-  docker exec "$TOOLS" sh -c "/bench/driver.sh gen-select $tbl $size 500 > /work/select-$size.txt"
-done
-for size in $READ_SIZES; do
-  tbl=bench.r$size
-  for rep in $(seq 1 "$REPS"); do
-    for kind in select count; do
-      if [ "$kind" = select ]; then
-        DENV=(-e "BODY_FILE=/work/select-$size.txt"); cfg="SELECT * WHERE n = x"
-      else
-        DENV=(-e "BODY={\"query\": \"SELECT COUNT(*) FROM $tbl\"}"); cfg="SELECT COUNT(*)"
-      fi
-      label="c-$kind-$size-r$rep"
-      DENV+=(-e "URL=$BASE" -e "CONC=$READ_CONCURRENCY" -e "SECS=$SECS" -e "WARM=$WARM")
-      line=$(drv run "$label")
-      IFS=$'\t' read -r ok err rps p50 p95 p99 max warm_ok f s detail <<< "$line"
-      docker exec "$TOOLS" cat "/work/$label.json" > "$OUT/raw/$label.json"
-      DENV=()
-      result c "$cfg" "$size" "$rep" "$ok" "$err" "$rps" "$p50" "$p95" "$p99" "$max" 0 0 "" "${detail:-}"
-    done
+# read_cell scenario kind size rep: one measured run of one kind of query on bench.r<size>
+read_cell() {
+  local sc=$1 kind=$2 size=$3 rep=$4 tbl=bench.r$3 cfg label line ok err rps p50 p95 p99 max warm_ok f s detail
+  case $kind in
+    select) DENV=(-e "BODY_FILE=/work/select-$size.txt"); cfg="SELECT * WHERE n = x" ;;
+    count) DENV=(-e "BODY={\"query\": \"SELECT COUNT(*) FROM $tbl\"}"); cfg="SELECT COUNT(*)" ;;
+    countn) DENV=(-e "BODY_FILE=/work/countn-$size.txt"); cfg="SELECT COUNT(*) WHERE n = x" ;;
+    id) DENV=(-e "BODY_FILE=/work/id-$size.txt"); cfg="SELECT * WHERE _id = x" ;;
+  esac
+  label="$sc-$kind-$size-r$rep"
+  DENV+=(-e "URL=$BASE" -e "CONC=$READ_CONCURRENCY" -e "SECS=$SECS" -e "WARM=$WARM")
+  line=$(drv run "$label")
+  IFS=$'\t' read -r ok err rps p50 p95 p99 max warm_ok f s detail <<< "$line"
+  docker exec "$TOOLS" cat "/work/$label.json" > "$OUT/raw/$label.json"
+  DENV=()
+  result "$sc" "$cfg" "$size" "$rep" "$ok" "$err" "$rps" "$p50" "$p95" "$p99" "$max" 0 0 "" "${detail:-}"
+}
+
+# c and c-index share one node and its tables. c-index then adds an index on n to each table (timed) and
+# reads through it; it is skipped when the image does not answer CREATE INDEX with 200 (2.0 has no indexes).
+if want c || want c-index; then
+  if want c; then ambient c; else ambient c-index; fi
+  step "c: single node reads, concurrency $READ_CONCURRENCY, tables of $READ_SIZES rows"
+  start_single always 0
+  for size in $READ_SIZES; do
+    tbl=bench.r$size
+    sql "$BASE" "CREATE TABLE $tbl" >/dev/null
+    drv preload "$BASE" "$tbl" 0 "$size"
+    [ "$(drv count "$BASE" "$tbl")" = "$size" ] || { echo "harness: preload of $tbl is short" >&2; exit 1; }
+    docker exec "$TOOLS" sh -c "/bench/driver.sh gen-select $tbl $size 500 > /work/select-$size.txt
+      /bench/driver.sh gen-select $tbl $size 500 count > /work/countn-$size.txt
+      /bench/driver.sh gen-id-select $BASE $tbl 500 > /work/id-$size.txt"
   done
-done
-drop_nodes
+  if want c; then
+    for size in $READ_SIZES; do
+      for rep in $(seq 1 "$REPS"); do
+        for kind in select count id; do read_cell c "$kind" "$size" "$rep"; done
+      done
+    done
+  fi
+  if want c-index; then
+    step "c-index: CREATE INDEX ON each table (n), then the same node reads through it"
+    INDEX=yes
+    for size in $READ_SIZES; do
+      out=$(drv post "$BASE" "{\"query\": \"CREATE INDEX ON bench.r$size (n)\"}")
+      code=${out##*$'\n'}; took=$(awk -v t="${code#* }" 'BEGIN { printf "%.2f", t }'); code=${code%% *}
+      if [ "$code" != 200 ]; then
+        INDEX="the image does not accept CREATE INDEX: HTTP $code, $(printf '%s' "${out%$'\n'*}" | tr -d '\n' | cut -c1-160)"
+        break
+      fi
+      record CI "$size" "$took"
+      say "RESULT c-index | $size rows | CREATE INDEX took $took s"
+    done
+    if [ "$INDEX" = yes ]; then
+      for size in $READ_SIZES; do
+        for rep in $(seq 1 "$REPS"); do
+          for kind in select countn; do read_cell c-index "$kind" "$size" "$rep"; done
+        done
+      done
+    else
+      record S c-index "$INDEX"
+      say "RESULT c-index | not run: $INDEX"
+    fi
+  fi
+  drop_nodes
 fi
 
 # ---- d: three-node TLS cluster writes ----
@@ -533,7 +568,7 @@ cluster_writes() {
 ack_support() {
   local out code body
   out=$(drv post "$1" '{"query": "SHOW DATABASES", "ack": "probe"}')
-  code=${out##*$'\n'}; body=${out%$'\n'*}
+  code=${out##*$'\n'}; body=${out%$'\n'*}; code=${code%% *}
   body=$(printf '%s' "$body" | tr -d '\n' | cut -c1-160)
   case $code in
     400) case $body in *ack*) echo yes ;; *) echo "the image refused a query with an \"ack\" field: HTTP 400, $body" ;; esac ;;

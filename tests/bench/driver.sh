@@ -9,11 +9,16 @@
 #   count URL TABLE              print COUNT(*) of db.table
 #   health URL                   print the HTTP status of GET /health (000 if no answer)
 #   status URL                   print GET /v1/status
-#   post URL BODY                POST BODY to /v1/query; print the answer, then the HTTP status on its own line
+#   post URL BODY                POST BODY to /v1/query; print the answer, then a line with the HTTP status
+#                                and the seconds the request took
 #   routes URL                   print the requests the node has answered on /internal/state, /internal/apply,
 #                                /internal/digests and routes /metrics does not name ("other"), from GET /metrics
 #   preload URL TABLE FROM TO    insert rows n=FROM+1..TO, 1000 rows per statement
-#   gen-select TABLE MAX COUNT   print COUNT request bodies, one per line, for WHERE n = <random 1..MAX>
+#   gen-select TABLE MAX COUNT [count]
+#                                print COUNT request bodies, one per line, for SELECT * (or with "count",
+#                                SELECT COUNT(*)) WHERE n = <random 1..MAX>
+#   gen-id-select URL TABLE COUNT
+#                                print COUNT request bodies for SELECT * WHERE _id = <an id of the table, at random>
 #   state-size URL DB            print the bytes of one /internal/state answer (needs CLUSTER_KEY)
 #   run LABEL                    warm up, then measure with oha; prints one tab-separated result line
 #       env: URL CONC SECS WARM and BODY or BODY_FILE (one body per line); optional QPS, METRICS_URL
@@ -46,7 +51,7 @@ case $cmd in
   count) sql "$1" "SELECT COUNT(*) FROM $2" | sed -n 's/.*"rows":\[\[\([0-9]*\)\]\].*/\1/p' ;;
   health) cu -o /dev/null -w '%{http_code}' "$1/health" || true ;;
   status) cu -u "$AUTH" "$1/v1/status" ;;
-  post) cu -u "$AUTH" -H 'Content-Type: application/json' --data-binary "$2" -w '\n%{http_code}' "$1/v1/query" ;;
+  post) cu -u "$AUTH" -H 'Content-Type: application/json' --data-binary "$2" -w '\n%{http_code} %{time_total}' "$1/v1/query" ;;
   routes)
     cu -u "$AUTH" "$1/metrics" | awk '
       /^serengeti_http_requests_total\{/ {
@@ -70,9 +75,17 @@ case $cmd in
       from=$end
     done ;;
   gen-select)
-    awk -v t="$1" -v max="$2" -v count="$3" 'BEGIN {
+    what='*'; if [ "${4:-}" = count ]; then what='COUNT(*)'; fi
+    awk -v t="$1" -v max="$2" -v count="$3" -v what="$what" 'BEGIN {
       srand(42)
-      for (i = 0; i < count; i++) printf "{\"query\": \"SELECT * FROM %s WHERE n = %d\"}\n", t, 1 + int(rand() * max) }' ;;
+      for (i = 0; i < count; i++) printf "{\"query\": \"SELECT %s FROM %s WHERE n = %d\"}\n", what, t, 1 + int(rand() * max) }' ;;
+  gen-id-select)
+    url=$1 table=$2 count=$3
+    sql "$url" "SELECT * FROM $table" | jq -r '(.columns | index("_id")) as $i | .rows[] | .[$i]' > /tmp/ids
+    [ -s /tmp/ids ] || { echo "gen-id-select: no ids in $table" >&2; exit 1; }
+    awk -v t="$table" -v count="$count" '{ id[NR] = $0 } END {
+      srand(42)
+      for (i = 0; i < count; i++) printf "{\"query\": \"SELECT * FROM %s WHERE _id = '"'"'%s'"'"'\"}\n", t, id[1 + int(rand() * NR)] }' /tmp/ids ;;
   run)
     label=$1
     : "${URL:?}" "${CONC:?}" "${SECS:?}"
