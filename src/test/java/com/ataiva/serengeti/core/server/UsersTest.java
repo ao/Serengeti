@@ -269,12 +269,15 @@ class UsersTest {
         a.setPassword("scraper", PW, Users.Role.METRICS);
         a.setPassword("gone", PW, Users.Role.WRITE);
         a.delete("gone");
+        a.change("shopper", PW, Users.Role.WRITE, Users.Limit.to(List.of("shop")));
         var root = com.ataiva.serengeti.core.json.Json.parseObject(Files.readString(dir.resolve("a").resolve(Users.FILE)));
         @SuppressWarnings("unchecked")
         var users = (java.util.Map<String, java.util.Map<String, Object>>) root.get("users");
         // 2.0 and 2.1 read "users" and know only the roles admin and user (they would take any other role
         // for user); read and metrics accounts and tombstones are only in accounts.json, which they do not read.
+        // Nor is a write account limited to some databases: they would ignore the list and let it reach all.
         assertEquals(java.util.Set.of("admin", "writer"), users.keySet());
+        assertFalse(Files.readString(dir.resolve("a").resolve(Users.FILE)).contains("shop"));
         assertEquals("user", users.get("writer").get("role"));
         assertEquals(java.util.Set.of("_v", "users"), root.keySet());
         assertEquals("rw-------", PosixFilePermissions.toString(
@@ -292,6 +295,207 @@ class UsersTest {
         assertEquals(Users.Role.READ, old.list().get("reader"));
         assertEquals(Users.Role.METRICS, old.list().get("scraper"));
         assertFalse(old.list().containsKey("gone"));
+        assertEquals(new Users.Access(Users.Role.WRITE, List.of("shop")), old.accounts().get("shopper"),
+                "the limited account and its list are kept too");
+        // An existing write account that gets a list leaves users.json at that save; removing the list puts it
+        // back, so 2.1 then finds it again with its password.
+        assertTrue(old.setDatabases("writer", Users.Limit.to(List.of("blog"))));
+        assertEquals(java.util.Set.of("admin"), legacyUsers(dir.resolve("a")).keySet());
+        assertTrue(old.change("writer", null, Users.Role.READ, Users.Limit.KEEP).access().limited(),
+                "a role change keeps the list");
+        assertTrue(old.change("writer", null, Users.Role.WRITE, Users.Limit.NONE) != null);
+        assertEquals(java.util.Set.of("admin", "writer"), legacyUsers(dir.resolve("a")).keySet());
+        assertEquals("user", legacyUsers(dir.resolve("a")).get("writer").get("role"));
+        assertEquals(users.get("writer").get("hash"), legacyUsers(dir.resolve("a")).get("writer").get("hash"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<String, java.util.Map<String, Object>> legacyUsers(Path d) throws IOException {
+        return (java.util.Map<String, java.util.Map<String, Object>>) com.ataiva.serengeti.core.json.Json
+                .parseObject(Files.readString(d.resolve(Users.FILE))).get("users");
+    }
+
+    @Test
+    void anAccountMayBeLimitedToSomeDatabasesAndKeepsTheListAcrossARestart() throws IOException {
+        Users a = node("a");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        Users.Changed c = a.change("app", PW, null, Users.Limit.to(List.of("Shop", "blog")));
+        assertTrue(c.created());
+        assertEquals(new Users.Access(Users.Role.WRITE, List.of("blog", "shop")), c.access(),
+                "a new account gets write; names are folded as the parser folds them, and sorted");
+        assertEquals(Optional.of(c.access()), a.authenticate("app", PW));
+        assertEquals(Optional.of(new Users.Access(Users.Role.ADMIN)), a.authenticate("admin", PW));
+        Users again = Users.open(dir.resolve("a"), 4, now::get);
+        assertEquals(Optional.of(c.access()), again.authenticate("app", PW));
+        assertEquals(a.digest(), again.digest());
+        // Left out, the list stays: a password, a role, or the account's own password change.
+        assertEquals(c.access(), a.change("app", "another password 1", null, Users.Limit.KEEP).access());
+        assertEquals(List.of("blog", "shop"), a.change("app", null, Users.Role.READ, Users.Limit.KEEP).access().databases());
+        assertTrue(a.changeOwnPassword("app", "another password 1", "another password 2"));
+        assertEquals(new Users.Access(Users.Role.READ, List.of("blog", "shop")), a.accounts().get("app"));
+        assertTrue(a.setRole("app", Users.Role.WRITE));
+        assertEquals(List.of("blog", "shop"), a.accounts().get("app").databases());
+        // A new list replaces it; NONE removes it.
+        assertTrue(a.setDatabases("app", Users.Limit.to(List.of("shop"))));
+        assertEquals(List.of("shop"), a.accounts().get("app").databases());
+        assertTrue(a.setDatabases("app", Users.Limit.NONE));
+        assertFalse(a.accounts().get("app").limited());
+        assertFalse(a.setDatabases("nobody", Users.Limit.NONE), "no such account");
+        assertThrows(Users.NoSuchAccount.class, () -> a.change("nobody", null, Users.Role.READ, Users.Limit.KEEP));
+        assertThrows(IllegalArgumentException.class, () -> a.change("app", null, null, Users.Limit.KEEP),
+                "nothing to change");
+        assertEquals(java.util.Map.of("admin", Users.Role.ADMIN, "app", Users.Role.WRITE), a.list());
+    }
+
+    @Test
+    void listsAreOneToAHundredValidNamesWithNoneTwiceAndOnlyForReadAndWriteAccounts() throws IOException {
+        Users a = node("a");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        List<String> hundred = new java.util.ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            hundred.add("db" + i);
+        }
+        assertEquals(100, Users.Limit.to(hundred).databases().size());
+        List<String> tooMany = new java.util.ArrayList<>(hundred);
+        tooMany.add("db100");
+        for (List<?> bad : List.<List<?>>of(List.of(), tooMany, List.of("shop", "SHOP"), List.of("shop", "shop"),
+                List.of("1x"), List.of("a-b"), List.of("select"), List.of(""), List.of("x".repeat(64)), List.of("café"),
+                List.of("\u212Aeep"), List.of(1), java.util.Arrays.asList("shop", null), List.of(List.of("shop")))) {
+            assertThrows(IllegalArgumentException.class, () -> Users.Limit.to(bad), bad.toString());
+        }
+        assertThrows(IllegalArgumentException.class, () -> Users.Limit.to(null));
+        // Only read and write accounts: admin accounts reach everything, metrics accounts no data.
+        Users.Limit shop = Users.Limit.to(List.of("shop"));
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> a.change("boss", PW, Users.Role.ADMIN, shop));
+        assertTrue(e.getMessage().contains("admin account reaches every database"), e.getMessage());
+        e = assertThrows(IllegalArgumentException.class, () -> a.change("scraper", PW, Users.Role.METRICS, shop));
+        assertTrue(e.getMessage().contains("metrics account reads no data"), e.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> a.change("admin", null, null, shop));
+        a.change("app", PW, Users.Role.READ, shop);
+        for (Users.Role r : List.of(Users.Role.ADMIN, Users.Role.METRICS)) {
+            e = assertThrows(IllegalArgumentException.class, () -> a.setRole("app", r));
+            assertTrue(e.getMessage().contains("\"databases\": null"), e.getMessage());
+            assertThrows(IllegalArgumentException.class, () -> a.setPassword("app", PW, r));
+            assertThrows(IllegalArgumentException.class, () -> a.change("app", null, r, Users.Limit.KEEP));
+        }
+        assertEquals(new Users.Access(Users.Role.READ, List.of("shop")), a.accounts().get("app"), "nothing changed");
+        assertEquals(java.util.Set.of("admin", "app"), a.list().keySet());
+        // With the list removed in the same change, it may be promoted.
+        assertEquals(new Users.Access(Users.Role.ADMIN), a.change("app", null, Users.Role.ADMIN, Users.Limit.NONE).access());
+    }
+
+    @Test
+    void aChangeToTheListIsSeenAtOnceThroughTheCacheHereAndOnPeersOnceMerged() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.setPassword("app", PW, Users.Role.WRITE);
+        b.merge(a.entries());
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE)), a.authenticate("app", PW));
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE)), b.authenticate("app", PW)); // both cached now
+        a.setDatabases("app", Users.Limit.to(List.of("shop")));
+        Users.Access limited = new Users.Access(Users.Role.WRITE, List.of("shop"));
+        assertEquals(Optional.of(limited), a.authenticate("app", PW), "at once on the node that made it");
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE)), b.authenticate("app", PW), "b has not heard");
+        b.merge(a.entries());
+        assertEquals(Optional.of(limited), b.authenticate("app", PW), "at once once merged");
+        a.setDatabases("app", Users.Limit.NONE);
+        b.merge(a.entries());
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE)), b.authenticate("app", PW), "the removal too");
+        assertEquals(a.digest(), b.digest());
+    }
+
+    @Test
+    void listChangesMergeLikeRoleChanges() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.setPassword("app", PW, Users.Role.WRITE);
+        a.setPassword("old", PW, Users.Role.WRITE);
+        b.merge(a.entries());
+        // The newest change wins: a limits app, then b (later) gives it another list.
+        a.setDatabases("app", Users.Limit.to(List.of("shop")));
+        b.setDatabases("app", Users.Limit.to(List.of("blog")));
+        a.merge(b.entries());
+        b.merge(a.entries());
+        assertEquals(List.of("blog"), a.accounts().get("app").databases());
+        assertEquals(a.digest(), b.digest());
+        // An admin change beats an own password change on a node that has not heard of it: the list stands.
+        b.merge(a.entries());
+        a.setDatabases("app", Users.Limit.to(List.of("shop")));
+        assertTrue(b.changeOwnPassword("app", PW, "my own password 1"));
+        a.merge(b.entries());
+        b.merge(a.entries());
+        assertEquals(a.digest(), b.digest());
+        for (Users u : List.of(a, b)) {
+            assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), u.authenticate("app", PW),
+                    "the list stands, and the own password change made on top of the older version is lost");
+            assertEquals(Optional.empty(), u.authenticate("app", "my own password 1"));
+        }
+        // An own password change made on top of the list keeps it everywhere.
+        assertTrue(b.changeOwnPassword("app", PW, "my own password 2"));
+        a.merge(b.entries());
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), a.authenticate("app", "my own password 2"));
+        // A delete after a list change wins on both, in either order.
+        b.setDatabases("old", Users.Limit.to(List.of("shop")));
+        assertTrue(a.delete("old")); // later
+        b.merge(a.entries());
+        a.merge(b.entries());
+        assertFalse(a.list().containsKey("old"));
+        assertFalse(b.list().containsKey("old"));
+        assertEquals(a.digest(), b.digest());
+        // Removing the list spreads like setting it.
+        a.setDatabases("app", Users.Limit.NONE);
+        b.merge(a.entries());
+        assertFalse(b.accounts().get("app").limited());
+        assertEquals(a.digest(), b.digest());
+    }
+
+    @Test
+    void aMalformedListFromAPeerIsRefusedWholeAndNeverReadAsNoLimit() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.change("app", PW, Users.Role.WRITE, Users.Limit.to(List.of("shop")));
+        b.merge(a.entries());
+        String before = b.digest();
+        var good = new java.util.LinkedHashMap<String, Object>(a.entries().get(1));
+        assertEquals(List.of("shop"), good.get("databases"));
+        good.put("at", "5000.0.a");
+        List<String> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 101; i++) {
+            many.add(String.format("db%03d", i));
+        }
+        List<Object> bads = new java.util.ArrayList<>(List.of("shop", List.of(), List.of("shop", "blog"), List.of("a", "a"),
+                List.of("Shop"), List.of("1x"), List.of(1), many, java.util.Map.of("shop", true), true));
+        bads.add(null);
+        for (Object bad : bads) {
+            var entry = new java.util.LinkedHashMap<String, Object>(good);
+            entry.put("databases", bad);
+            assertThrows(IllegalArgumentException.class, () -> b.merge(List.of(a.entries().get(0), entry)), String.valueOf(bad));
+        }
+        // A list on an account that may not have one, or on a tombstone.
+        for (String role : List.of("admin", "metrics")) {
+            var entry = new java.util.LinkedHashMap<String, Object>(good);
+            entry.put("role", role);
+            assertThrows(IllegalArgumentException.class, () -> b.merge(List.of(entry)), role);
+        }
+        var tomb = new java.util.LinkedHashMap<String, Object>();
+        tomb.put("user", "app");
+        tomb.put("at", "5000.0.a");
+        tomb.put("deleted", true);
+        tomb.put("databases", List.of("shop"));
+        assertThrows(IllegalArgumentException.class, () -> b.merge(List.of(tomb)));
+        assertEquals(before, b.digest(), "nothing of a refused batch was merged");
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), b.authenticate("app", PW));
+        // The same holds for this node's own file: it does not start rather than read the account as unlimited.
+        Path f = dir.resolve("b").resolve(Users.ACCOUNTS_FILE);
+        String text = Files.readString(f);
+        assertTrue(text.contains("\"databases\":[\"shop\"]"), text);
+        PrivateFiles.writeAtomically(f, text.replace("\"databases\":[\"shop\"]", "\"databases\":\"shop\""));
+        IOException e = assertThrows(IOException.class, () -> Users.open(dir.resolve("b"), 4, now::get));
+        assertTrue(e.getMessage().contains("databases"), e.getMessage());
     }
 
     @Test

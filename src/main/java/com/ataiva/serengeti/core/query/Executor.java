@@ -79,7 +79,7 @@ public final class Executor {
             return engine.read(store -> select(store, q));
         }
         if (s instanceof Statement.ShowDatabases) {
-            return engine.read(store -> names("database", store.databases()));
+            return databases(db -> true);
         }
         if (s instanceof Statement.ShowTables t) {
             return engine.read(store -> {
@@ -183,6 +183,11 @@ public final class Executor {
             return engine.update(store -> delete(store, d));
         }
         throw new IllegalArgumentException("unknown statement " + s);
+    }
+
+    /** SHOW DATABASES, listing only the databases {@code shown} accepts. */
+    public Result databases(java.util.function.Predicate<String> shown) {
+        return engine.read(store -> names("database", store.databases().stream().filter(shown).toList()));
     }
 
     private StorageEngine.Planned<Result> insert(Store store, Statement.Insert i) {

@@ -380,4 +380,89 @@ class NodeTest {
                 "SERENGETI_TLS_KEYSTORE_PASSWORD", "changeit");
         assertThrows(ConfigException.class, () -> Node.start(tls, Node.NO_QUERIES));
     }
+
+    private static HttpResponse<String> as(Node n, String user, String password, String method, String path,
+            String body) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + n.address().getPort() + path))
+                .header("Authorization", "Basic " + Base64.getEncoder()
+                        .encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8)));
+        if (body != null) {
+            b.header("Content-Type", "application/json");
+        }
+        b.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
+        return HttpClient.newHttpClient().send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static HttpResponse<String> queryAs(Node n, String user, String password, String q) throws Exception {
+        return as(n, user, password, "POST", "/v1/query", com.ataiva.serengeti.core.json.Json.write(Map.of("query", q)));
+    }
+
+    @Test
+    void anAccountLimitedToSomeDatabasesReachesOnlyThoseOverHttp() throws Exception {
+        try (Node n = Node.start(config(tmp.resolve("data"), "SERENGETI_ADMIN_PASSWORD", PW), Node.QUERIES)) {
+            for (String q : List.of("CREATE DATABASE shop", "CREATE TABLE shop.items", "CREATE DATABASE blog",
+                    "CREATE TABLE blog.posts", "INSERT INTO blog.posts (_id, t) VALUES ('p1', 'hello')")) {
+                assertEquals(200, query(n, q).statusCode(), q);
+            }
+            String wpw = "writer password 1";
+            String rpw = "reader password 1";
+            assertEquals(201, as(n, "admin", PW, "PUT", "/v1/users/w",
+                    "{\"password\": \"" + wpw + "\", \"role\": \"write\", \"databases\": [\"shop\"]}").statusCode());
+            assertEquals(201, as(n, "admin", PW, "PUT", "/v1/users/r",
+                    "{\"password\": \"" + rpw + "\", \"role\": \"read\", \"databases\": [\"shop\", \"blog\"]}").statusCode());
+            assertEquals(200, queryAs(n, "w", wpw, "INSERT INTO shop.items (_id, n) VALUES ('a', 1)").statusCode());
+            assertTrue(queryAs(n, "w", wpw, "SELECT * FROM shop.items").body().contains("[[\"a\",1]]"));
+            assertEquals("{\"type\":\"rows\",\"columns\":[\"database\"],\"rows\":[[\"shop\"]],\"count\":1,\"truncated\":false}",
+                    queryAs(n, "w", wpw, "SHOW DATABASES").body().trim());
+            for (String q : List.of("SELECT * FROM blog.posts", "INSERT INTO blog.posts (t) VALUES ('x')",
+                    "DROP DATABASE blog", "DROP TABLE blog.posts", "SHOW TABLES IN blog", "CREATE DATABASE other",
+                    "SELECT * FROM nowhere.t", "SHOW CONFLICTS IN blog.posts")) {
+                HttpResponse<String> r = queryAs(n, "w", wpw, q);
+                assertEquals(403, r.statusCode(), q + ": " + r.body());
+                String db = q.contains("blog") ? "blog" : q.contains("other") ? "other" : "nowhere";
+                assertEquals("{\"error\":\"this account may not use database " + db + "\"}", r.body().trim());
+            }
+            // With "consistency": "majority" too, and nothing was changed.
+            assertEquals(403, as(n, "w", wpw, "POST", "/v1/query",
+                    "{\"query\": \"SELECT * FROM blog.posts\", \"consistency\": \"majority\"}").statusCode());
+            assertTrue(query(n, "SELECT * FROM blog.posts").body().contains("[[\"p1\",\"hello\"]]"));
+            assertTrue(query(n, "SHOW DATABASES").body().contains("[[\"blog\"],[\"shop\"]]"));
+            // The role still applies: the read account reads both, writes neither.
+            assertEquals(200, queryAs(n, "r", rpw, "SELECT * FROM blog.posts").statusCode());
+            HttpResponse<String> w = queryAs(n, "r", rpw, "INSERT INTO shop.items (n) VALUES (2)");
+            assertEquals(403, w.statusCode());
+            assertTrue(w.body().contains("read role"), w.body());
+            // The change feed, checked the same way, whether or not the database exists.
+            for (String db : List.of("blog", "nowhere", "Shop")) {
+                HttpResponse<String> f = as(n, "w", wpw, "GET", "/v1/changes?db=" + db + "&after=now", null);
+                assertEquals(403, f.statusCode(), db);
+                assertEquals("{\"error\":\"this account may not use database " + db + "\"}", f.body().trim());
+            }
+            HttpResponse<String> mine = as(n, "w", wpw, "GET", "/v1/changes?db=shop&after=now", null);
+            assertEquals(200, mine.statusCode());
+            assertEquals(200, as(n, "r", rpw, "GET", "/v1/changes?db=blog&after=now", null).statusCode());
+            // A change to the list holds from the next request on.
+            assertEquals(200, as(n, "admin", PW, "PUT", "/v1/users/w", "{\"databases\": [\"blog\"]}").statusCode());
+            assertEquals(403, queryAs(n, "w", wpw, "SELECT * FROM shop.items").statusCode());
+            assertEquals(200, queryAs(n, "w", wpw, "SELECT * FROM blog.posts").statusCode());
+            // And a long poll that began before such a change answers with what the account may reach when it
+            // returns, not when it began.
+            String cursor = (String) com.ataiva.serengeti.core.json.Json.parseObject(
+                    as(n, "r", rpw, "GET", "/v1/changes?db=shop&after=now", null).body()).get("cursor");
+            java.util.concurrent.CompletableFuture<HttpResponse<String>> poll = java.util.concurrent.CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return as(n, "r", rpw, "GET", "/v1/changes?db=shop&wait=20&after=" + cursor, null);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    });
+            Thread.sleep(500);
+            assertEquals(200, as(n, "admin", PW, "PUT", "/v1/users/r", "{\"databases\": [\"blog\"]}").statusCode());
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, n) VALUES ('b', 2)").statusCode());
+            HttpResponse<String> late = poll.get(15, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(403, late.statusCode(), late.body());
+            assertFalse(late.body().contains("\"b\""), late.body());
+        }
+    }
 }

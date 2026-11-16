@@ -423,6 +423,61 @@ class ClusterTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void aListOfDatabasesMadeOnOneNodeHoldsOnEveryNodeAndAMalformedOneIsRefused() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        waitWritable(0);
+        for (String q : List.of("CREATE DATABASE d", "CREATE TABLE d.t", "CREATE DATABASE e", "CREATE TABLE e.t")) {
+            assertEquals(200, query(0, q).statusCode(), q);
+        }
+        String pw = "limited password 1";
+        assertEquals(201, as(0, "admin", PW, "PUT", "/v1/users/app",
+                "{\"password\": \"" + pw + "\", \"role\": \"read\", \"databases\": [\"d\"]}"));
+        String inD = "{\"query\": \"SELECT * FROM d.t\"}";
+        String inE = "{\"query\": \"SELECT * FROM e.t\"}";
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " knows app", () -> as(n, "app", pw, "POST", "/v1/query", inD) == 200);
+            // The account arrives with its list: no node has it without the list, even for a moment.
+            assertEquals(403, as(n, "app", pw, "POST", "/v1/query", inE));
+            assertEquals(403, as(n, "app", pw, "GET", "/v1/changes?db=e&after=now", null));
+        }
+        // Removing the list on another node spreads like a role change.
+        assertEquals(200, as(1, "admin", PW, "PUT", "/v1/users/app", "{\"databases\": null}"));
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " learns the list is gone", () -> as(n, "app", pw, "POST", "/v1/query", inE) == 200);
+        }
+        // A node refuses a peer's account entry whose list is malformed, rather than read it as no limit.
+        assertEquals(200, as(2, "admin", PW, "PUT", "/v1/users/app", "{\"databases\": [\"d\"]}"));
+        URI users = URI.create("http://127.0.0.1:" + ports[0] + "/internal/v3/users");
+        eventually("node 0 has the list again", () -> as(0, "app", pw, "POST", "/v1/query", inE) == 403);
+        Map<String, Object> entry = null;
+        for (Object o : (List<Object>) Json.parseObject(HTTP.send(HttpRequest.newBuilder(users)
+                .header(InternalRoutes.KEY_HEADER, KEY).build(), HttpResponse.BodyHandlers.ofString()).body()).get("users")) {
+            if ("app".equals(((Map<String, Object>) o).get("user"))) {
+                entry = new java.util.LinkedHashMap<>((Map<String, Object>) o);
+            }
+        }
+        assertEquals(List.of("d"), entry.get("databases"));
+        String[] stamp = ((String) entry.get("at")).split("\\.", 3);
+        entry.put("at", (Long.parseLong(stamp[0]) + 1) + "." + stamp[1] + "." + stamp[2]); // newer than what node 0 has
+        for (Object bad : java.util.Arrays.asList("d", List.of(), List.of("e", "d"), List.of("D"), null)) {
+            Map<String, Object> e = new java.util.LinkedHashMap<>(entry);
+            e.put("databases", bad);
+            HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder(users).header(InternalRoutes.KEY_HEADER, KEY)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("users", List.of(e))))).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, r.statusCode(), bad + ": " + r.body());
+        }
+        assertEquals(403, as(0, "app", pw, "POST", "/v1/query", inE), "still limited");
+        assertEquals(200, as(0, "app", pw, "POST", "/v1/query", inD));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void aWriteOnOneNodeShowsInAnotherNodesChangeFeed() throws Exception {
         for (int i = 0; i < 3; i++) {
             start(i);

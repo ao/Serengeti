@@ -39,7 +39,7 @@ class HttpApiTest {
     private Users users;
     private AtomicReference<SetupToken> token;
     private HttpApi api;
-    private QueryService queries = (q, r) -> Map.of("echo", q, "role", r.name());
+    private QueryService queries = (q, r) -> Map.of("echo", q, "role", r.role().name());
 
     @BeforeEach
     void start() throws IOException {
@@ -587,5 +587,96 @@ class HttpApiTest {
                 "{\"password\": \"long enough pw 1\", \"role\": \"monitor\"}")));
         assertEquals(400, bad.statusCode());
         assertTrue(bad.body().contains("admin, write, read or metrics"), bad.body());
+    }
+
+    @Test
+    void anAdminLimitsAnAccountToSomeDatabasesAndTheQueryServiceIsGivenTheList() throws Exception {
+        setUp();
+        AtomicReference<Users.Access> seen = new AtomicReference<>();
+        queries = (q, r) -> {
+            seen.set(r);
+            return Map.of("echo", q);
+        };
+        String pw = "app password 123";
+        HttpResponse<String> made = as("admin", PASSWORD, "PUT", "/v1/users/app",
+                "{\"password\": \"" + pw + "\", \"databases\": [\"shop\", \"Blog\"]}");
+        assertEquals(201, made.statusCode(), made.body());
+        assertEquals("{\"user\":\"app\",\"role\":\"write\",\"databases\":[\"blog\",\"shop\"]}", made.body().trim());
+        HttpResponse<String> list = as("admin", PASSWORD, "GET", "/v1/users", null);
+        assertEquals(List.of(Map.of("user", "admin", "role", "admin"),
+                Map.of("user", "app", "role", "write", "databases", List.of("blog", "shop"))), json(list).get("users"));
+        assertEquals(200, as("app", pw, "POST", "/v1/query", "{\"query\": \"SHOW DATABASES\"}").statusCode());
+        assertEquals(new Users.Access(Users.Role.WRITE, List.of("blog", "shop")), seen.get());
+        // Left out, the list stays; given, it replaces the old one; null removes it. The answer shows it.
+        HttpResponse<String> r = as("admin", PASSWORD, "PUT", "/v1/users/app", "{\"role\": \"read\"}");
+        assertEquals("{\"user\":\"app\",\"role\":\"read\",\"databases\":[\"blog\",\"shop\"]}", r.body().trim());
+        r = as("admin", PASSWORD, "PUT", "/v1/users/app", "{\"databases\": [\"shop\"]}");
+        assertEquals("{\"user\":\"app\",\"role\":\"read\",\"databases\":[\"shop\"]}", r.body().trim());
+        r = as("admin", PASSWORD, "PUT", "/v1/users/app", "{\"password\": \"app password 456\"}");
+        assertEquals("{\"user\":\"app\",\"role\":\"read\",\"databases\":[\"shop\"]}", r.body().trim());
+        assertEquals(200, as("app", "app password 456", "POST", "/v1/query", "{\"query\": \"SHOW DATABASES\"}").statusCode());
+        assertEquals(new Users.Access(Users.Role.READ, List.of("shop")), seen.get(), "seen at once, not from the cache");
+        r = as("admin", PASSWORD, "PUT", "/v1/users/app", "{\"databases\": null}");
+        assertEquals(200, r.statusCode(), r.body());
+        assertEquals("{\"user\":\"app\",\"role\":\"read\"}", r.body().trim());
+        assertEquals(200, as("app", "app password 456", "POST", "/v1/query", "{\"query\": \"SHOW DATABASES\"}").statusCode());
+        assertEquals(new Users.Access(Users.Role.READ), seen.get());
+        // Password, role and list in one change.
+        r = as("admin", PASSWORD, "PUT", "/v1/users/app",
+                "{\"password\": \"app password 789\", \"role\": \"write\", \"databases\": [\"x\"]}");
+        assertEquals("{\"user\":\"app\",\"role\":\"write\",\"databases\":[\"x\"]}", r.body().trim());
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("x"))), users.authenticate("app", "app password 789"));
+    }
+
+    @Test
+    void listsOnAdminOrMetricsAccountsAndMalformedListsAre400() throws Exception {
+        setUp();
+        users.change("app", "app password 123", Users.Role.WRITE, Users.Limit.to(List.of("shop")));
+        StringBuilder many = new StringBuilder("[");
+        for (int i = 0; i <= 100; i++) {
+            many.append(i == 0 ? "" : ", ").append("\"d").append(i).append('"');
+        }
+        many.append(']');
+        String pw = "\"password\": \"long enough pw 1\"";
+        String[][] cases = {
+            {"/v1/users/boss", "{" + pw + ", \"role\": \"admin\", \"databases\": [\"shop\"]}", "admin account reaches every database"},
+            {"/v1/users/scraper", "{" + pw + ", \"role\": \"metrics\", \"databases\": [\"shop\"]}", "metrics account reads no data"},
+            {"/v1/users/admin", "{\"databases\": [\"shop\"]}", "admin account reaches every database"},
+            {"/v1/users/app", "{\"role\": \"admin\"}", "\"databases\": null"},
+            {"/v1/users/app", "{\"role\": \"metrics\"}", "\"databases\": null"},
+            {"/v1/users/app", "{" + pw + ", \"role\": \"admin\"}", "\"databases\": null"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": []}", "1 to 100"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": " + many + "}", "1 to 100"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": \"shop\"}", "list of database names"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": {\"shop\": true}}", "list of database names"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": [\"shop\", \"SHOP\"]}", "listed twice"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": [\"1x\"]}", "not a database name"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": [\"select\"]}", "not a database name"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": [7]}", "strings"},
+            {"/v1/users/x", "{\"databases\": [\"shop\"]}", "a new account needs a password"},
+            {"/v1/users/x", "{" + pw + ", \"database\": [\"shop\"]}", "use password, role and databases"},
+        };
+        for (String[] c : cases) {
+            HttpResponse<String> r = as("admin", PASSWORD, "PUT", c[0], c[1]);
+            assertEquals(400, r.statusCode(), c[0] + " " + c[1] + " -> " + r.body());
+            assertTrue(((String) json(r).get("error")).contains(c[2]), c[1] + " -> " + r.body());
+        }
+        assertEquals(Map.of("admin", new Users.Access(Users.Role.ADMIN),
+                "app", new Users.Access(Users.Role.WRITE, List.of("shop"))), users.accounts(), "nothing changed");
+        // With the list removed in the same change, the account may become an admin.
+        HttpResponse<String> r = as("admin", PASSWORD, "PUT", "/v1/users/app", "{\"role\": \"admin\", \"databases\": null}");
+        assertEquals("{\"user\":\"app\",\"role\":\"admin\"}", r.body().trim());
+    }
+
+    @Test
+    void aLimitedAccountStillGetsNoAccountsOrBackups() throws Exception {
+        setUp();
+        users.change("app", "app password 123", Users.Role.WRITE, Users.Limit.to(List.of("shop")));
+        assertEquals(403, as("app", "app password 123", "GET", "/v1/users", null).statusCode());
+        assertEquals(403, as("app", "app password 123", "PUT", "/v1/users/app", "{\"databases\": null}").statusCode());
+        assertEquals(403, as("app", "app password 123", "GET", "/v1/backup", null).statusCode());
+        // Its own password change keeps its list.
+        assertEquals(200, as("app", "app password 123", "POST", "/v1/password", "{\"password\": \"app password 456\"}").statusCode());
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), users.authenticate("app", "app password 456"));
     }
 }

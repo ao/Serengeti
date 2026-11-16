@@ -7,15 +7,63 @@ import java.util.Objects;
 
 /** One parsed query. See docs/QUERY.md for the grammar. */
 public sealed interface Statement {
+    /** Calls the method of {@code v} for this statement's type. */
+    <R> R accept(Visitor<R> v);
+
+    /**
+     * One method per statement type. Code that must decide every type (what a statement reaches, see
+     * {@link Reach}) implements this, so a statement type added later does not compile until it is decided
+     * there: a new record must implement {@link #accept}, which needs a method here.
+     */
+    interface Visitor<R> {
+        R createDatabase(CreateDatabase s);
+
+        R dropDatabase(DropDatabase s);
+
+        R createTable(CreateTable s);
+
+        R dropTable(DropTable s);
+
+        R showDatabases(ShowDatabases s);
+
+        R showTables(ShowTables s);
+
+        R createIndex(CreateIndex s);
+
+        R dropIndex(DropIndex s);
+
+        R showIndexes(ShowIndexes s);
+
+        R showConflicts(ShowConflicts s);
+
+        R insert(Insert s);
+
+        R select(Select s);
+
+        R update(Update s);
+
+        R delete(Delete s);
+    }
+
     record CreateDatabase(String db, boolean ifNotExists) implements Statement {
         public CreateDatabase {
             Objects.requireNonNull(db, "db");
+        }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.createDatabase(this);
         }
     }
 
     record DropDatabase(String db, boolean ifExists) implements Statement {
         public DropDatabase {
             Objects.requireNonNull(db, "db");
+        }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.dropDatabase(this);
         }
     }
 
@@ -24,6 +72,11 @@ public sealed interface Statement {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
         }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.createTable(this);
+        }
     }
 
     record DropTable(String db, String table, boolean ifExists) implements Statement {
@@ -31,13 +84,28 @@ public sealed interface Statement {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
         }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.dropTable(this);
+        }
     }
 
-    record ShowDatabases() implements Statement {}
+    record ShowDatabases() implements Statement {
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.showDatabases(this);
+        }
+    }
 
     record ShowTables(String db) implements Statement {
         public ShowTables {
             Objects.requireNonNull(db, "db");
+        }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.showTables(this);
         }
     }
 
@@ -48,6 +116,11 @@ public sealed interface Statement {
             Objects.requireNonNull(table, "table");
             Objects.requireNonNull(column, "column");
         }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.createIndex(this);
+        }
     }
 
     /** {@code DROP INDEX [IF EXISTS] ON db.table (column)}. */
@@ -57,6 +130,11 @@ public sealed interface Statement {
             Objects.requireNonNull(table, "table");
             Objects.requireNonNull(column, "column");
         }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.dropIndex(this);
+        }
     }
 
     /** {@code SHOW INDEXES IN db.table}: the indexed columns. */
@@ -65,6 +143,11 @@ public sealed interface Statement {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
         }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.showIndexes(this);
+        }
     }
 
     /** The rows of a table that hold conflicting versions, one result row per version. */
@@ -72,6 +155,11 @@ public sealed interface Statement {
         public ShowConflicts {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
+        }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.showConflicts(this);
         }
     }
 
@@ -96,6 +184,11 @@ public sealed interface Statement {
                 copy.add(Collections.unmodifiableList(new ArrayList<>(row)));
             }
             rows = Collections.unmodifiableList(copy);
+        }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.insert(this);
         }
     }
 
@@ -320,6 +413,11 @@ public sealed interface Statement {
             this(db, table, projection, where, List.of(), orderBy, limit);
         }
 
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.select(this);
+        }
+
         /** The columns that make the groups: the list's with DISTINCT, else GROUP BY's (empty without either). */
         public List<String> groups() {
             return distinct ? ((Projection.Columns) projection).names() : groupBy;
@@ -355,6 +453,11 @@ public sealed interface Statement {
                 throw new IllegalArgumentException("UPDATE columns must be distinct");
             }
         }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.update(this);
+        }
     }
 
     /** {@code where} may be null. */
@@ -362,6 +465,11 @@ public sealed interface Statement {
         public Delete {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
+        }
+
+        @Override
+        public <R> R accept(Visitor<R> v) {
+            return v.delete(this);
         }
     }
 }

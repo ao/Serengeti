@@ -24,8 +24,11 @@ import org.mindrot.jbcrypt.BCrypt;
 
 /**
  * Accounts, stored as bcrypt hashes in the data directory: {@code accounts.json} holds them all with the
- * stamps that order their changes, and {@code users.json} holds the admin and write accounts in the form 2.0
- * and 2.1 read, so a node can be rolled back. Both are mode 0600.
+ * stamps that order their changes, and {@code users.json} holds the admin and write accounts that reach every
+ * database in the form 2.0 and 2.1 read, so a node can be rolled back. Both are mode 0600.
+ *
+ * <p>A read or write account may be limited to some databases ({@link Access#databases}). The list is part of
+ * the account: an admin change, stamped and merged like a role.
  *
  * <p>Accounts merge across a cluster like rows: the newest change to a name wins on every node, in any order
  * (see {@link #merge}), and a deleted account stays as a tombstone. Two stamps order an account's changes.
@@ -44,7 +47,7 @@ import org.mindrot.jbcrypt.BCrypt;
  * never the password, and any change to the accounts clears the cache.
  */
 public final class Users {
-    /** The accounts in the form 2.0 and 2.1 read: admin and write accounts only. */
+    /** The accounts in the form 2.0 and 2.1 read: admin and write accounts that reach every database. */
     public static final String FILE = "users.json";
     /** Every account and tombstone with its stamps. 2.0 and 2.1 do not know this file. */
     public static final String ACCOUNTS_FILE = "accounts.json";
@@ -55,7 +58,13 @@ public final class Users {
     static final long CACHE_MILLIS = 60_000;
     private static final int CACHE_MAX = 10_000;
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9._-]{1,64}");
-    /** A bcrypt hash at cost 4 to 14: a peer cannot make each login here cost hours. */
+    /** The most databases one account may be limited to. */
+    public static final int MAX_DATABASES = 100;
+    /**
+     * A database name in a stored list (from a peer or this node's file): the parser's form. Not checked
+     * against the keywords, so that a word reserved by a later version does not make the file unreadable.
+     */
+    private static final Pattern STORED_DB = Pattern.compile("[a-z_][a-z0-9_]{0,62}");
     /**
      * A bcrypt hash this library can check ({@code $2a$}; it refuses {@code $2b$} and {@code $2y$}). From a
      * peer, at cost 4 to 14, so that a peer cannot make each login here cost hours; in this node's own files
@@ -110,14 +119,109 @@ public final class Users {
         public boolean mayRead() {
             return this != METRICS;
         }
+
+        /** Whether an account with this role may be limited to some databases: read and write only. */
+        public boolean mayBeLimited() {
+            return this == READ || this == WRITE;
+        }
     }
 
     /**
-     * One account, or the tombstone of a deleted one ({@code hash} and {@code role} null). {@code at} is the
-     * stamp of the last admin change, {@code pwAt} of the account's own last password change after it
-     * ({@link Stamp#ZERO} if none).
+     * What an account may reach: its role, and the databases a limited read or write account may use (sorted,
+     * as the parser writes names). {@code databases} is null for an account that reaches every database.
      */
-    private record Account(String hash, Role role, Stamp at, Stamp pwAt) {
+    public record Access(Role role, List<String> databases) {
+        public Access {
+            java.util.Objects.requireNonNull(role, "role");
+            databases = databases == null ? null : List.copyOf(databases);
+        }
+
+        public Access(Role role) {
+            this(role, null);
+        }
+
+        public boolean limited() {
+            return databases != null;
+        }
+
+        /** Whether the account may use database {@code db}: always without a list. */
+        public boolean mayUse(String db) {
+            return databases == null || databases.contains(db);
+        }
+    }
+
+    /** What an admin change does to an account's databases: keep them, remove the limit, or set a list. */
+    public static final class Limit {
+        /** Leaves the list as it is (none for a new account). */
+        public static final Limit KEEP = new Limit(true, null);
+        /** Removes the list: the account reaches every database. */
+        public static final Limit NONE = new Limit(false, null);
+
+        private final boolean keep;
+        private final List<String> databases;
+
+        private Limit(boolean keep, List<String> databases) {
+            this.keep = keep;
+            this.databases = databases;
+        }
+
+        /**
+         * A limit to {@code names}: 1 to {@link #MAX_DATABASES} database names as query text writes them,
+         * folded to lowercase as the parser folds them, with none named twice.
+         *
+         * @throws IllegalArgumentException with the reason, if the list is not that
+         */
+        public static Limit to(List<?> names) {
+            if (names == null || names.isEmpty() || names.size() > MAX_DATABASES) {
+                throw new IllegalArgumentException("databases is a list of 1 to " + MAX_DATABASES + " database names");
+            }
+            java.util.TreeSet<String> out = new java.util.TreeSet<>();
+            for (Object o : names) {
+                if (!(o instanceof String s)) {
+                    throw new IllegalArgumentException("databases must be a list of database names (strings)");
+                }
+                String n = com.ataiva.serengeti.core.query.Query.nameOf(s);
+                if (n == null) {
+                    throw new IllegalArgumentException("'" + (s.length() > 64 ? s.substring(0, 64) + "..." : s)
+                            + "' is not a database name: letters, digits and _, not starting with a digit, at most"
+                            + " 63 characters, not a keyword");
+                }
+                if (!out.add(n)) {
+                    throw new IllegalArgumentException("database " + n + " is listed twice");
+                }
+            }
+            return new Limit(false, List.copyOf(out));
+        }
+
+        public boolean keep() {
+            return keep;
+        }
+
+        /** The list to set; null to remove it (or with {@link #keep}). */
+        public List<String> databases() {
+            return databases;
+        }
+    }
+
+    /** The account after an admin change, and whether the change made it. */
+    public record Changed(Access access, boolean created) {}
+
+    /** An admin change without a password to a name that has no account. */
+    public static final class NoSuchAccount extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+
+        NoSuchAccount() {
+            super("a new account needs a password", null);
+        }
+    }
+
+    /**
+     * One account, or the tombstone of a deleted one ({@code hash}, {@code role} and {@code databases} null).
+     * {@code databases} is null for an account that reaches every database. {@code at} is the stamp of the last
+     * admin change, {@code pwAt} of the account's own last password change after it ({@link Stamp#ZERO} if
+     * none).
+     */
+    private record Account(String hash, Role role, List<String> databases, Stamp at, Stamp pwAt) {
         Account {
             pwAt = pwAt == null ? Stamp.ZERO : pwAt;
         }
@@ -126,7 +230,14 @@ public final class Users {
             return hash == null;
         }
 
-        /** The newer of two versions of a name, the same on every node: by at, then pw_at, then hash. */
+        Access access() {
+            return new Access(role, databases);
+        }
+
+        /**
+         * The newer of two versions of a name, the same on every node: by at, then pw_at, then hash, then the
+         * list of databases.
+         */
         static Account newer(Account a, Account b) {
             int c = a.at.compareTo(b.at);
             if (c == 0) {
@@ -137,11 +248,15 @@ public final class Users {
             }
             String ka = a.deleted() ? "~" : a.hash;
             String kb = b.deleted() ? "~" : b.hash;
-            return ka.compareTo(kb) >= 0 ? a : b;
+            c = ka.compareTo(kb);
+            if (c == 0) {
+                c = String.valueOf(a.databases).compareTo(String.valueOf(b.databases));
+            }
+            return c >= 0 ? a : b;
         }
     }
 
-    private record Cached(String user, Role role, long expires) {}
+    private record Cached(String user, Access access, long expires) {}
 
     private final Path dir;
     private final int cost;
@@ -213,8 +328,9 @@ public final class Users {
         }
         // Written or rewritten by 2.0 or 2.1, which know no stamps and cannot make or delete accounts or change
         // roles, only passwords. So an entry whose hash differs from accounts.json is the account's own
-        // password change: it keeps its admin version (at) and gets the file's time as pw_at. An admin change
-        // made on 2.2 anywhere still wins over it. Read accounts and tombstones are not in users.json and stay.
+        // password change: it keeps its admin version (at), role and databases, and gets the file's time as
+        // pw_at. An admin change made on 2.2 anywhere still wins over it. Read and metrics accounts, accounts
+        // limited to some databases and tombstones are not in users.json and stay.
         Stamp legacy = new Stamp(Math.max(2, Files.getLastModifiedTime(usersFile).toMillis()), 0, "legacy");
         accounts.putAll(base);
         boolean changed = false;
@@ -242,8 +358,9 @@ public final class Users {
                 continue; // deleted on 2.2; an older version cannot have made it again
             }
             Account acct = b == null
-                    ? new Account(h, role, LEGACY, legacy)
-                    : new Account(h, b.role(), b.at(), Stamp.max(legacy, after(b.at(), b.pwAt(), legacy)));
+                    ? new Account(h, role, null, LEGACY, legacy)
+                    : new Account(h, b.role(), b.databases(), b.at(),
+                            Stamp.max(legacy, after(b.at(), b.pwAt(), legacy)));
             accounts.put(name, acct);
             changed = true;
         }
@@ -302,9 +419,39 @@ public final class Users {
         return null;
     }
 
-    /** Creates or replaces an account (an admin change) and writes the files before returning. */
+    /**
+     * Creates an account or sets its password and role (an admin change) and writes the files before
+     * returning. Its databases stay as they are.
+     */
     public void setPassword(String user, String password, Role role) throws IOException {
-        set(user, password, role, false);
+        apply(user, password, role, Limit.KEEP, false, false);
+    }
+
+    /**
+     * An admin's change to an account, written to the files before it returns: creates it (a password is
+     * needed then) or changes its password, role and databases, any of them, as one change with one stamp. A
+     * null password or role is left as it is; a new account without a role gets write.
+     *
+     * @throws NoSuchAccount if there is no account and no password
+     * @throws IllegalArgumentException for a bad name or password, nothing to change, or databases on an admin
+     *     or metrics account
+     * @throws IllegalStateException if it would leave no admin
+     */
+    public Changed change(String user, String password, Role role, Limit limit) throws IOException {
+        if (password == null && role == null && limit.keep()) {
+            throw new IllegalArgumentException("give a password, a role or databases");
+        }
+        return apply(user, password, role, limit, false, false);
+    }
+
+    /** Limits an account to some databases, or with {@link Limit#NONE} removes the limit. False if there is no such account. */
+    public boolean setDatabases(String user, Limit limit) throws IOException {
+        try {
+            apply(user, null, null, limit, false, false);
+            return true;
+        } catch (NoSuchAccount e) {
+            return false;
+        }
     }
 
     /** What {@link #bootstrapAdmin} did. */
@@ -333,41 +480,70 @@ public final class Users {
         synchronized (this) {
             recovering = !accounts.isEmpty();
         }
-        if (!set(ADMIN, password, Role.ADMIN, !recovering, true)) {
+        // The admin reaches every database: an account named admin that was limited (demoted, then every admin
+        // deleted) loses its list.
+        if (apply(ADMIN, password, Role.ADMIN, Limit.NONE, !recovering, true) == null) {
             return Bootstrap.SKIPPED;
         }
         return recovering ? Bootstrap.RECOVERED : Bootstrap.FIRST;
     }
 
-    private void set(String user, String password, Role role, boolean bootstrap) throws IOException {
-        set(user, password, role, bootstrap, false);
+    /**
+     * Makes the admin through {@code POST /v1/setup}, when no admin exists: as {@link #setPassword} with the admin
+     * role, but an account named admin that was limited loses its list.
+     */
+    public void setUpAdmin(String password) throws IOException {
+        apply(ADMIN, password, Role.ADMIN, Limit.NONE, false, false);
     }
 
-    /** Returns false, changing nothing, if {@code onlyWithoutAdmin} and an admin exists by the time of the write. */
-    private boolean set(String user, String password, Role role, boolean bootstrap, boolean onlyWithoutAdmin)
-            throws IOException {
+    /**
+     * An admin change: {@code password} or {@code role} null keeps it. Returns null, changing nothing, if
+     * {@code onlyWithoutAdmin} and an admin exists by the time of the write.
+     */
+    private Changed apply(String user, String password, Role role, Limit limit, boolean bootstrap,
+            boolean onlyWithoutAdmin) throws IOException {
         String problem = nameProblem(user);
-        if (problem == null) {
+        if (problem == null && password != null) {
             problem = passwordProblem(password);
         }
         if (problem != null) {
             throw new IllegalArgumentException(problem);
         }
-        String hash = BCrypt.hashpw(password, BCrypt.gensalt(cost)); // slow: outside the lock
+        String hash = password == null ? null : BCrypt.hashpw(password, BCrypt.gensalt(cost)); // slow: outside the lock
         Map<String, Object> entry;
+        Changed out;
         synchronized (this) {
             if (onlyWithoutAdmin && admins() > 0) {
-                return false;
+                return null;
             }
             Account old = accounts.get(user);
-            if (role != Role.ADMIN && old != null && !old.deleted() && old.role() == Role.ADMIN && admins() == 1) {
+            Account live = old == null || old.deleted() ? null : old;
+            if (live == null && hash == null) {
+                throw new NoSuchAccount();
+            }
+            Role to = role != null ? role : live != null ? live.role() : Role.WRITE;
+            List<String> databases = limit.keep() ? live == null ? null : live.databases() : limit.databases();
+            if (databases != null && !to.mayBeLimited()) {
+                throw new IllegalArgumentException(limitProblem(to, limit.keep()));
+            }
+            if (to != Role.ADMIN && live != null && live.role() == Role.ADMIN && admins() == 1) {
                 throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
             }
-            Account a = new Account(hash, role, bootstrap ? BOOTSTRAP : next(old), Stamp.ZERO);
+            Account a = new Account(hash != null ? hash : live.hash(), to, databases,
+                    bootstrap ? BOOTSTRAP : next(old), Stamp.ZERO);
             entry = commit(user, a);
+            out = new Changed(a.access(), live == null);
         }
         listener.accept(List.of(entry));
-        return true;
+        return out;
+    }
+
+    private static String limitProblem(Role role, boolean kept) {
+        String why = role == Role.ADMIN
+                ? "an admin account reaches every database (accounts and backups)"
+                : "a metrics account reads no data";
+        return why + ", so it cannot be limited to databases; only read and write accounts can"
+                + (kept ? ". This account has a list: give \"databases\": null with the new role" : "");
     }
 
     /**
@@ -396,7 +572,8 @@ public final class Users {
                 if (!was.equals(accounts.get(user))) {
                     continue; // changed while bcrypt ran: check against what it is now
                 }
-                Account a = new Account(hash, was.role(), was.at(), after(was.at(), was.pwAt(), stamps.get()));
+                Account a = new Account(hash, was.role(), was.databases(), was.at(),
+                        after(was.at(), was.pwAt(), stamps.get()));
                 entry = commit(user, a);
             }
             listener.accept(List.of(entry));
@@ -405,21 +582,18 @@ public final class Users {
         return false;
     }
 
-    /** Changes the role of an existing account. False if there is no such account. */
+    /**
+     * Changes the role of an existing account; its databases stay. False if there is no such account.
+     *
+     * @throws IllegalArgumentException for the admin or metrics role on an account limited to databases
+     */
     public boolean setRole(String user, Role role) throws IOException {
-        Map<String, Object> entry;
-        synchronized (this) {
-            Account old = accounts.get(user);
-            if (old == null || old.deleted()) {
-                return false;
-            }
-            if (role != Role.ADMIN && old.role() == Role.ADMIN && admins() == 1) {
-                throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
-            }
-            entry = commit(user, new Account(old.hash(), role, next(old), Stamp.ZERO));
+        try {
+            apply(user, null, java.util.Objects.requireNonNull(role, "role"), Limit.KEEP, false, false);
+            return true;
+        } catch (NoSuchAccount e) {
+            return false;
         }
-        listener.accept(List.of(entry));
-        return true;
     }
 
     /** Deletes an account, keeping its tombstone. False if there is no such account. */
@@ -433,7 +607,7 @@ public final class Users {
             if (old.role() == Role.ADMIN && admins() == 1) {
                 throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
             }
-            entry = commit(user, new Account(null, null, next(old), Stamp.ZERO));
+            entry = commit(user, new Account(null, null, null, next(old), Stamp.ZERO));
         }
         listener.accept(List.of(entry));
         return true;
@@ -487,7 +661,21 @@ public final class Users {
         return out;
     }
 
-    /** Every account and tombstone, as sent to peers: name, stamps, and hash and role or {@code deleted}. */
+    /** The accounts that exist, by name, with what each may reach; never their hashes. */
+    public synchronized Map<String, Access> accounts() {
+        Map<String, Access> out = new TreeMap<>();
+        accounts.forEach((name, a) -> {
+            if (!a.deleted()) {
+                out.put(name, a.access());
+            }
+        });
+        return out;
+    }
+
+    /**
+     * Every account and tombstone, as sent to peers: name, stamps, and hash, role and (for a limited account)
+     * databases, or {@code deleted}.
+     */
     public synchronized List<Map<String, Object>> entries() {
         List<Map<String, Object>> out = new ArrayList<>();
         accounts.forEach((name, a) -> out.add(entry(name, a)));
@@ -506,11 +694,18 @@ public final class Users {
         } else {
             m.put("hash", a.hash());
             m.put("role", a.role().label());
+            if (a.databases() != null) {
+                m.put("databases", a.databases());
+            }
         }
         return m;
     }
 
-    /** One entry, from a peer ({@code fromPeer}, which bounds the bcrypt cost) or from this node's own file. */
+    /**
+     * One entry, from a peer ({@code fromPeer}, which bounds the bcrypt cost) or from this node's own file. A
+     * {@code databases} key that is not a list as every node writes it (1 to 100 names, sorted, none twice), or
+     * on an account that may not have one, makes the entry malformed: it is never read as no limit.
+     */
     private Map.Entry<String, Account> parse(Object o, boolean fromPeer) {
         if (!(o instanceof Map<?, ?> m) || !(m.get("user") instanceof String user) || nameProblem(user) != null
                 || !(m.get("at") instanceof String at)) {
@@ -521,13 +716,40 @@ public final class Users {
         Pattern hashes = fromPeer ? PEER_HASH : LOCAL_HASH;
         Account a;
         if (Boolean.TRUE.equals(m.get("deleted"))) {
-            a = new Account(null, null, stamp, pwStamp);
+            if (m.containsKey("databases")) {
+                throw new IllegalArgumentException("malformed list of databases for " + user);
+            }
+            a = new Account(null, null, null, stamp, pwStamp);
         } else if (m.get("hash") instanceof String h && hashes.matcher(h).matches() && m.get("role") instanceof String r) {
-            a = new Account(h, Role.parse(r), stamp, pwStamp);
+            Role role = Role.parse(r);
+            List<String> databases = null;
+            if (m.containsKey("databases")) {
+                databases = storedDatabases(m.get("databases"));
+                if (databases == null || !role.mayBeLimited()) {
+                    throw new IllegalArgumentException("malformed list of databases for " + user);
+                }
+            }
+            a = new Account(h, role, databases, stamp, pwStamp);
         } else {
             throw new IllegalArgumentException("malformed account entry for " + user);
         }
         return Map.entry(user, a);
+    }
+
+    /** A list as every node writes it ({@link Limit#to}: 1 to 100 names, sorted, none twice), or null. */
+    private static List<String> storedDatabases(Object o) {
+        if (!(o instanceof List<?> list) || list.isEmpty() || list.size() > MAX_DATABASES) {
+            return null;
+        }
+        List<String> out = new ArrayList<>(list.size());
+        for (Object x : list) {
+            if (!(x instanceof String s) || !STORED_DB.matcher(s).matches()
+                    || !out.isEmpty() && out.get(out.size() - 1).compareTo(s) >= 0) {
+                return null;
+            }
+            out.add(s);
+        }
+        return List.copyOf(out);
     }
 
     /** Most entries taken in one merge, to bound what a peer can make a node hold. */
@@ -603,8 +825,8 @@ public final class Users {
     /**
      * Writes accounts.json, then users.json, both with the next save count. users.json is what 2.0 and 2.1
      * read: they know the roles "admin" and "user" and ignore other keys, so write accounts are written as
-     * "user" (2.0's name for them), and read accounts and tombstones are left out. After a rollback the read
-     * accounts cannot log in, which is the safe way round.
+     * "user" (2.0's name for them), and read and metrics accounts, accounts limited to some databases and
+     * tombstones are left out. After a rollback those accounts cannot log in, which is the safe way round.
      */
     private void save(Map<String, Account> next) throws IOException {
         long v = version + 1;
@@ -612,8 +834,9 @@ public final class Users {
         Map<String, Object> users = new LinkedHashMap<>();
         next.forEach((name, a) -> {
             all.add(entry(name, a));
-            // Only the roles 2.0 and 2.1 know: they would take any other one for a write account.
-            if (!a.deleted() && (a.role() == Role.ADMIN || a.role() == Role.WRITE)) {
+            // Only the roles 2.0 and 2.1 know: they would take any other one for a write account. And no
+            // limited account: they would ignore the list and let it reach every database.
+            if (!a.deleted() && a.databases() == null && (a.role() == Role.ADMIN || a.role() == Role.WRITE)) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("hash", a.hash());
                 m.put("role", a.role() == Role.WRITE ? "user" : a.role().label());
@@ -631,8 +854,16 @@ public final class Users {
         version = v;
     }
 
-    /** The role of a user whose password matches, or empty. Unknown users cost the same as wrong passwords. */
+    /** The role of a user whose password matches, or empty. See {@link #authenticate}. */
     public Optional<Role> verify(String user, String password) {
+        return authenticate(user, password).map(Access::role);
+    }
+
+    /**
+     * What a user whose password matches may reach (role and databases, read together), or empty. Unknown
+     * users cost the same as wrong passwords.
+     */
+    public Optional<Access> authenticate(String user, String password) {
         if (user == null || password == null || password.getBytes(StandardCharsets.UTF_8).length > MAX_PASSWORD_BYTES) {
             return Optional.empty();
         }
@@ -640,7 +871,7 @@ public final class Users {
         long now = clock.getAsLong();
         Cached c = cache.get(key);
         if (c != null && c.expires() > now && c.user().equals(user)) {
-            return Optional.of(c.role());
+            return Optional.of(c.access());
         }
         Account a = null;
         for (int attempt = 0; ; attempt++) {
@@ -653,8 +884,8 @@ public final class Users {
                     if (cache.size() >= CACHE_MAX) {
                         cache.clear();
                     }
-                    cache.put(key, new Cached(user, a.role(), now + CACHE_MILLIS));
-                    return Optional.of(a.role());
+                    cache.put(key, new Cached(user, a.access(), now + CACHE_MILLIS));
+                    return Optional.of(a.access());
                 }
             }
             if (current != null && current.deleted()) {

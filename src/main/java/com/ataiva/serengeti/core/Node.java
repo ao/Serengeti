@@ -61,37 +61,38 @@ public final class Node implements AutoCloseable {
     };
 
     /**
-     * The query language of docs/QUERY.md. Query mistakes are 400, too few reachable nodes 503, storage
-     * failures 500.
+     * The query language of docs/QUERY.md. Query mistakes are 400, statements the account may not run 403
+     * (checked before anything is read, synced or written), too few reachable nodes 503, storage failures 500.
      */
     public static final QueryFactory QUERIES = (engine, clock, cluster) -> {
         Query q = new Query(engine, clock);
         return new QueryService() {
             @Override
-            public Object run(String text, Users.Role role) throws Rejected {
-                return run(text, role, false);
+            public Object run(String text, Users.Access access) throws Rejected {
+                return run(text, access, false);
             }
 
             @Override
-            public Object run(String text, Users.Role role, boolean majority) throws Rejected {
-                return run(text, role, majority, null);
+            public Object run(String text, Users.Access access, boolean majority) throws Rejected {
+                return run(text, access, majority, null);
             }
 
             @Override
-            public Object run(String text, Users.Role role, boolean majority, String ack) throws Rejected {
+            public Object run(String text, Users.Access access, boolean majority, String ack) throws Rejected {
                 if (engine.failed()) {
                     throw new Rejected(503, "this node's write-ahead log failed to fsync; restart it to recover from disk");
                 }
                 try {
+                    Query.Checked checked = q.check(text, access.role().mayWrite(), access.databases());
                     if (majority && cluster != null) {
                         cluster.syncForRead();
                     }
                     if (ack == null || cluster == null) {
-                        return q.run(text, role.mayWrite()).toJson();
+                        return checked.run().toJson();
                     }
                     Cluster.Ack a = ack.equals("local") ? Cluster.Ack.LOCAL : Cluster.Ack.MAJORITY;
                     try {
-                        return Cluster.withAck(a, () -> q.run(text, role.mayWrite()).toJson());
+                        return Cluster.withAck(a, () -> checked.run().toJson());
                     } catch (QueryException | UnavailableException | IOException
                             | com.ataiva.serengeti.core.storage.WriteRefusedException e) {
                         throw e;

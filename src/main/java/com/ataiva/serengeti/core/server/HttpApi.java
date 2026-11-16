@@ -259,7 +259,8 @@ public final class HttpApi implements AutoCloseable {
             throw new HttpError(503, "not set up: set SERENGETI_ADMIN_PASSWORD, or POST /v1/setup with the token "
                     + "from the data directory");
         }
-        Users.Role role = authenticate(ex, caller);
+        Users.Access access = authenticate(ex, caller);
+        Users.Role role = access.role();
         if (!role.mayRead() && !METRICS_ROUTES.contains(path)) {
             // Named routes, so anything added later is closed to this role until it is listed here.
             throw new HttpError(403, "the metrics role may only use GET /metrics, GET /v1/status and POST /v1/password");
@@ -268,12 +269,14 @@ public final class HttpApi implements AutoCloseable {
             users(ex, method, path, role);
             return;
         }
+        // An account limited to some databases reaches data only through /v1/query and /v1/changes, which
+        // check the database; backups and accounts are admin only, and admins have no list.
         switch (path) {
             case "/v1/query", "/post" -> {
                 // /post is the v1 route, kept for one release. It takes the same JSON body: a raw text/plain
                 // body could be sent by a cross-site form with the browser's saved credentials.
                 requireMethod(method, "POST");
-                query(ex, role);
+                query(ex, access);
             }
             case "/v1/status" -> {
                 requireMethod(method, "GET");
@@ -310,7 +313,7 @@ public final class HttpApi implements AutoCloseable {
             }
             case "/v1/changes" -> {
                 requireMethod(method, "GET");
-                changes(ex);
+                changes(ex, access);
             }
             default -> {
                 // A path that is not a route is 404 whatever the method; 405 is for routes that exist.
@@ -360,7 +363,7 @@ public final class HttpApi implements AutoCloseable {
             if (deps.users().isSetUp()) {
                 throw new HttpError(409, "already set up");
             }
-            deps.users().setPassword(Users.ADMIN, pw, Users.Role.ADMIN);
+            deps.users().setUpAdmin(pw);
             token.delete();
             deps.setupToken().set(null);
         }
@@ -369,19 +372,25 @@ public final class HttpApi implements AutoCloseable {
     }
 
     /**
-     * Account management, admin only. {@code GET /v1/users} lists names and roles (never hashes);
-     * {@code PUT /v1/users/NAME} with {@code {"password": ..., "role": ...}} creates an account or changes
-     * its password, its role or both; {@code DELETE /v1/users/NAME} deletes it. The last admin cannot be
-     * deleted or demoted. In a cluster the change spreads to the other nodes.
+     * {"user": ..., "role": ...} in that order, and "databases" after them for a limited account, so clients
+     * and logs see the same text every time.
      */
-    /** {"user": ..., "role": ...} in that order, so clients and logs see the same text every time. */
-    private static Map<String, Object> account(String user, String role) {
+    private static Map<String, Object> account(String user, Users.Access access) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("user", user);
-        m.put("role", role);
+        m.put("role", access.role().label());
+        if (access.limited()) {
+            m.put("databases", access.databases());
+        }
         return m;
     }
 
+    /**
+     * Account management, admin only. {@code GET /v1/users} lists names, roles and databases (never hashes);
+     * {@code PUT /v1/users/NAME} with {@code {"password": ..., "role": ..., "databases": [...]}} creates an
+     * account or changes any of the three, as one change; {@code DELETE /v1/users/NAME} deletes it. The last
+     * admin cannot be deleted or demoted. In a cluster the change spreads to the other nodes.
+     */
     private void users(HttpExchange ex, String method, String path, Users.Role role) throws IOException {
         if (role != Users.Role.ADMIN) {
             throw new HttpError(403, "managing accounts needs the admin role");
@@ -390,7 +399,7 @@ public final class HttpApi implements AutoCloseable {
         if (path.equals("/v1/users")) {
             requireMethod(method, "GET");
             List<Object> out = new ArrayList<>();
-            users.list().forEach((u, r) -> out.add(account(u, r.label())));
+            users.accounts().forEach((u, a) -> out.add(account(u, a)));
             sendJson(ex, 200, Map.of("users", out));
             return;
         }
@@ -404,8 +413,8 @@ public final class HttpApi implements AutoCloseable {
                 case "PUT" -> {
                     Map<String, Object> body = jsonBody(ex);
                     for (String k : body.keySet()) {
-                        if (!k.equals("password") && !k.equals("role")) {
-                            throw new HttpError(400, "unknown field '" + k + "'; use password and role");
+                        if (!k.equals("password") && !k.equals("role") && !k.equals("databases")) {
+                            throw new HttpError(400, "unknown field '" + k + "'; use password, role and databases");
                         }
                     }
                     Users.Role r = null;
@@ -419,26 +428,41 @@ public final class HttpApi implements AutoCloseable {
                             throw new HttpError(400, e.getMessage());
                         }
                     }
-                    Users.Role existing = users.list().get(name);
+                    String pw = null;
                     if (body.get("password") != null) {
-                        if (!(body.get("password") instanceof String pw)) {
+                        if (!(body.get("password") instanceof String s)) {
                             throw new HttpError(400, "password must be a string");
                         }
-                        String problem = Users.passwordProblem(pw);
+                        String problem = Users.passwordProblem(s);
                         if (problem != null) {
                             throw new HttpError(400, problem);
                         }
-                        Users.Role to = r != null ? r : existing != null ? existing : Users.Role.WRITE;
-                        users.setPassword(name, pw, to);
-                        sendJson(ex, existing == null ? 201 : 200, account(name, to.label()));
-                    } else if (r == null) {
-                        throw new HttpError(400, "give a password, a role, or both");
-                    } else if (existing == null) {
-                        throw new HttpError(400, "a new account needs a password");
-                    } else {
-                        users.setRole(name, r);
-                        sendJson(ex, 200, account(name, r.label()));
+                        pw = s;
                     }
+                    // Left out: the account keeps its list. null: no limit. A list: these databases only.
+                    Users.Limit limit = Users.Limit.KEEP;
+                    if (body.containsKey("databases")) {
+                        Object d = body.get("databases");
+                        if (d == null) {
+                            limit = Users.Limit.NONE;
+                        } else if (d instanceof List<?> l) {
+                            try {
+                                limit = Users.Limit.to(l);
+                            } catch (IllegalArgumentException e) {
+                                throw new HttpError(400, e.getMessage());
+                            }
+                        } else {
+                            throw new HttpError(400, "databases must be a list of database names, or null for every database");
+                        }
+                    }
+                    Users.Changed c;
+                    try {
+                        c = users.change(name, pw, r, limit);
+                    } catch (IllegalArgumentException e) {
+                        // A new account without a password, nothing to change, or a list on an admin or metrics account.
+                        throw new HttpError(400, e.getMessage());
+                    }
+                    sendJson(ex, c.created() ? 201 : 200, account(name, c.access()));
                 }
                 case "DELETE" -> {
                     if (!users.delete(name)) {
@@ -471,7 +495,7 @@ public final class HttpApi implements AutoCloseable {
      * {@code GET /v1/changes?db=D[&table=T]&after=CURSOR|now[&wait=SECONDS][&limit=N]}: the changes this node
      * applied after the cursor, waiting up to {@code wait} seconds (at most 60) for one. See docs/API.md.
      */
-    private void changes(HttpExchange ex) throws IOException {
+    private void changes(HttpExchange ex, Users.Access access) throws IOException {
         com.ataiva.serengeti.core.storage.ChangeFeed feed = deps.ops().changes();
         if (feed == null) {
             throw new HttpError(404, "this node keeps no change feed (changes_buffer is 0)");
@@ -485,6 +509,9 @@ public final class HttpApi implements AutoCloseable {
         if (db == null || db.isEmpty() || after == null) {
             throw new HttpError(400, "db and after are required; after=now gives a cursor to follow from");
         }
+        // As the query language checks a statement: whether or not the database exists, before anything is read.
+        // The feed matches db exactly, so a name the account has in another case is refused, not folded.
+        requireDatabase(access, db);
         int limit = intParam(q, "limit", 1000, 1, 10_000);
         int wait = intParam(q, "wait", 0, 0, 60);
         if (after.equals("now")) {
@@ -507,6 +534,17 @@ public final class HttpApi implements AutoCloseable {
                 waiting.decrementAndGet();
             }
         }
+        if (mayWait) {
+            // The account may have changed during the wait (deleted, given another role or list, a new
+            // password): answer with what it may reach now, as a new request would. Cached unless it changed.
+            String[] creds = basic(ex).orElseThrow();
+            Users.Access now = deps.users().authenticate(creds[0], creds[1])
+                    .orElseThrow(() -> new HttpError(401, "wrong user name or password"));
+            if (!now.role().mayRead()) {
+                throw new HttpError(403, "the metrics role may only use GET /metrics, GET /v1/status and POST /v1/password");
+            }
+            requireDatabase(now, db);
+        }
         List<Object> out = new ArrayList<>(page.changes().size());
         for (com.ataiva.serengeti.core.storage.ChangeFeed.Change c : page.changes()) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -524,6 +562,14 @@ public final class HttpApi implements AutoCloseable {
             out.add(m);
         }
         sendJson(ex, 200, page(out, page.cursor()));
+    }
+
+    /** 403 unless the account may use database {@code db} (any database, without a list). */
+    private static void requireDatabase(Users.Access access, String db) {
+        if (!access.mayUse(db)) {
+            throw new HttpError(403, "this account may not use database "
+                    + (db.length() > 64 ? db.substring(0, 64) + "..." : db));
+        }
     }
 
     private static Map<String, Object> page(List<Object> changes, String cursor) {
@@ -582,7 +628,7 @@ public final class HttpApi implements AutoCloseable {
         sendJson(ex, 200, Map.of("user", creds[0]));
     }
 
-    private void query(HttpExchange ex, Users.Role role) throws IOException {
+    private void query(HttpExchange ex, Users.Access access) throws IOException {
         Map<String, Object> body = jsonBody(ex);
         if (!(body.get("query") instanceof String q)) {
             throw new HttpError(400, "body must be {\"query\": \"...\"}");
@@ -597,7 +643,7 @@ public final class HttpApi implements AutoCloseable {
         }
         Object result;
         try {
-            result = deps.queries().run(q, role, "majority".equals(c), (String) ack);
+            result = deps.queries().run(q, access, "majority".equals(c), (String) ack);
         } catch (QueryService.Rejected r) {
             throw new HttpError(r.status(), r.getMessage());
         }
@@ -680,21 +726,21 @@ public final class HttpApi implements AutoCloseable {
     static final long HEAVY_WAIT_MILLIS = 2_000;
     private final java.util.concurrent.Semaphore heavyInternal = new java.util.concurrent.Semaphore(HEAVY_INTERNAL_AT_ONCE, true);
 
-    private Users.Role authenticate(HttpExchange ex, Caller caller) {
+    private Users.Access authenticate(HttpExchange ex, Caller caller) {
         String address = ex.getRemoteAddress().getAddress().getHostAddress();
         Optional<String[]> creds = basic(ex);
         if (creds.isEmpty()) {
             throw new HttpError(401, "credentials required");
         }
         limited(address);
-        Optional<Users.Role> role = deps.users().verify(creds.get()[0], creds.get()[1]);
-        if (role.isEmpty()) {
+        Optional<Users.Access> access = deps.users().authenticate(creds.get()[0], creds.get()[1]);
+        if (access.isEmpty()) {
             limiter.failed(address);
             metrics.loginFailed();
             throw new HttpError(401, "wrong user name or password");
         }
         caller.user = creds.get()[0];
-        return role.get();
+        return access.get();
     }
 
     private void limited(String address) {
