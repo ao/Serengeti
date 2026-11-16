@@ -4,6 +4,8 @@
 # published to the host; the client is a curl container on the nodes' private networks.
 #
 #   OLD_IMAGE=ataiva/serengeti:2.0.0 IMAGE=serengeti:upgrade tests/upgrade/run.sh   (builds IMAGE unless SKIP_BUILD=1)
+#   OLD_IMAGE may also be a local image, for example one built from the previous release branch; it is
+#   pulled only when it is not there.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -31,7 +33,7 @@ L=(--label "serengeti-up=$RUN")
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
   docker build -q -t "$IMAGE" . >/dev/null
 fi
-docker pull -q "$OLD_IMAGE" >/dev/null
+docker image inspect "$OLD_IMAGE" >/dev/null 2>&1 || docker pull -q "$OLD_IMAGE" >/dev/null
 echo "# from $(docker run --rm "$OLD_IMAGE" --version 2>/dev/null | head -1) to $(docker run --rm "$IMAGE" --version 2>/dev/null | head -1)"
 
 docker network create "${L[@]}" "$NET" >/dev/null
