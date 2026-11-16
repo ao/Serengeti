@@ -91,20 +91,32 @@ final class PeerClient {
                 .thenApply(PeerClient::sums);
     }
 
-    /** The full bucket sums (tombstones counted); NotSupported from a peer without the route (2.1). */
-    CompletableFuture<long[]> fullBuckets(String peer, String db, String table) {
+    /**
+     * A peer's full bucket sums (tombstones counted), and the rows and bytes it holds per bucket; those two
+     * are null from a peer that does not send them.
+     */
+    record FullSums(long[] sums, long[] rows, long[] bytes) {}
+
+    /** The full bucket sums; NotSupported from a peer without the route (2.1). */
+    CompletableFuture<FullSums> fullBuckets(String peer, String db, String table) {
         String path = "/internal/v3/buckets?db=" + enc(db) + "&table=" + enc(table);
-        return send(request(peer, path, CALL_TIMEOUT).GET().build(), true).thenApply(PeerClient::sums);
+        return send(request(peer, path, CALL_TIMEOUT).GET().build(), true).thenApply(m -> new FullSums(sums(m),
+                m.containsKey("rows") ? longs(m, "rows", com.ataiva.serengeti.core.storage.Store.BUCKETS) : null,
+                m.containsKey("bytes") ? longs(m, "bytes", com.ataiva.serengeti.core.storage.Store.BUCKETS) : null));
     }
 
     private static long[] sums(Map<String, Object> m) {
-        if (!(m.get("sums") instanceof List<?> l) || l.size() != com.ataiva.serengeti.core.storage.Store.BUCKETS) {
-            throw new IllegalStateException("peer sent bad bucket sums");
+        return longs(m, "sums", com.ataiva.serengeti.core.storage.Store.BUCKETS);
+    }
+
+    private static long[] longs(Map<String, Object> m, String key, int size) {
+        if (!(m.get(key) instanceof List<?> l) || l.size() != size) {
+            throw new IllegalStateException("peer sent bad " + key);
         }
         long[] out = new long[l.size()];
         for (int i = 0; i < out.length; i++) {
             if (!(l.get(i) instanceof Number n)) {
-                throw new IllegalStateException("peer sent bad bucket sums");
+                throw new IllegalStateException("peer sent bad " + key);
             }
             out[i] = n.longValue();
         }
@@ -118,8 +130,11 @@ final class PeerClient {
 
     // ---- protocol 3: rows by id ----
 
-    /** A peer's rows in some buckets: ids in id order, the hash of each row's versions, and the answer's size. */
-    record RowHashes(List<String> ids, long[] hashes, long bytes) {}
+    /**
+     * A peer's rows in some buckets: ids in id order, the hash of each row's versions, each row's estimated
+     * size (null from a peer that does not send it), and the answer's size.
+     */
+    record RowHashes(List<String> ids, long[] hashes, long[] weights, long bytes) {}
 
     /** The peer's row hashes in these buckets; NotSupported from a peer without the route (before rowsync). */
     CompletableFuture<RowHashes> hashes(String peer, String db, String table, java.util.Collection<Integer> buckets) {
@@ -139,7 +154,8 @@ final class PeerClient {
                 outH[i] = v;
                 bytes += id.length() + 24; // quotes, commas and up to 20 digits
             }
-            return new RowHashes(outIds, outH, bytes);
+            long[] weights = m.containsKey("w") ? longs(m, "w", outH.length) : null; // 2.2 builds before sizes
+            return new RowHashes(outIds, outH, weights, bytes);
         });
     }
 

@@ -176,8 +176,9 @@ GitHub release notes and tags.
   it asked every peer at once for the rows of every differing bucket, in pages of 200 buckets, and a few
   thousand missed inserts touch most buckets. A node now runs at most two background row pulls at once,
   and four more for majority reads, sizes each page from the last (about 2,000 rows or 4 MiB), and builds
-  at most four pages for its peers at once, answering 503 to more. Found by the 5-node soak hour;
-  `tests/memory/catchup.sh` reproduces it.
+  at most four pages for its peers at once, answering 503 to more. A majority read's pulls, whole
+  databases from 2.0 peers included, stop once the read has answered or given up. Found by the 5-node soak
+  hour; `tests/memory/catchup.sh` reproduces it.
 - An admin password of more than 72 bytes in `SERENGETI_ADMIN_PASSWORD` or its file passed the settings
   check, and the node then exited with status 1 and a stack trace; it is now refused with exit status 2 and
   a one-line message, like a short one.
@@ -191,7 +192,10 @@ GitHub release notes and tags.
 - A node catching up pulls only the rows that differ, not every row of each bucket that differs. For the
   differing buckets it asks a peer for each row's id and a hash of its versions
   (`GET /internal/v3/hashes`, about 40 bytes a row), and pulls the rows whose hashes differ or that only
-  the peer has (`POST /internal/v3/rows`, at most 2,000 ids). A few thousand missed inserts touch most
+  the peer has (`POST /internal/v3/rows`, at most 2,000 ids, about 4 MiB by the sizes the peer sends with
+  the hashes). Buckets a node holds nothing of are pulled whole in pages sized by the peer's rows and bytes
+  per bucket, and a bucket bigger than a page by id; before, the first page of 16 buckets was sized blind
+  (16 x 10,000 rows for a node without a 10-million-row table). A few thousand missed inserts touch most
   buckets, so a node used to pull most of each table from each peer, and each peer most of it from the
   node: in `tests/memory/catchup.sh` (126,000 rows of 1 KB, 6,000 missed) the restarted node received
   275 MB and sent 244 to 313 MB, and now receives 21 MB and sends 1 to 7 MB (3 runs each, EC2

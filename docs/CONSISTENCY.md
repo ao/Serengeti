@@ -58,9 +58,13 @@ that was cut off, concurrent with both deletes and older than the newer one, can
 value on the node holding the older delete, also to a majority read. 2.1 compares only the live sums and
 has this; a 2.2 node still does with a 2.1 peer. A cluster where nothing changed exchanges the roots and nothing
 else; a node that missed a few thousand writes to a large table compares about 40 bytes per row of the
-buckets that differ and pulls the rows it missed. Hashes come in pages of about 20,000 rows, rows in pages
-of at most 2,000 ids, one after another per table, with at most two pulls of either kind running at once on
-a node (four more for majority reads).
+buckets that differ and pulls the rows it missed. Hashes come in pages of about 20,000 rows, each with
+the row's size, and rows in pages of about 2,000 rows or 4 MiB by those sizes (at most 2,000 ids), one
+after another per table, with at most two pulls of either kind running at once on a node (four more for
+majority reads). Buckets a node holds no row of are pulled whole in pages of about the same size, by the
+peer's rows and bytes per bucket, which come with its bucket sums; a bucket bigger than that is compared
+and pulled by id like the others. A majority read's pulls, whole databases from 2.0 peers included, stop
+once the read has its answer or gives up.
 
 Nodes running 2.1 do not have the row routes; from those a node pulls every row of each differing bucket,
 as 2.1 does, and asks again every 30 s in case they were upgraded. Nodes running 2.0 have neither, and

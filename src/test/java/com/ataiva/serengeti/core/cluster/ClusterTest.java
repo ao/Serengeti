@@ -784,7 +784,10 @@ class ClusterTest {
         assertEquals(List.of("x", "y", "z"), m.get("ids"), "the tombstone of y included");
         assertEquals(3, ((List<Object>) m.get("h")).size());
         assertFalse(((List<Object>) m.get("h")).contains(0L), h.body());
-        assertEquals(Map.of("ids", List.of(), "h", List.of()),
+        List<Object> w = (List<Object>) m.get("w");
+        assertEquals(3, w.size(), "each row's size");
+        assertTrue((Long) w.get(0) > (Long) w.get(2), "x holds two versions, z one: " + w);
+        assertEquals(Map.of("ids", List.of(), "h", List.of(), "w", List.of()),
                 Json.parseObject(internal(0, "/internal/v3/hashes?db=d&table=nope&buckets=1", null, KEY).body()));
         StringBuilder many = new StringBuilder("0");
         for (int b = 1; b <= Cluster.BUCKETS_PER_REQUEST; b++) {
@@ -1072,6 +1075,12 @@ class ClusterTest {
         assertEquals(200, b.statusCode(), b.body());
         List<Object> sums = (List<Object>) Json.parseObject(b.body()).get("sums");
         assertEquals(com.ataiva.serengeti.core.storage.Store.BUCKETS, sums.size());
+        // The rows (expired tombstones too: they are still held, and sent with a whole bucket) and bytes per bucket.
+        List<Object> counts = (List<Object>) Json.parseObject(b.body()).get("rows");
+        List<Object> bytes = (List<Object>) Json.parseObject(b.body()).get("bytes");
+        assertEquals(3L, counts.stream().mapToLong(v -> (Long) v).sum(), "gone, dead and x");
+        int xb = com.ataiva.serengeti.core.storage.Store.bucket("x");
+        assertTrue((Long) counts.get(xb) >= 1 && (Long) bytes.get(xb) > 0, counts.get(xb) + " rows, " + bytes.get(xb) + " bytes");
         long total = 0;
         for (Object v : sums) {
             total += (Long) v;

@@ -787,8 +787,15 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     /** A page of row hashes aims at about this many rows, and at about {@link #PULL_TARGET_BYTES}. */
     static final int HASH_TARGET_IDS = 20_000;
 
-    /** What one table's pull from one peer works with. */
-    private record TablePull(Peer peer, AsyncLimiter limiter, java.util.function.BooleanSupplier stop, String db, String table) {}
+    /**
+     * What one table's pull from one peer works with. {@code nextIds} holds the size of the next page of ids
+     * when the peer does not send row sizes, carried from one page of hashes to the next (review 22d, RS1).
+     */
+    private record TablePull(Peer peer, AsyncLimiter limiter, java.util.function.BooleanSupplier stop, String db,
+            String table, int[] nextIds) {}
+
+    /** The buckets of a table that differ, and the peer's rows and bytes per bucket (null if it sent none). */
+    private record Differ(List<Integer> buckets, long[] peerRows, long[] peerBytes) {}
 
     private final java.util.concurrent.atomic.AtomicLong bucketPages = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicLong hashPages = new java.util.concurrent.atomic.AtomicLong();
@@ -833,23 +840,80 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     }
 
     /**
-     * Pulls what differs in the buckets {@code differ} of a table. From a peer with the protocol 3 routes,
-     * the buckets this node holds rows in are compared row by row, a page of row hashes at a time, and only
-     * the rows that differ or that only the peer has are pulled; the buckets this node holds no row in are
-     * pulled whole, since every row of them is missing here. From an older peer every bucket is pulled whole.
+     * Pulls what differs in the buckets of a table. From a peer with the protocol 3 routes, the buckets this
+     * node holds rows in are compared row by row, a page of row hashes at a time, and only the rows that
+     * differ or that only the peer has are pulled; the buckets this node holds no row in are pulled whole,
+     * since every row of them is missing here, in pages that the peer's rows and bytes per bucket put at
+     * about PULL_TARGET_OPS rows and PULL_TARGET_BYTES. A bucket too big for one page is compared and pulled by
+     * id like the others, so no page holds more than about that. From an older peer every bucket is pulled
+     * whole, the first page sized blind.
      */
-    private CompletableFuture<Integer> pullTable(TablePull t, List<Integer> differ) {
+    private CompletableFuture<Integer> pullTable(TablePull t, Differ d) {
+        List<Integer> differ = d.buckets();
         if (!tryRowRoutes(t.peer())) {
             return pullBuckets(t.peer(), t.limiter(), t.stop(), t.db(), t.table(), differ, 0, FIRST_PULL_BUCKETS, 0);
         }
         int[] counts = engine.read(s -> s.bucketRowCounts(t.db(), t.table()));
+        int[] expected = counts.clone(); // rows a page of hashes will hold per bucket: here or there, the more
         List<Integer> empty = new ArrayList<>();
         List<Integer> held = new ArrayList<>();
         for (int b : differ) {
-            (counts[b] == 0 ? empty : held).add(b);
+            boolean sized = d.peerRows() != null && d.peerBytes() != null;
+            if (sized) {
+                expected[b] = (int) Math.max(counts[b], Math.min(Integer.MAX_VALUE, d.peerRows()[b]));
+            }
+            boolean whole = counts[b] == 0 && (!sized || d.peerRows()[b] <= PULL_TARGET_OPS && d.peerBytes()[b] <= PULL_TARGET_BYTES);
+            (whole ? empty : held).add(b);
         }
-        return pullBuckets(t.peer(), t.limiter(), t.stop(), t.db(), t.table(), empty, 0, FIRST_PULL_BUCKETS, 0)
-                .thenCompose(n -> compareBuckets(t, held, counts, 0, FIRST_PULL_BUCKETS, 0, HASH_TARGET_IDS, n));
+        CompletableFuture<Integer> wholeBuckets = d.peerRows() == null || d.peerBytes() == null
+                ? pullBuckets(t.peer(), t.limiter(), t.stop(), t.db(), t.table(), empty, 0, FIRST_PULL_BUCKETS, 0)
+                : pullBucketPages(t, bucketPages(empty, d.peerRows(), d.peerBytes()), 0, 0);
+        return wholeBuckets.thenCompose(n -> compareBuckets(t, held, expected, 0, FIRST_PULL_BUCKETS, 0, HASH_TARGET_IDS, n));
+    }
+
+    /**
+     * {@code buckets} grouped into pages of whole buckets, by the peer's rows and bytes per bucket: about
+     * PULL_TARGET_OPS rows and PULL_TARGET_BYTES a page, at most BUCKETS_PER_REQUEST buckets, at least one.
+     */
+    static List<List<Integer>> bucketPages(List<Integer> buckets, long[] rows, long[] bytes) {
+        List<List<Integer>> pages = new ArrayList<>();
+        List<Integer> page = new ArrayList<>();
+        long r = 0;
+        long w = 0;
+        for (int b : buckets) {
+            if (!page.isEmpty() && (r + rows[b] > PULL_TARGET_OPS || w + bytes[b] > PULL_TARGET_BYTES
+                    || page.size() == BUCKETS_PER_REQUEST)) {
+                pages.add(List.copyOf(page));
+                page.clear();
+                r = 0;
+                w = 0;
+            }
+            page.add(b);
+            r += rows[b];
+            w += bytes[b];
+        }
+        if (!page.isEmpty()) {
+            pages.add(List.copyOf(page));
+        }
+        return pages;
+    }
+
+    /** Pulls whole buckets, page {@code i} of {@code pages} on, one page after another. */
+    private CompletableFuture<Integer> pullBucketPages(TablePull t, List<List<Integer>> pages, int i, int merged) {
+        if (i >= pages.size()) {
+            return CompletableFuture.completedFuture(merged);
+        }
+        RuntimeException why = stopReason(t.stop());
+        if (why != null) {
+            return CompletableFuture.failedFuture(why);
+        }
+        List<Integer> page = pages.get(i);
+        return t.limiter().run(() -> unlessStopped(t.stop(), () -> client.rows(t.peer().address, t.db(), t.table(), page)))
+                .thenCompose(ops -> {
+                    t.peer().lastContact = clock.getAsLong();
+                    bucketPages.incrementAndGet();
+                    return pullBucketPages(t, pages, i + 1, merged + mergeOrThrow(ops));
+                });
     }
 
     /**
@@ -885,12 +949,14 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             rowRoutesFound(p);
             hashPages.incrementAndGet();
             Map<String, Long> mine = engine.read(s -> s.rowHashes(t.db(), t.table(), new HashSet<>(page)));
-            List<String> want = differingIds(theirs.ids(), theirs.hashes(), mine);
+            List<Long> wantWeights = theirs.weights() == null ? null : new ArrayList<>();
+            List<String> want = differingIds(theirs.ids(), theirs.hashes(), mine, theirs.weights(), wantWeights);
             int rows = theirs.ids().size();
             double perBucket = (double) rows / page.size();
             double perRowBytes = rows == 0 ? 1 : Math.max(1.0, (double) theirs.bytes() / rows);
             long nextTarget = (long) Math.max(1, Math.min(HASH_TARGET_IDS, PULL_TARGET_BYTES / perRowBytes));
-            return pullIds(t, want, 0, FIRST_PULL_IDS, 0).handle((k, err) -> {
+            long[] weights = wantWeights == null ? null : wantWeights.stream().mapToLong(Long::longValue).toArray();
+            return pullIds(t, want, weights, 0, t.nextIds()[0], 0).handle((k, err) -> {
                 if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
                     throw new java.util.concurrent.CompletionException(unwrap(err));
                 }
@@ -929,18 +995,31 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
      * the peer has. Ids only this node has need nothing: the peer pulls them from here.
      */
     static List<String> differingIds(List<String> theirIds, long[] theirHashes, Map<String, Long> mine) {
+        return differingIds(theirIds, theirHashes, mine, null, null);
+    }
+
+    /** As above, adding the peer's size of each id returned to {@code weightsOut} when it sent sizes. */
+    static List<String> differingIds(List<String> theirIds, long[] theirHashes, Map<String, Long> mine,
+            long[] theirWeights, List<Long> weightsOut) {
         List<String> out = new ArrayList<>();
         for (int i = 0; i < theirIds.size(); i++) {
             Long h = mine.get(theirIds.get(i));
             if (h == null || h.longValue() != theirHashes[i]) {
                 out.add(theirIds.get(i));
+                if (theirWeights != null && weightsOut != null) {
+                    weightsOut.add(theirWeights[i]);
+                }
             }
         }
         return out;
     }
 
-    /** Pulls the rows {@code ids} (from {@code from} on) by id, one page after another, sized like the bucket pages. */
-    private CompletableFuture<Integer> pullIds(TablePull t, List<String> ids, int from, int max, int merged) {
+    /**
+     * Pulls the rows {@code ids} (from {@code from} on) by id, one page after another. With the peer's row
+     * sizes ({@code weights}), a page holds about PULL_TARGET_BYTES of rows; without, its size follows the
+     * last page's, as bucket pages do, and is carried on to the next page of hashes.
+     */
+    private CompletableFuture<Integer> pullIds(TablePull t, List<String> ids, long[] weights, int from, int max, int merged) {
         if (from >= ids.size()) {
             return CompletableFuture.completedFuture(merged);
         }
@@ -948,15 +1027,36 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         if (stop != null) {
             return CompletableFuture.failedFuture(stop);
         }
-        int n = idPageSize(ids, from, max);
+        int n = weights != null ? idPageSizeByBytes(ids, weights, from) : idPageSize(ids, from, max);
         List<String> page = List.copyOf(ids.subList(from, from + n));
         return t.limiter().run(() -> unlessStopped(t.stop(), () -> client.rowsById(t.peer().address, t.db(), t.table(), page))).thenCompose(ops -> {
             t.peer().lastContact = clock.getAsLong();
             idPages.incrementAndGet();
             int k = mergeOrThrow(ops);
             int next = nextPullIds(page.size(), ops.size(), com.ataiva.serengeti.core.storage.Weight.ofOps(ops));
-            return pullIds(t, ids, from + n, next, merged + k);
+            t.nextIds()[0] = next;
+            return pullIds(t, ids, weights, from + n, next, merged + k);
         });
+    }
+
+    /**
+     * How many ids from {@code from} on go in one request when their sizes are known: as many as come to
+     * PULL_TARGET_BYTES (at least one), within the request limits.
+     */
+    static int idPageSizeByBytes(List<String> ids, long[] weights, int from) {
+        int limit = Math.min(IDS_PER_REQUEST, ids.size() - from);
+        long chars = 0;
+        long bytes = 0;
+        int n = 0;
+        while (n < limit) {
+            chars += ids.get(from + n).length();
+            bytes += weights[from + n];
+            if (n > 0 && (chars > IDS_REQUEST_CHARS || bytes > PULL_TARGET_BYTES)) {
+                break;
+            }
+            n++;
+        }
+        return n;
     }
 
     /** How many ids from {@code from} on go in one request: at most {@code max}, and within the request limits. */
@@ -1022,8 +1122,8 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     }
                     String table = t.getKey();
                     // Schema first, so a drop that removes rows is applied before rows are compared.
-                    work.add(schemaStep.thenCompose(x -> differingBuckets(p, db, table, full))
-                            .thenCompose(differ -> pullTable(new TablePull(p, limiter, stop, db, table), differ)));
+                    work.add(schemaStep.thenCompose(x -> differingBuckets(p, db, table, full)).thenCompose(differ ->
+                            pullTable(new TablePull(p, limiter, stop, db, table, new int[] {FIRST_PULL_IDS}), differ)));
                 }
                 work.add(schemaStep);
             }
@@ -1036,19 +1136,21 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
      * if {@code full}, else the live ones, which is all 2.1 has. A peer that answers 404 to the full sums is
      * treated as one without the protocol 3 routes.
      */
-    private CompletableFuture<List<Integer>> differingBuckets(Peer p, String db, String table, boolean full) {
-        CompletableFuture<long[]> theirs = !full ? client.buckets(p.address, db, table)
+    private CompletableFuture<Differ> differingBuckets(Peer p, String db, String table, boolean full) {
+        CompletableFuture<PeerClient.FullSums> theirs = !full
+                ? client.buckets(p.address, db, table).thenApply(s -> new PeerClient.FullSums(s, null, null))
                 : client.fullBuckets(p.address, db, table).handle((sums, err) -> {
                     if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
                         throw new java.util.concurrent.CompletionException(unwrap(err));
                     }
                     return sums;
                 });
-        return theirs.thenCompose(sums -> {
-            if (sums == null) {
+        return theirs.thenCompose(their -> {
+            if (their == null) {
                 noRowRoutes(p);
                 return differingBuckets(p, db, table, false);
             }
+            long[] sums = their.sums();
             long[] local = engine.read(s -> full ? s.fullBucketSums(db, table) : s.bucketSums(db, table));
             List<Integer> differ = new ArrayList<>();
             for (int i = 0; i < sums.length; i++) {
@@ -1056,12 +1158,24 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     differ.add(i);
                 }
             }
-            return CompletableFuture.completedFuture(differ);
+            return CompletableFuture.completedFuture(new Differ(differ, their.rows(), their.bytes()));
         });
     }
 
-    /** Protocol 1 (2.0 peers): compare one SHA-256 per database and pull whole databases that differ. */
+    private final java.util.concurrent.atomic.AtomicLong readStatePulls = new java.util.concurrent.atomic.AtomicLong();
+
+    /** For tests: whole-database pulls that majority reads have started. */
+    long readStatePullsForTest() {
+        return readStatePulls.get();
+    }
+
+    /**
+     * Protocol 1 (2.0 peers): compare one SHA-256 per database and pull whole databases that differ. Each
+     * pull checks the sync's stop when its turn comes, as row pages do: a read's pulls end with the read.
+     */
     private CompletableFuture<Integer> syncWholeDatabases(Peer p, java.util.concurrent.atomic.AtomicBoolean readDone) {
+        long generation = p.generation;
+        java.util.function.BooleanSupplier stop = readDone != null ? readDone::get : () -> p.generation != generation;
         return client.digests(p.address).thenCompose(theirs -> {
             p.lastContact = clock.getAsLong();
             Map<String, String> mine = engine.read(Store::digests);
@@ -1074,7 +1188,12 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             List<CompletableFuture<List<Op>>> pulls = new ArrayList<>();
             for (String db : differ) {
                 // Each answer is a whole database: through the same limit as the row pages (review 22d).
-                pulls.add((readDone != null ? readPullLimiter : pullLimiter).run(() -> client.state(p.address, db)));
+                pulls.add((readDone != null ? readPullLimiter : pullLimiter).run(() -> unlessStopped(stop, () -> {
+                    if (readDone != null) {
+                        readStatePulls.incrementAndGet();
+                    }
+                    return client.state(p.address, db);
+                })));
             }
             List<CompletableFuture<Integer>> merged = new ArrayList<>();
             for (CompletableFuture<List<Op>> f : pulls) {
@@ -1273,12 +1392,18 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 }
                 String db = required(query, "db");
                 String table = required(query, "table");
-                long[] sums = engine.read(s -> s.fullBucketSums(db, table));
-                List<Object> out = new ArrayList<>(sums.length);
-                for (long v : sums) {
-                    out.add(v);
+                // The rows and bytes per bucket too: the peer sizes its pulls of buckets it holds nothing of by them.
+                Object[] answer = engine.read(s -> new Object[] {s.fullBucketSums(db, table), s.bucketRowCounts(db, table),
+                    s.bucketBytes(db, table)});
+                List<Object> sums = new ArrayList<>(Store.BUCKETS);
+                List<Object> rows = new ArrayList<>(Store.BUCKETS);
+                List<Object> bytes = new ArrayList<>(Store.BUCKETS);
+                for (int i = 0; i < Store.BUCKETS; i++) {
+                    sums.add(((long[]) answer[0])[i]);
+                    rows.add((long) ((int[]) answer[1])[i]);
+                    bytes.add(((long[]) answer[2])[i]);
                 }
-                return Map.of("sums", out);
+                return Map.of("sums", sums, "rows", rows, "bytes", bytes);
             }
             case "/internal/v3/hashes" -> {
                 if (rowRoutesOff) {
@@ -1287,8 +1412,19 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 String db = required(query, "db");
                 String table = required(query, "table");
                 Set<Integer> wanted = buckets(query);
-                Map<String, Long> hashes = engine.read(s -> s.rowHashes(db, table, wanted));
-                return Map.of("ids", new ArrayList<Object>(hashes.keySet()), "h", new ArrayList<Object>(hashes.values()));
+                // With each row's estimated size ("w"), so the peer can page its pulls by bytes.
+                Object[] answer = engine.read(s -> {
+                    Map<String, Long> h = s.rowHashes(db, table, wanted);
+                    return new Object[] {h, s.rowWeights(db, table, h.keySet())};
+                });
+                @SuppressWarnings("unchecked")
+                Map<String, Long> hashes = (Map<String, Long>) answer[0];
+                List<Object> weights = new ArrayList<>(hashes.size());
+                for (long w : (long[]) answer[1]) {
+                    weights.add(w);
+                }
+                return Map.of("ids", new ArrayList<Object>(hashes.keySet()), "h", new ArrayList<Object>(hashes.values()),
+                        "w", weights);
             }
             case "/internal/v3/rows" -> {
                 if (rowRoutesOff) {

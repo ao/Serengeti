@@ -44,6 +44,9 @@ public final class Store {
          * replica that holds an older one.
          */
         final long[] full = new long[BUCKETS];
+        /** Per bucket, the rows held (tombstones included) and their weight: what a peer sizes its pulls by. */
+        final int[] count = new int[BUCKETS];
+        final long[] bytes = new long[BUCKETS];
 
         TableState(Stamp dropped) {
             this.dropped = dropped;
@@ -81,15 +84,22 @@ public final class Store {
          * {@code expiry} is the store's (the full sums were last counted with it).
          */
         void replace(String id, RowState old, RowState next, long expiry) {
+            int b = bucket(id);
             if (old != null) {
                 unaccount(id, old, expiry);
-                weight -= old.weight(id);
+                long w = old.weight(id);
+                weight -= w;
+                bytes[b] -= w;
+                count[b]--;
             }
             if (next == null) {
                 rows.remove(id);
             } else {
                 account(id, next, expiry);
-                weight += next.weight(id);
+                long w = next.weight(id);
+                weight += w;
+                bytes[b] += w;
+                count[b]++;
                 rows.put(id, next);
             }
             Map<String, Object> was = old == null ? null : old.winner().value();
@@ -980,14 +990,30 @@ public final class Store {
         return out;
     }
 
-    /** How many rows (tombstones included) each bucket of a table holds; all zeros if it is unknown. */
+    /** How many rows (tombstones included) each bucket of a table holds; all zeros if it is unknown. A copy. */
     public int[] bucketRowCounts(String db, String table) {
-        int[] out = new int[BUCKETS];
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        return t == null ? new int[BUCKETS] : t.count.clone();
+    }
+
+    /** The estimated weight (see Weight) of the rows each bucket of a table holds; all zeros if unknown. */
+    public long[] bucketBytes(String db, String table) {
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        return t == null ? new long[BUCKETS] : t.bytes.clone();
+    }
+
+    /** The estimated weight of each of these rows, in the order given; 0 for a row not held. */
+    public long[] rowWeights(String db, String table, java.util.Collection<String> ids) {
+        long[] out = new long[ids.size()];
         DbState d = dbs.get(db);
         TableState t = d == null ? null : d.tables.get(table);
         if (t != null) {
-            for (String id : t.rows.keySet()) {
-                out[bucket(id)]++;
+            int i = 0;
+            for (String id : ids) {
+                RowState r = t.rows.get(id);
+                out[i++] = r == null ? 0 : r.weight(id);
             }
         }
         return out;
@@ -1030,8 +1056,12 @@ public final class Store {
                     var e = it.next();
                     RowState r = e.getValue();
                     if (!r.live() && r.winner().stamp().wall() < cutoffWallMillis) {
-                        t.full[bucket(e.getKey())] -= r.counted(e.getKey(), expiry);
-                        t.weight -= r.weight(e.getKey());
+                        int b = bucket(e.getKey());
+                        long w = r.weight(e.getKey());
+                        t.full[b] -= r.counted(e.getKey(), expiry);
+                        t.bytes[b] -= w;
+                        t.count[b]--;
+                        t.weight -= w;
                         it.remove();
                         n++;
                     }
