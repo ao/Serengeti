@@ -186,7 +186,9 @@ kept-alive connection, and 2.1 sets it itself.
 - [docs/CONSISTENCY.md](docs/CONSISTENCY.md): replication, write acknowledgement, conflicts and what was tested.
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md): settings, defaults and the data directory.
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md): measured throughput and latency.
-- [examples/](examples/): clients for curl, Python and JavaScript.
+- [clients/](clients/): Python and JavaScript clients, one file each with no dependencies: queries,
+  failover for reads across nodes, the change feed and accounts.
+- [examples/](examples/): the HTTP API from curl, Python and JavaScript with nothing else.
 - [CHANGELOG.md](CHANGELOG.md), [ROADMAP.md](ROADMAP.md), [VERSIONING.md](VERSIONING.md) and
   [CONTRIBUTING.md](CONTRIBUTING.md).
 

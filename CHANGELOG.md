@@ -25,6 +25,9 @@ GitHub release notes and tags.
   in step with every change, so it needs no garbage collection to be current. Metrics
   `serengeti_data_bytes`, `serengeti_data_budget_bytes`, `serengeti_memory_full` and `serengeti_heap_bytes`.
   `tests/memory/run.sh` fills a node in a 512 MiB container through its API.
+- Clients for Python (standard library only) and JavaScript (`fetch`), one file each, in `clients/`:
+  queries, reads that move on to the next node, writes that are never sent twice, the change feed,
+  accounts and TLS with a cluster's own CA. `clients/run.sh` tests both against the image; CI runs it.
 
 ### Changed
 - The image uses G1 and gives the heap 60% of the container's memory (was 75%), leaving room for the log's

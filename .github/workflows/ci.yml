@@ -105,6 +105,14 @@ jobs:
       - name: Certificates, three TLS nodes, a write and a read, one node stopped
         run: IMAGE=serengeti:cluster-example examples/cluster/run.sh
 
+  clients:
+    name: Python and JavaScript clients (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Both clients against a node, a TLS node and a node that never answers
+        run: clients/run.sh
+
   demo:
     name: Partition demo (amd64)
     runs-on: ubuntu-24.04
