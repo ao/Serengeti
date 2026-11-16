@@ -32,6 +32,10 @@ GitHub release notes and tags.
   acknowledged while cut off are not lost.
 
 ### Fixed
+- A node answering large requests (a SELECT of 20 MB, say) could be killed by the kernel (2.0.0 too): each
+  answer went to the socket in one write, and the JDK keeps a direct buffer of the largest write per thread,
+  outside the heap. Answers are written in slices of 64 KiB, and the image sets
+  `-Djdk.nio.maxCachedBufferSize=262144`. Found by 2.2's fourth review.
 - A node that had missed writes could run itself and its peers out of heap while catching up: it asked
   every peer at once for the rows of every differing bucket, in pages of 200 buckets, and a few thousand
   missed inserts touch most buckets. A node now runs at most two background row pulls at once, and four

@@ -22,9 +22,11 @@ COPY --from=build /serengeti.jar /opt/serengeti/serengeti.jar
 USER 10001:10001
 # All interfaces inside the container's own network namespace. Nothing is published unless the operator
 # passes -p; publish to 127.0.0.1 unless other machines need to reach the node.
+# jdk.nio.maxCachedBufferSize: the JDK keeps, per thread, a direct buffer as large as the largest single
+# socket write it made; unbounded, the request threads each kept their largest answer outside the heap.
 ENV SERENGETI_BIND=0.0.0.0 \
     SERENGETI_DATA_DIR=/data \
-    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Djdk.nio.maxCachedBufferSize=262144"
 VOLUME /data
 EXPOSE 1985
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
