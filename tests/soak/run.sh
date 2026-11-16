@@ -174,7 +174,17 @@ for i in $(seq 1 "$NODES"); do
 done
 
 converge_rc=0
-py converge || converge_rc=$?
+py converge &
+converge_pid=$!
+# Convergence normally takes seconds. If it takes longer than 30 s, every node prints a thread dump into its
+# log (SIGQUIT), so that a node that has stopped answering can be looked at afterwards.
+for _ in $(seq 30); do kill -0 "$converge_pid" 2>/dev/null || break; sleep 1; done
+if kill -0 "$converge_pid" 2>/dev/null; then
+  echo "$(date -u +%H:%M:%S) converge: not converged after 30 s; thread dumps of every node are in their logs" \
+    | tee -a "$OUT/events.log"
+  for i in $(seq 1 "$NODES"); do docker kill -s QUIT "$RUN-n$i" >/dev/null 2>&1 || true; done
+fi
+wait "$converge_pid" || converge_rc=$?
 for i in $(seq 1 "$NODES"); do docker logs "$RUN-n$i" > "$OUT/nodes/n$i.log" 2>&1 || true; done
 check_rc=0
 py check || check_rc=$?

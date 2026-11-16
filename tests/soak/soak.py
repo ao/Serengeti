@@ -305,7 +305,8 @@ class Nemesis:
         self.unexpected = []
         self.errors = []
         self.max_lag = 0.0
-        self.history = []  # (unix ms, action, node) of every stop, restart, kill and start
+        self.history = []  # (unix ms, action, node, seconds, exit code) of every stop, restart, kill and start
+        self.stalls = []  # nodes that did not answer /health while running (see prober)
 
     def name(self, i):
         return f"{self.run}-n{i}"
@@ -371,14 +372,16 @@ class Nemesis:
     def act(self, a):
         name, i = a[0], a[1] if len(a) > 1 else None
         self.counts[name] += 1
-        if name in ("kill", "stop", "restart", "start", "pause", "unpause"):
-            self.history.append((round(now_ms()), name, i))
+        began = now_ms()
+        exit_code = None
         if name == "kill":
             self.state[i] = "killed"
             self.must(f"kill n{i}", "kill", "-s", "KILL", self.name(i))
         elif name == "stop":
             self.state[i] = "stopped"
-            self.must(f"stop n{i}", "stop", "-t", "10", self.name(i))
+            if self.must(f"stop n{i}", "stop", "-t", "10", self.name(i)):
+                # 143: the JVM exited on SIGTERM; 137: docker killed it after the 10 s grace period.
+                exit_code = self.docker("inspect", "-f", "{{.State.ExitCode}}", self.name(i))[1]
         elif name == "start":
             if self.must(f"start n{i}", "start", self.name(i)):
                 self.state[i] = "up"
@@ -415,6 +418,9 @@ class Nemesis:
                 self.sync_net([i])
         else:
             raise ValueError(name)
+        if name in ("kill", "stop", "restart", "start", "pause", "unpause"):
+            # When it was sent, how long the docker command (and the network rules after a start) took.
+            self.history.append((round(began), name, i, round((now_ms() - began) / 1000, 2), exit_code))
 
     def monitor(self):
         """Every 2 s: a node the nemesis has not stopped must be running. One that exited is logged and started."""
@@ -441,6 +447,41 @@ class Nemesis:
                             self.state[i] = "up"
                             self.sync_net([i])
 
+    def prober(self, i):
+        """Every 2 s, GET /health on node i once it has been running, unpaused and without netem for 20 s. After
+        15 s without an answer the JVM gets SIGQUIT once, so the node's log holds a thread dump of the stall."""
+        since, dumped = None, False
+        while not self.done.wait(2):
+            with self.lock:
+                quiet = self.state[i] == "up" and i not in self.netem
+                last = max((h[0] + h[3] * 1000 for h in self.history if h[2] == i), default=0)
+            t = now_ms()
+            if not quiet or t - last < 20_000:
+                if dumped:  # the nemesis acted on the node during the stall
+                    self.stalls.append({"node": i, "from": round(since), "to": round(t)})
+                since, dumped = None, False
+                continue
+            try:
+                ok = subprocess.run(["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5",
+                                     f"https://{self.ips[i]}:1985/health"], capture_output=True, text=True,
+                                    timeout=10).stdout == "200"
+            except (OSError, subprocess.TimeoutExpired):
+                ok = False
+            if ok:
+                if dumped:
+                    self.stalls.append({"node": i, "from": round(since), "to": round(t)})
+                    event(f"n{i} answers /health again, after {(t - since) / 1000:.0f} s")
+                since, dumped = None, False
+            elif since is None:
+                since = t
+            elif not dumped and now_ms() - since >= 15_000:
+                self.docker("kill", "-s", "QUIT", self.name(i))
+                dumped = True
+                event(f"STALL n{i} has not answered /health for {(now_ms() - since) / 1000:.0f} s while running; "
+                      f"sent SIGQUIT, so its log has a thread dump")
+        if dumped:  # still not answering when the run ended
+            self.stalls.append({"node": i, "from": round(since), "to": None})
+
     def heal_all(self):
         with self.lock:
             for i in NODES:
@@ -466,6 +507,9 @@ class Nemesis:
         while time.time() < T0:
             time.sleep(0.05)
         mon.start()
+        probers = [threading.Thread(target=self.prober, args=(i,), daemon=True) for i in NODES]
+        for p in probers:
+            p.start()
         event(f"nemesis: {len(eps)} faults planned over {SECS:.0f} s (seed {SEED}, {N} nodes)")
         for at, k, phase, e, a in timeline:
             if at >= SECS:
@@ -490,15 +534,21 @@ class Nemesis:
         time.sleep(3)
         self.done.set()
         mon.join(timeout=10)
+        for p in probers:
+            p.join(timeout=15)
         kinds = collections.Counter(e.kind for e in eps if e.start < SECS)
         summary = {"faults": dict(kinds), "actions": dict(self.counts), "history": self.history,
-                   "unexpected_exits": self.unexpected,
+                   "unexpected_exits": self.unexpected, "stalls": self.stalls,
                    "errors": self.errors, "max_lag_s": round(self.max_lag, 2), "netem": self.netem_ok}
         with open(os.path.join(OUT, "nemesis.json"), "w") as f:
             json.dump(summary, f, indent=1)
+        stops = [h for h in self.history if h[1] in ("stop", "restart")]
+        codes = collections.Counter(h[4] for h in self.history if h[1] == "stop")
         event("nemesis: faults " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items()))
               + f"; unexpected exits {len(self.unexpected)}; nemesis errors {len(self.errors)}; "
-              f"largest lag behind the schedule {self.max_lag:.1f} s")
+              f"largest lag behind the schedule {self.max_lag:.1f} s; docker stop/restart took "
+              f"{max((h[3] for h in stops), default=0):.1f} s at most, {sum(1 for h in stops if h[3] >= 10)} of "
+              f"{len(stops)} 10 s or more; stop exit codes {dict(codes)}")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1049,8 +1099,8 @@ class Checker:
     @staticmethod
     def load_ops():
         recs = []
-        for p in sorted(glob.glob(os.path.join(OUT, "ops", "*.jsonl"))):
-            with open(p) as f:
+        for p in sorted(glob.glob(os.path.join(OUT, "ops", "*.jsonl")) + glob.glob(os.path.join(OUT, "ops", "*.jsonl.gz"))):
+            with (gzip.open(p, "rt") if p.endswith(".gz") else open(p)) as f:
                 for line in f:
                     line = line.strip()
                     if line:
@@ -1095,6 +1145,7 @@ class Checker:
               + ", ".join(f"{t} {len(dumps[1]['tables'][t])}" for t in DB_TABLES), flush=True)
         counts = self.evaluate(recs, dumps)
         self.check_exits(recs)
+        self.check_liveness(recs)
         self.check_indexes(dumps)
         failed = 0
         for num in sorted(self.results):
@@ -1223,10 +1274,10 @@ class Checker:
         for u in nem["unexpected_exits"]:
             p5.append(f"n{u['node']} exited at {u['at']} without the nemesis: status {u['status']} exit {u['exit']} "
                       f"OOM {u['oom']}")
-        # A 5xx that arrived while its node was stopping (in the 3 s after the nemesis sent it a docker stop or
+        # A 5xx answered while its node was stopping (in the 3 s after the nemesis sent it a docker stop or
         # restart) is counted apart, so that finding 1 of docs/SOAK.md does not hide any other.
         stops = collections.defaultdict(list)
-        for at, action, node in nem.get("history", []):
+        for at, action, node, *_ in nem.get("history", []):
             if action in ("stop", "restart"):
                 stops[node].append(at)
         bad_status = collections.Counter()
@@ -1236,7 +1287,7 @@ class Checker:
             s = r.get("s")
             if isinstance(s, int) and s >= 500 and s != 503:
                 bad_status[s] += 1
-                stopping = any(at - 500 <= r["t0"] <= at + 3000 for at in stops[r["n"]])
+                stopping = any(at <= r["t1"] <= at + 3000 for at in stops[r["n"]])
                 if stopping:
                     while_stopping[(s, f"{r.get('op')} {r.get('a') or r.get('cons')}")] += 1
                     continue
@@ -1276,6 +1327,20 @@ class Checker:
         with open(os.path.join(OUT, "log-summary.txt"), "w") as f:
             for (i, word), v in sorted(log_lines.items()):
                 f.write(f"n{i} {word} {v}\n")
+
+    def check_liveness(self, recs):
+        """Check 10: a node that was running and not paused answered its clients."""
+        try:
+            with open(os.path.join(OUT, "nemesis.json")) as f:
+                nem = json.load(f)
+        except OSError:
+            nem = {}
+        p10 = silences(recs, nem.get("history", []))
+        for s in nem.get("stalls", []):
+            p10.append(f"n{s['node']} did not answer /health from {elapsed(s['from'])} to "
+                       f"{'the end of the run' if s['to'] is None else elapsed(s['to'])} (a thread dump is in its log)")
+        self.result(10, not p10, "every node that was running and not paused answered its clients: no 30 s in which "
+                    "every request to it went unanswered", p10)
 
     def check_indexes(self, dumps):
         """Check 6: an indexed comparison, the same comparison as a scan, and the rows held all agree."""
@@ -1480,6 +1545,63 @@ class Checker:
         return problems
 
 
+def silences(recs, history, limit_ms=30_000, grace_ms=20_000):
+    """Stretches longer than limit_ms in which every request to a node got no answer (no connection, or a
+    timeout) while the nemesis had it running and not paused. Each start, unpause and restart is given
+    grace_ms more, since a node needs a few seconds to open its data."""
+    down = collections.defaultdict(list)  # node -> [(from, to)] in unix ms when it is not expected to answer
+    since = {}
+    for h in history:
+        at, action, node = h[0], h[1], h[2]
+        took = h[3] * 1000 if len(h) > 3 else 0
+        if action in ("kill", "stop", "pause"):
+            since.setdefault(node, at)
+        elif action in ("start", "unpause"):
+            down[node].append((since.pop(node, at), at + took + grace_ms))
+        elif action == "restart":
+            down[node].append((at, at + took + grace_ms))
+    for node, at in since.items():
+        down[node].append((at, float("inf")))
+    by_node = collections.defaultdict(list)
+    for r in recs:
+        if isinstance(r.get("n"), int) and isinstance(r.get("t0"), (int, float)) and r.get("c") != "s":
+            by_node[r["n"]].append(r)
+    out = []
+    for node, rs in sorted(by_node.items()):
+        rs.sort(key=lambda r: r["t0"])
+        last = rs[-1]["t1"]
+        start = None
+        for r in rs + [None]:
+            silent = r is not None and r["s"] in ("conn", "timeout")
+            if silent and start is None:
+                start = r["t0"]
+            elif not silent and start is not None:
+                end = last if r is None else r["t0"]
+                # The parts of [start, end] that no down period covers.
+                segs = [(start, end)]
+                for a, b in down[node]:
+                    segs = [p for s, e in segs for p in ((s, min(e, a)), (max(s, b), e)) if p[1] > p[0]]
+                for s, e in segs:
+                    if e - s > limit_ms:
+                        out.append(f"n{node} answered no request from {elapsed(s)} to {elapsed(e)} "
+                                   f"({time.strftime('%H:%M:%S', time.gmtime(s / 1000))} to "
+                                   f"{time.strftime('%H:%M:%S', time.gmtime(e / 1000))} UTC) "
+                                   f"({(e - s) / 1000:.0f} s), running and not paused")
+                start = None
+    return out
+
+
+def cmd_liveness():
+    """Check 10 alone, on the files of a finished run: soak.py liveness (with SOAK_OUT set)."""
+    recs = Checker.load_ops()
+    with open(os.path.join(OUT, "nemesis.json")) as f:
+        problems = silences(recs, json.load(f).get("history", []))
+    for p in problems:
+        print(p)
+    print(f"liveness: {len(problems)} silences")
+    return 1 if problems else 0
+
+
 def cmd_check():
     return Checker().main()
 
@@ -1583,7 +1705,8 @@ def cmd_selftest():
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     fn = {"plan": cmd_plan, "nemesis": lambda: Nemesis().main(), "setup": cmd_setup, "work": cmd_work,
-          "converge": cmd_converge, "check": cmd_check, "selftest": cmd_selftest}.get(cmd)
+          "converge": cmd_converge, "check": cmd_check, "selftest": cmd_selftest,
+          "liveness": cmd_liveness}.get(cmd)
     if fn is None:
         sys.exit(__doc__)
     sys.exit(fn() or 0)
