@@ -249,6 +249,29 @@ runs each on an EC2 c7g.4xlarge shared with other test jobs, the restarted node 
 244 to 313 MB before; after, it received 21 MB and sent 1 to 7 MB, and had every row 2.6 s after its
 start instead of 4.6 to 5.2 s.
 
+### 4. A majority read can return a cut-off node's update over a newer delete (fixed in 8295e28 and b5c6abf)
+
+In a 30-minute run on 5 nodes with seed 31337 (engine at the row-by-row catch-up, before it was merged),
+check 8 failed for 2 of 26,785 reads: a majority read returned a hot row's value from a local write made on
+a node that was cut off, instead of the newer delete a majority had acknowledged before the read began. A
+second run with the same seed passed.
+
+The cause is older than 2.2's catch-up, and 2.1 has it too. A row whose versions are all deletes added
+nothing to its bucket's sum, so that collecting tombstones would change no sum. So a node holding an older
+delete T and a peer holding a newer delete D compared equal, and D never reached the T-holder. When the
+cut-off node's update U (newer than T, older than D) then arrived there, the node held T and U and showed U,
+where the merge of all three is "deleted"; a majority read that had compared with a D-holder just before U
+arrived returned U. Every node converged at the next sync, so it showed only in reads.
+
+Since 8295e28, 2.2 nodes also compare bucket sums that count every version, deletes included (2.1 peers
+still get the old sums), and collect tombstones at the same moments: on 10-minute wall-clock boundaries, of
+deletes older than the boundary less `tombstone_ttl_hours`, so nodes that have and have not collected yet do
+not pull the same tombstones back and forth. b5c6abf (review 22e) compares those sums only between nodes
+that agree on the expiry, so nodes with different TTLs, or in the seconds around a boundary, do not pull
+tombstones every round, and makes a node stale 20 minutes before the TTL, so that a node coming back just
+under it still finds every delete it missed. `TombstoneBlindTest` reproduces the read; four 30-minute runs
+on the fix (seeds 31337 and 4242) passed every check.
+
 ## Runs
 
 All on one EC2 c7g.2xlarge (8 Graviton3 vCPUs, 16 GiB, Ubuntu 24.04, Docker 29), nothing else running.
