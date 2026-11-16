@@ -440,15 +440,20 @@ public final class HttpApi implements AutoCloseable {
                 k -> new java.util.concurrent.atomic.AtomicInteger());
         byte[] answer;
         try {
-            if (mine.get() >= HEAVY_UNSENT_PER_PEER || heavyBytesUnsent.get() > HEAVY_UNSENT_BYTES) {
+            // The peer's slot is taken before building, so answers built at the same time cannot all pass.
+            if (mine.incrementAndGet() > HEAVY_UNSENT_PER_PEER || heavyBytesUnsent.get() > HEAVY_UNSENT_BYTES) {
+                mine.decrementAndGet();
                 throw new HttpError(503, "busy sending rows to other nodes; try again");
             }
             try {
                 answer = (Json.write(routes.handle(method, path, query, body)) + "\n").getBytes(StandardCharsets.UTF_8);
             } catch (QueryService.Rejected r) {
+                mine.decrementAndGet();
                 throw new HttpError(r.status(), r.getMessage());
+            } catch (RuntimeException | Error e) {
+                mine.decrementAndGet();
+                throw e;
             }
-            mine.incrementAndGet();
             heavyBytesUnsent.addAndGet(answer.length);
         } finally {
             heavyInternal.release();
