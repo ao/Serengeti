@@ -7,8 +7,9 @@ Settings come from three places. Later ones win:
 3. environment variables: the setting name in upper case with a `SERENGETI_` prefix, e.g. `port` is
    `SERENGETI_PORT`.
 
-An unknown key in the file is an error, so a typo stops the node instead of being ignored. Any invalid
-setting makes the node exit with status 2 and a one-line message.
+An unknown key in the file is an error, so a typo stops the node instead of being ignored. An
+environment variable that names no setting (`SERENGETI_PROT`) is ignored. Any invalid setting makes the
+node exit with status 2 and a one-line message.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -16,15 +17,15 @@ setting makes the node exit with status 2 and a one-line message.
 | `port` | `1985` | TCP port. |
 | `data_dir` | `data` | Data directory, created if missing. The image uses `/data`. |
 | `fsync` | `always` | `always`: the log is forced to disk before a write is acknowledged. `interval`: once a second; a machine crash can lose the last second. `off`: the operating system decides. |
-| `admin_password_file` | none | File holding the first admin password (12 to 72 bytes). |
+| `admin_password_file` | none | File holding the first admin password (at least 12 characters, at most 72 bytes in UTF-8). |
 | `peers` | none | The other nodes of the cluster, `host:port,host:port`. Not this node itself. See [CONSISTENCY.md](CONSISTENCY.md). |
 | `cluster_size` | peers + 1 | Number of nodes, 1 to 7. Writes need a majority of it. Required with `discovery_cidr`. |
 | `discovery_cidr` | none | Opt-in: find peers by asking `/internal/hello` on `port` at every address in this range, at most 256 addresses (a /24 or /120). Needs TLS and `cluster_size`. |
 | `write_ack` | `majority` | In a cluster: `majority` acknowledges a write once a majority of nodes has it; `local` once this node has it, even with no peer reachable. Requests override it with `"ack"`. See [CONSISTENCY.md](CONSISTENCY.md). |
-| `tombstone_ttl_hours` | `168` | How long a delete's tombstone is kept, and so the longest a cluster node may be away and still rejoin with its data. |
-| `changes_buffer` | `10000` | How many recent changes the node keeps in memory for `GET /v1/changes` (see API.md, "Changes"); `0` turns the feed off. Each held change keeps its row's value alive, so a large buffer of large rows costs memory. |
+| `tombstone_ttl_hours` | `168` | How long a delete's tombstone is kept, and so the longest a cluster node may be away and still rejoin with its data. 1 to 87600. |
+| `changes_buffer` | `10000` | How many recent changes the node keeps in memory for `GET /v1/changes` (see API.md, "Changes"), 0 to 1,000,000; `0` turns the feed off, and the route answers 404. Each held change keeps its row's value alive, so a large buffer of large rows costs memory. |
 | `http_threads` | `64` | Threads that answer HTTP requests, 1 to 1024. A request holds one while it is read, run and answered, so a client that sends slowly holds one for up to 30 s; half of them at most wait on `GET /v1/changes`. |
-| `memory_limit_percent` | `60` | Writes that add data (INSERT, UPDATE, CREATE) are refused with 503 once the rows and index entries held are estimated to take this share of the maximum heap; deletes and drops are always taken and make room at once. `100` turns it off. Every database is held in memory, so this is the node's capacity. The image gives the heap 60% of the container's memory: a 512 MiB container holds an estimated 185 MiB of data with the default. |
+| `memory_limit_percent` | `60` | Writes that add data (INSERT, UPDATE, CREATE) are refused with 503 once the rows and index entries held are estimated to take this share of the maximum heap; deletes and drops are always taken and make room at once. 10 to 100; `100` turns it off. Every database is held in memory, so this is the node's capacity. The image gives the heap 60% of the container's memory: a 512 MiB container holds an estimated 185 MiB of data with the default. |
 | `backup_dir` | none | Directory for scheduled backups, created if missing (mode 0700). Not the data directory or inside it. See [Scheduled backups](#scheduled-backups). The image has an empty `/backups` for a volume. |
 | `backup_interval_minutes` | `60` | Minutes between scheduled backups, 1 to 10080 (a week). |
 | `backup_keep` | `24` | How many scheduled backups to keep, 1 to 10000; the oldest beyond that are deleted. |
@@ -85,14 +86,16 @@ are changed with `POST /v1/password` or `PUT /v1/users/NAME`.
 | `snapshot.jsonl` | The state at the last checkpoint. The log is folded into it after 64 MiB. |
 | `indexes.jsonl` | Index definitions, rewritten whenever an index is created or dropped. Kept out of the log so a 2.0 binary can still open the directory. Present once an index has been created. |
 | `accounts.json` | Every account as a bcrypt hash (cost 12) with its role, the versions of its changes, and the tombstones of deleted accounts. Mode 0600; a node refuses to start if others can read it. |
-| `users.json` | The admin and write accounts again, in the form 2.0 and 2.1 read, so a node can be rolled back (read accounts cannot log in on those). If an older version changed a password here, the next start takes that change, dated by the file's time. Mode 0600. |
+| `users.json` | The admin and write accounts again, in the form 2.0 and 2.1 read, so a node can be rolled back (read accounts cannot log in on those). If an older version changed a password here, the next start takes that change, dated by the file's time. Mode 0600; a node refuses to start if others can read it. |
 | `setup-token` | One-time setup token (mode 0600), present only until the first admin password is set. |
 | `node-id` | A random id for this node, kept across restarts. |
-| `last-sync` | In a cluster: when this node last synced with a majority (Unix milliseconds), written at most once a minute. |
+| `last-sync` | In a cluster: when this node last synced with a majority (Unix milliseconds), written at most once a minute. `serengeti restore` writes it too (see [CONSISTENCY.md](CONSISTENCY.md)). |
 | `lock` | Empty. The running node holds a lock on it, so a second node started on the same directory (in the same container, or another container on the same volume) stops with exit status 2. The operating system drops the lock when the node exits, also after a crash. |
 
-Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md#backup)), or let it write backups on a schedule (`backup_dir`, below). Copying the directory
-of a stopped node also works. A backup holds the data only: `accounts.json`, `users.json`, `node-id` and `setup-token` are not in it.
+Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md#backup)), or let it write
+backups on a schedule (`backup_dir`, below). Copying the directory of a stopped node also works; the copy
+keeps that node's `node-id`, so start it in place of that node, not beside it. A backup holds the data only:
+`accounts.json`, `users.json`, `node-id` and `setup-token` are not in it.
 
 ## Scheduled backups
 
@@ -131,11 +134,12 @@ serengeti restore [--config FILE] BACKUP_FILE
 ```
 
 Loads a backup into the data directory that the settings name (`data_dir`, or `SERENGETI_DATA_DIR`). Stop the
-node first. Restore does not lock the directory, and running it beside a node that writes to the same files
-is not supported.
+node first. Restore holds the directory's lock while it writes, so it stops with "in use by another node" if a
+node runs on the directory, and a node cannot start on it halfway through.
 
-- The directory must not hold `wal.log` or `snapshot.jsonl`. Existing account files are kept, so the restored
-  node keeps its accounts. Without one, the node asks for the setup token or `SERENGETI_ADMIN_PASSWORD` again.
+- The directory must not hold `wal.log`, `snapshot.jsonl` or `indexes.jsonl`. Existing account files are kept,
+  so the restored node keeps its accounts. Without one, the node asks for the setup token or
+  `SERENGETI_ADMIN_PASSWORD` again.
 - The whole file is checked before anything is written: the format, every change, the count, the SHA-256 and
   that the changes apply. A truncated or altered file is refused, and nothing is written.
 - Exit status 0 prints `restored N operations into DIR`. Exit status 2 prints the reason on stderr.
