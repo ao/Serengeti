@@ -21,7 +21,8 @@ on every change.
 ## Quick start
 
 Build the image and start one node. The node writes a one-time setup token to `/data/setup-token` on its
-first start and refuses every request except `GET /health` until the admin password is set with it:
+first start, and answers every request except `GET /health`, `GET /ready` and `POST /v1/setup` with 503
+until the admin password is set with it:
 
 ```sh
 docker build -t serengeti .
@@ -92,10 +93,17 @@ docker compose run --rm certs
 docker compose up -d
 ```
 
-The comments in the Compose file say how to reach the nodes, and
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md) has the settings. CI runs this example as written.
-[examples/monitoring](examples/monitoring/) adds Prometheus, 16 tested alert rules and a Grafana
-dashboard to it.
+The nodes are published on 127.0.0.1, ports 19851 to 19853, and clients check them against the CA in
+`ca.pem`:
+
+```sh
+docker compose run --rm --entrypoint cat certs /certs/ca.pem > ca.pem
+curl --cacert ca.pem -u "admin:$SERENGETI_PASSWORD" https://127.0.0.1:19851/v1/status; echo
+```
+
+The comments in the Compose file say more, and [docs/CONFIGURATION.md](docs/CONFIGURATION.md) has the
+settings. CI runs this example as written. [examples/monitoring](examples/monitoring/) adds Prometheus,
+16 tested alert rules and a Grafana dashboard to it.
 
 ## Writes in a cluster
 
@@ -106,7 +114,7 @@ through sync when they can. Choose per request, or set `SERENGETI_WRITE_ACK` for
 
 ```
 POST /v1/query
-{"query": "UPDATE shop.items SET qty = 90 WHERE _id = 'bolt'", "ack": "local"}
+{"query": "UPDATE shop.items SET qty = 90 WHERE name = 'bolt'", "ack": "local"}
 ```
 
 Reads answer from the node's own data unless you ask for `"consistency": "majority"`, which syncs with a
@@ -249,8 +257,8 @@ kept-alive connection, and 2.1 sets it itself.
 
 - There is no built-in account. The admin password comes from the environment, a file, or the one-time
   setup token.
-- Every route except `GET /health` needs HTTP Basic credentials. Ten failed attempts from one address in
-  a minute block it for the rest of that minute.
+- Every route except `GET /health`, `GET /ready` and `POST /v1/setup` needs HTTP Basic credentials. Ten
+  failed attempts from one address in a minute block it for the rest of that minute.
 - The jar listens on 127.0.0.1 unless `SERENGETI_BIND` says otherwise. The image binds all interfaces
   inside its container and publishes nothing; publish to 127.0.0.1 unless other machines need it.
 - Nodes authenticate each other with a shared cluster key and talk over TLS, unless you explicitly allow
