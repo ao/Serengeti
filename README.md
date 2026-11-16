@@ -122,6 +122,37 @@ A `WHERE` that compares an indexed column with a value, alone or as one term of 
 matching rows; anything else scans the table. Lookups by `_id` never scan. Indexes change how fast a
 query runs, not what it returns. [docs/QUERY.md](docs/QUERY.md) has the rules.
 
+## Accounts
+
+The admin makes an account for each application or person, with one of three roles: `read` (SELECT and
+SHOW), `write` (also writes and schema changes) or `admin` (also accounts and backups).
+
+```sh
+curl -s -u "admin:$SERENGETI_PASSWORD" -X PUT -H 'Content-Type: application/json' \
+  --data '{"password": "a long password for the dashboard", "role": "read"}' \
+  http://127.0.0.1:1985/v1/users/dashboard; echo
+# {"user":"dashboard","role":"read"}
+```
+
+A write by a read account gets 403. In a cluster, accounts replicate like rows: the newest change to a
+name wins on every node, and a node that was down catches up. [docs/API.md](docs/API.md#accounts) has the
+rest.
+
+## Following changes
+
+`GET /v1/changes` returns the changes a node applied after a cursor, waiting up to 60 s for the next one,
+so a cache, a search index or a screen can follow a table instead of polling it:
+
+```sh
+cursor=$(curl -s -u "admin:$SERENGETI_PASSWORD" 'http://127.0.0.1:1985/v1/changes?db=shop&after=now' \
+  | sed 's/.*"cursor":"\([^"]*\)".*/\1/')
+curl -s -u "admin:$SERENGETI_PASSWORD" "http://127.0.0.1:1985/v1/changes?db=shop&table=items&after=$cursor&wait=30"
+```
+
+The [clients](clients/) wrap this as `follow()`. A node keeps its recent changes in memory only, so a
+cursor from before a restart gets 410: read the table again and follow from now. See
+[docs/API.md](docs/API.md#changes).
+
 ## How it compares
 
 | | Serengeti 2.1 | rqlite | CouchDB | cr-sqlite |
