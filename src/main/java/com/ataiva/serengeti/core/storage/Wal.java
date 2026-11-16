@@ -163,33 +163,43 @@ public final class Wal implements AutoCloseable {
      */
     public synchronized long write(List<Op> batch) throws IOException {
         checkHealthy();
-        // The payload is encoded and written one op at a time, with its checksum computed as it goes, and the
-        // header goes in front of it last: a statement that deletes a few hundred thousand rows must not need
-        // its whole record in memory several times over. Until the header is written, the record reads as a
-        // torn tail (length 0), so a crash part way leaves nothing that recovery would take.
+        // The payload is encoded one op at a time into one reused buffer, with its checksum computed as it
+        // goes, and the header slot at the front of the buffer. A record that fits (nearly all) is written with
+        // one call. A larger one is written as the buffer fills, header slot zero, and its header goes in
+        // last: a statement that deletes a few hundred thousand rows must not need its whole record in memory
+        // several times over. Until the header is written, the record reads as a torn tail (length 0), so a
+        // crash part way leaves nothing that recovery would take.
         long start = ch.position();
-        ByteBuffer buf = ByteBuffer.allocate(1 << 16);
+        ByteBuffer buf = writeBuffer;
+        buf.clear();
+        buf.put(new byte[HEADER]);
         CRC32C crc = new CRC32C();
         long len = 0;
+        boolean streamed = false;
         try {
-            ch.write(ByteBuffer.allocate(HEADER));
-            byte[] open = {'['};
-            len += put(buf, crc, open);
-            for (int i = 0; i < batch.size(); i++) {
-                if (i > 0) {
-                    len += put(buf, crc, COMMA);
+            for (int i = 0; i <= batch.size() + 1; i++) {
+                byte[] bytes = i == 0 ? OPEN : i == batch.size() + 1 ? CLOSE
+                        : Json.write(Op.toJson(batch.get(i - 1))).getBytes(StandardCharsets.UTF_8);
+                if (i > 1 && i <= batch.size()) {
+                    streamed |= put(buf, crc, COMMA);
+                    len += 1;
                 }
-                len += put(buf, crc, Json.write(Op.toJson(batch.get(i))).getBytes(StandardCharsets.UTF_8));
+                streamed |= put(buf, crc, bytes);
+                len += bytes.length;
                 if (len > MAX_RECORD) {
                     throw new IllegalArgumentException("batch larger than " + MAX_RECORD + " bytes");
                 }
             }
-            len += put(buf, crc, new byte[] {']'});
-            drain(buf);
-            ByteBuffer header = ByteBuffer.allocate(HEADER);
-            header.putInt((int) len).putInt((int) crc.getValue()).flip();
-            while (header.hasRemaining()) {
-                ch.write(header, start + header.position());
+            if (!streamed) {
+                buf.putInt(0, (int) len).putInt(4, (int) crc.getValue());
+                drain(buf);
+            } else {
+                drain(buf);
+                ByteBuffer header = ByteBuffer.allocate(HEADER);
+                header.putInt((int) len).putInt((int) crc.getValue()).flip();
+                while (header.hasRemaining()) {
+                    ch.write(header, start + header.position());
+                }
             }
         } catch (IOException | RuntimeException e) {
             // Nothing of this batch may stay: the next write goes where it began.
@@ -207,20 +217,27 @@ public final class Wal implements AutoCloseable {
         return written;
     }
 
+    private static final byte[] OPEN = {'['};
+    private static final byte[] CLOSE = {']'};
     private static final byte[] COMMA = {','};
+    /** Reused by {@link #write}, which is synchronized. */
+    private final ByteBuffer writeBuffer = ByteBuffer.allocateDirect(1 << 16);
 
-    private int put(ByteBuffer buf, CRC32C crc, byte[] bytes) throws IOException {
+    /** Appends to the buffer, writing it out when full. True if it wrote any of it out. */
+    private boolean put(ByteBuffer buf, CRC32C crc, byte[] bytes) throws IOException {
         crc.update(bytes, 0, bytes.length);
+        boolean out = false;
         int off = 0;
         while (off < bytes.length) {
             if (!buf.hasRemaining()) {
                 drain(buf);
+                out = true;
             }
             int n = Math.min(buf.remaining(), bytes.length - off);
             buf.put(bytes, off, n);
             off += n;
         }
-        return bytes.length;
+        return out;
     }
 
     private void drain(ByteBuffer buf) throws IOException {
