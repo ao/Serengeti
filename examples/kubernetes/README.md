@@ -39,6 +39,12 @@ as the admin with the password from its secret.
 ## Notes
 
 - In another namespace than `default`, nothing changes: the short names resolve within the namespace.
+- Set `image` to a version tag (`ataiva/serengeti:2.2.0`), not `latest`: with `IfNotPresent`, pods on
+  different machines could otherwise run different versions after an upgrade.
+- A pod is ready while a majority is reachable, and the Service sends requests to ready pods only. So when
+  the network splits, the pods cut off from the majority leave the Service, and `"ack": "local"` writes
+  through the Service stop on that side. Applications that should keep writing there address a pod by name
+  (`serengeti-N.serengeti`).
 - To run 5 or 7 nodes, set `replicas` and the `NODES` variable together, and make a certificate for each pod.
   Writes need a majority of `NODES`.
 - `resources.limits.memory` sizes the node: the heap is 60% of it, and writes that add data are refused once

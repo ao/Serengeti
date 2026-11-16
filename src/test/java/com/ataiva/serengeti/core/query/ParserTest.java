@@ -25,6 +25,21 @@ class ParserTest {
     }
 
     @Test
+    void selectListsGroupByAndLikePatternsHaveLimits() {
+        java.util.function.IntFunction<String> cols = n -> java.util.stream.IntStream.range(0, n)
+                .mapToObj(i -> "c" + i).collect(java.util.stream.Collectors.joining(", "));
+        Parser.parse("SELECT " + cols.apply(Parser.MAX_SELECT_ITEMS) + " FROM d.t");
+        assertTrue(fails("SELECT " + cols.apply(Parser.MAX_SELECT_ITEMS + 1) + " FROM d.t").getMessage()
+                .contains("at most 256 items"));
+        Parser.parse("SELECT COUNT(*) FROM d.t GROUP BY " + cols.apply(Parser.MAX_GROUP_BY));
+        assertTrue(fails("SELECT COUNT(*) FROM d.t GROUP BY " + cols.apply(Parser.MAX_GROUP_BY + 1)).getMessage()
+                .contains("at most 32 columns"));
+        Parser.parse("SELECT * FROM d.t WHERE s LIKE '" + "a".repeat(Parser.MAX_LIKE_PATTERN) + "'");
+        assertTrue(fails("SELECT * FROM d.t WHERE s LIKE '" + "a".repeat(Parser.MAX_LIKE_PATTERN + 1) + "'")
+                .getMessage().contains("at most 1000 characters"));
+    }
+
+    @Test
     void createAndDropDatabase() {
         assertEquals(new Statement.CreateDatabase("shop", false), parse("CREATE DATABASE shop"));
         assertEquals(new Statement.CreateDatabase("shop", true), parse("create database if not exists Shop;"));

@@ -259,6 +259,50 @@ class ShellTest {
         }
     }
 
+    /** A server that answers every request with {@code head} and {@code body} and closes: a node stopping. */
+    private static int cutting(String head, String body) throws Exception {
+        ServerSocket s = new ServerSocket(0, 8, InetAddress.getLoopbackAddress());
+        Thread t = new Thread(() -> {
+            try (s) {
+                for (int i = 0; i < 4; i++) {
+                    try (java.net.Socket c = s.accept()) {
+                        c.getInputStream().read(new byte[8192]);
+                        c.getOutputStream().write((head + body).getBytes(StandardCharsets.UTF_8));
+                    }
+                }
+            } catch (java.io.IOException e) {
+                // the test is over
+            }
+        });
+        t.setDaemon(true);
+        t.start();
+        return s.getLocalPort();
+    }
+
+    @Test
+    void aBackupCutShortIsNeverTakenForAWholeOne() throws Exception {
+        // Rows whose values hold "end":true, and a node that stops part way, having sent the full length.
+        String lines = "{\"format\":\"serengeti-snapshot\",\"version\":1}\n"
+                + "{\"op\":\"put\",\"db\":\"d\",\"table\":\"t\",\"_id\":\"a\",\"row\":{\"end\":true},\"at\":\"1.0.n\"}\n";
+        String cut = lines + "{\"op\":\"put\",\"db\":\"d\",\"table\":\"t\",\"_id\":\"b\",\"row\":{\"end\":tr";
+        Map<String, String> pw = Map.of("SERENGETI_PASSWORD", PW);
+        int port = cutting("HTTP/1.1 200 OK\r\nContent-Length: " + (cut.length() + 500) + "\r\n\r\n", cut);
+        Path file = dir.resolve("cut.jsonl");
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(1, Shell.backup(new String[] {"--url", "http://127.0.0.1:" + port, "-o", file.toString()}, pw,
+                new ByteArrayOutputStream(), new PrintStream(err, true), null), err.toString());
+        assertFalse(java.nio.file.Files.exists(file));
+        assertFalse(java.nio.file.Files.exists(dir.resolve("cut.jsonl.tmp")));
+        // The whole length, but the last line is a row, not the trailer.
+        int port2 = cutting("HTTP/1.1 200 OK\r\nContent-Length: " + lines.length() + "\r\n\r\n", lines);
+        ByteArrayOutputStream err2 = new ByteArrayOutputStream();
+        assertEquals(1, Shell.backup(new String[] {"--url", "http://127.0.0.1:" + port2}, pw,
+                new ByteArrayOutputStream(), new PrintStream(err2, true), null));
+        assertTrue(err2.toString().contains("incomplete"), err2.toString());
+        byte[] whole = "x\n{\"end\":true,\"ops\":3,\"sha256\":\"ab\"}\n".getBytes(StandardCharsets.UTF_8);
+        assertTrue(Shell.endsWithTrailer(whole, whole.length));
+    }
+
     @Test
     void theSplitterKeepsQuotesAndCommentsWhole() {
         Shell.Splitter s = new Shell.Splitter();

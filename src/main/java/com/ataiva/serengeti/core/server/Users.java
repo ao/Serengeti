@@ -296,21 +296,45 @@ public final class Users {
         set(user, password, role, false);
     }
 
+    /** What {@link #bootstrapAdmin} did. */
+    public enum Bootstrap {
+        /** No accounts at all: the admin was made with the oldest stamp. */
+        FIRST,
+        /** Accounts but no admin: the admin was made with a current stamp, after every tombstone. */
+        RECOVERED,
+        /** An admin exists (one may have arrived from a peer meanwhile): nothing was changed. */
+        SKIPPED
+    }
+
+    /** True while there is no entry at all, not even a tombstone: a first start. */
+    public synchronized boolean isEmpty() {
+        return accounts.isEmpty();
+    }
+
     /**
      * Makes the admin from the environment when no admin exists. At first start (no accounts at all) it gets the
      * oldest stamp, so the cluster's own admin wins over it; when the admins were deleted, it gets a current
-     * stamp, so it wins over their tombstones. Returns true in that second case.
+     * stamp, so it wins over their tombstones. If an admin exists when it comes to write (bcrypt runs first,
+     * outside the lock), it changes nothing.
      */
-    public boolean bootstrapAdmin(String password) throws IOException {
+    public Bootstrap bootstrapAdmin(String password) throws IOException {
         boolean recovering;
         synchronized (this) {
             recovering = !accounts.isEmpty();
         }
-        set(ADMIN, password, Role.ADMIN, !recovering);
-        return recovering;
+        if (!set(ADMIN, password, Role.ADMIN, !recovering, true)) {
+            return Bootstrap.SKIPPED;
+        }
+        return recovering ? Bootstrap.RECOVERED : Bootstrap.FIRST;
     }
 
     private void set(String user, String password, Role role, boolean bootstrap) throws IOException {
+        set(user, password, role, bootstrap, false);
+    }
+
+    /** Returns false, changing nothing, if {@code onlyWithoutAdmin} and an admin exists by the time of the write. */
+    private boolean set(String user, String password, Role role, boolean bootstrap, boolean onlyWithoutAdmin)
+            throws IOException {
         String problem = nameProblem(user);
         if (problem == null) {
             problem = passwordProblem(password);
@@ -321,6 +345,9 @@ public final class Users {
         String hash = BCrypt.hashpw(password, BCrypt.gensalt(cost)); // slow: outside the lock
         Map<String, Object> entry;
         synchronized (this) {
+            if (onlyWithoutAdmin && admins() > 0) {
+                return false;
+            }
             Account old = accounts.get(user);
             if (role != Role.ADMIN && old != null && !old.deleted() && old.role() == Role.ADMIN && admins() == 1) {
                 throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
@@ -329,6 +356,7 @@ public final class Users {
             entry = commit(user, a);
         }
         listener.accept(List.of(entry));
+        return true;
     }
 
     /**

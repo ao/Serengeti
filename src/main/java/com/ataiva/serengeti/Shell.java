@@ -277,6 +277,7 @@ final class Shell {
         Path target = file == null ? null : Path.of(file);
         Path tmp = target == null ? null : target.resolveSibling(target.getFileName() + ".tmp");
         HttpURLConnection c = null;
+        boolean receiving = false;
         try {
             c = open(t, "/v1/backup");
             int code = c.getResponseCode();
@@ -287,6 +288,7 @@ final class Shell {
                 err.println("serengeti backup: " + t.base() + ": " + a.message());
                 return code == 401 ? 2 : 1;
             }
+            receiving = true;
             java.io.OutputStream out;
             if (tmp != null) {
                 Files.deleteIfExists(tmp);
@@ -319,9 +321,11 @@ final class Shell {
                     out.close();
                 }
             }
-            String end = new String(tail, 0, tailLen, StandardCharsets.UTF_8);
-            if (!end.contains("\"end\":true")) {
-                err.println("serengeti backup: the backup was cut short after " + total + " bytes; nothing was kept");
+            long expected = c.getContentLengthLong();
+            if ((expected >= 0 && total != expected) || !endsWithTrailer(tail, tailLen)) {
+                // A body cut short reads as a normal end of stream, so both the length and the trailer are checked.
+                err.println("serengeti backup: the backup was cut short after " + total + " bytes"
+                        + (tmp != null ? "; nothing was kept" : "; what was written to standard output is incomplete"));
                 if (tmp != null) {
                     Files.deleteIfExists(tmp);
                 }
@@ -334,7 +338,8 @@ final class Shell {
             }
             return 0;
         } catch (IOException e) {
-            err.println("serengeti backup: " + t.base() + ": " + e.getMessage());
+            err.println("serengeti backup: " + t.base() + ": " + e.getMessage()
+                    + (receiving ? "; the backup was cut short" + (tmp != null ? ", nothing was kept" : "") : ""));
             try {
                 if (tmp != null) {
                     Files.deleteIfExists(tmp);
@@ -342,11 +347,32 @@ final class Shell {
             } catch (IOException ignored) {
                 // the message above says what went wrong
             }
-            return 2;
+            return receiving ? 1 : 2;
         } finally {
             if (c != null) {
                 c.disconnect();
             }
+        }
+    }
+
+    /** True if the last line of the bytes read is a backup's trailer: {"end": true, "ops": N, ...}. */
+    static boolean endsWithTrailer(byte[] tail, int len) {
+        int end = len;
+        while (end > 0 && (tail[end - 1] == '\n' || tail[end - 1] == '\r')) {
+            end--;
+        }
+        int start = end;
+        while (start > 0 && tail[start - 1] != '\n') {
+            start--;
+        }
+        if (start == 0 && len == tail.length) {
+            return false; // the last line is longer than what was kept: not a trailer
+        }
+        try {
+            Map<String, Object> m = Json.parseObject(new String(tail, start, end - start, StandardCharsets.UTF_8));
+            return Boolean.TRUE.equals(m.get("end")) && m.get("ops") instanceof Number;
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 

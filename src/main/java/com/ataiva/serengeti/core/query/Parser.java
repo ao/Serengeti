@@ -12,6 +12,14 @@ import java.util.Set;
 public final class Parser {
     /** How deeply parentheses and NOT may nest in a WHERE condition. */
     public static final int MAX_DEPTH = 64;
+    /**
+     * Most items in one SELECT list, columns in one GROUP BY, and characters in one LIKE pattern. A list of
+     * thousands of columns (a 1 MiB body holds 60,000) made one statement hold far more memory than its rows:
+     * every row or group carries a slot for each, and a node ran out of memory on one read.
+     */
+    public static final int MAX_SELECT_ITEMS = 256;
+    public static final int MAX_GROUP_BY = 32;
+    public static final int MAX_LIKE_PATTERN = 1000;
 
     private final Lexer lexer;
     private Token tok;
@@ -196,6 +204,9 @@ public final class Parser {
             projection = new Statement.Projection.All();
         } else {
             do {
+                if (items.size() == MAX_SELECT_ITEMS) {
+                    throw new ParseException("a SELECT lists at most " + MAX_SELECT_ITEMS + " items", tok.start());
+                }
                 itemAt.add(tok.start());
                 items.add(item());
             } while (acceptSymbol(","));
@@ -214,6 +225,7 @@ public final class Parser {
         Expr where = acceptKeyword("where") ? expr() : null;
 
         List<String> groupBy = new ArrayList<>();
+        java.util.Set<String> grouped = new java.util.HashSet<>();
         int groupAt = tok.start();
         if (acceptWord("group")) {
             if (projection instanceof Statement.Projection.All) {
@@ -223,15 +235,18 @@ public final class Parser {
             do {
                 int at = tok.start();
                 String c = name();
-                if (groupBy.contains(c)) {
+                if (!grouped.add(c)) {
                     throw new ParseException("column '" + c + "' is listed twice in GROUP BY", at);
+                }
+                if (groupBy.size() == MAX_GROUP_BY) {
+                    throw new ParseException("GROUP BY takes at most " + MAX_GROUP_BY + " columns", at);
                 }
                 groupBy.add(c);
             } while (acceptSymbol(","));
         }
         for (int i = 0; i < items.size(); i++) {
             if (items.get(i) instanceof Statement.Item.Column c && (aggregates || !groupBy.isEmpty())
-                    && !groupBy.contains(c.name())) {
+                    && !grouped.contains(c.name())) {
                 throw new ParseException(groupBy.isEmpty()
                         ? "column '" + c.name() + "' is listed with an aggregate, so it must be in a GROUP BY"
                         : "column '" + c.name() + "' is listed but is not in GROUP BY", itemAt.get(i));
@@ -444,6 +459,9 @@ public final class Parser {
             throw expected("a string (the LIKE pattern)");
         }
         String p = (String) tok.value();
+        if (p.length() > MAX_LIKE_PATTERN) {
+            throw new ParseException("a LIKE pattern is at most " + MAX_LIKE_PATTERN + " characters", tok.start());
+        }
         int bad = LikePattern.badEscape(p);
         if (bad >= 0) {
             // The position in the query text: past the opening quote, and past the second ' of each '' before it.

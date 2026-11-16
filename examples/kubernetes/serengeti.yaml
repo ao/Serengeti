@@ -69,6 +69,9 @@ spec:
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001
+        # Without this, the kubelet makes every file of a volume group-writable on each mount (block volumes
+        # such as EBS, and local volumes), and the node refuses to start with account files others can read.
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile: {type: RuntimeDefault}
       terminationGracePeriodSeconds: 30
       containers:

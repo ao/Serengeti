@@ -43,8 +43,24 @@ od -An -N24 -tx1 /dev/urandom | tr -d ' \n' > "$TMP/cluster-key"
 "${K[@]}" create secret generic serengeti-secrets --from-file=admin-password="$TMP/admin-password" \
   --from-file=cluster-key="$TMP/cluster-key" >/dev/null
 rm -f "$TMP/admin-password" "$TMP/cluster-key"
-# Step 3, with this build's image.
-sed "s|image: ataiva/serengeti:latest|image: $IMAGE|" examples/kubernetes/serengeti.yaml | "${K[@]}" apply -f - >/dev/null
+# Local volumes, not kind's default hostPath ones: the kubelet applies fsGroup to these on every mount, as it
+# does to EBS and other block volumes, so a file mode the node depends on is tested as on a real cluster.
+NODE="$CLUSTER-control-plane"
+{
+  printf 'apiVersion: storage.k8s.io/v1\nkind: StorageClass\nmetadata: {name: serengeti-local}\n'
+  printf 'provisioner: kubernetes.io/no-provisioner\nvolumeBindingMode: WaitForFirstConsumer\n'
+  for i in 0 1 2; do
+    docker exec "$NODE" mkdir -p "/mnt/serengeti-$i"
+    printf -- '---\napiVersion: v1\nkind: PersistentVolume\nmetadata: {name: serengeti-pv-%s}\nspec:\n' "$i"
+    printf '  capacity: {storage: 10Gi}\n  accessModes: [ReadWriteOnce]\n  storageClassName: serengeti-local\n'
+    printf '  persistentVolumeReclaimPolicy: Retain\n  local: {path: /mnt/serengeti-%s}\n' "$i"
+    printf '  nodeAffinity: {required: {nodeSelectorTerms: [{matchExpressions: [{key: kubernetes.io/hostname, operator: In, values: [%s]}]}]}}\n' "$NODE"
+  done
+} | "${K[@]}" apply -f - >/dev/null
+# Step 3, with this build's image and those volumes.
+sed -e "s|image: ataiva/serengeti:latest|image: $IMAGE|" \
+    -e 's|^        accessModes: \[ReadWriteOnce\]$|        storageClassName: serengeti-local\n        accessModes: [ReadWriteOnce]|' \
+    examples/kubernetes/serengeti.yaml | "${K[@]}" apply -f - >/dev/null
 
 if "${K[@]}" rollout status statefulset/serengeti --timeout=300s >/dev/null 2>&1 \
    && "${K[@]}" wait --for=condition=Ready pod -l app=serengeti --timeout=120s >/dev/null 2>&1; then
@@ -93,6 +109,8 @@ else
 fi
 contains "with its data and the write it missed" '"rows":[[3]]' \
   "$(by_name serengeti-1.serengeti 'SELECT COUNT(*) FROM shop.items' '"rows":[[3]]')"
+expect "its account files are still its own only after the volume was mounted again" "600 600" \
+  "$("${K[@]}" exec serengeti-1 -- sh -c 'stat -c %a /data/accounts.json /data/users.json' | tr '\n' ' ' | sed 's/ $//')"
 
 contains "serengeti shell in a pod, with the admin password from its secret file" "washer" \
   "$("${K[@]}" exec serengeti-0 -- serengeti shell --format tsv -c 'SELECT _id FROM shop.items ORDER BY _id' 2>&1)"

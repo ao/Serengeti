@@ -415,11 +415,13 @@ class UsersTest {
         // A restart with SERENGETI_ADMIN_PASSWORD: stamped after the tombstone, so it wins on every node.
         Users again = Users.open(dir.resolve("a"), 4, now::get);
         again.setStamps(() -> new com.ataiva.serengeti.core.storage.Stamp(tick++, 0, "a"));
-        assertTrue(again.bootstrapAdmin("the admin again 1"));
+        assertEquals(Users.Bootstrap.RECOVERED, again.bootstrapAdmin("the admin again 1"));
         b.merge(again.entries());
         assertEquals(Optional.of(Users.Role.ADMIN), b.verify("admin", "the admin again 1"));
         // At first start, the bootstrap admin is older than anything.
-        assertFalse(node("fresh").bootstrapAdmin(PW));
+        assertEquals(Users.Bootstrap.FIRST, node("fresh").bootstrapAdmin(PW));
+        assertEquals(Users.Bootstrap.SKIPPED, b.bootstrapAdmin("not used 12345"), "an admin exists: nothing changes");
+        assertEquals(Optional.of(Users.Role.ADMIN), b.verify("admin", "the admin again 1"));
     }
 
     @Test

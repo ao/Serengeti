@@ -152,13 +152,13 @@ public final class Node implements AutoCloseable {
         AtomicReference<SetupToken> token = new AtomicReference<>();
         boolean recoverLater = false;
         if (!users.isSetUp()) {
-            if (config.adminPassword != null && users.hasAccounts() && config.clustered()) {
-                // Accounts but no admin: either every admin was deleted, or this node has a tombstone and not yet
-                // the admin that replaced it (each change is pushed on its own). Decide after one account pull
-                // from a peer (see recoverAdmin), so a retired admin does not come back.
+            if (config.adminPassword != null && !users.isEmpty() && config.clustered()) {
+                // Entries (tombstones too) but no admin: either every admin was deleted, or this node has a
+                // tombstone and not yet the admin that replaced it (each change is pushed on its own). Decide after
+                // one account pull from a peer (see recoverAdmin), so a retired admin does not come back.
                 recoverLater = true;
             } else if (config.adminPassword != null) {
-                if (users.bootstrapAdmin(config.adminPassword)) {
+                if (users.bootstrapAdmin(config.adminPassword) == Users.Bootstrap.RECOVERED) {
                     LOG.warning("no admin account was left (admins deleted, perhaps on two nodes at once); the admin "
                             + "is made again from SERENGETI_ADMIN_PASSWORD and replaces the deletion on every node");
                 } else {
@@ -201,9 +201,9 @@ public final class Node implements AutoCloseable {
             if (recoverLater) {
                 String pw = config.adminPassword;
                 Cluster c = cluster;
-                Thread t = new Thread(() -> recoverAdmin(c, pw, dir), "admin-recovery");
-                t.setDaemon(true);
-                t.start();
+                recovery = new Thread(() -> recoverAdmin(c, pw, dir), "admin-recovery");
+                recovery.setDaemon(true);
+                recovery.start();
             }
         }
         maintenance = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -338,6 +338,7 @@ public final class Node implements AutoCloseable {
 
     /** How long a node with accounts but no admin waits for an account pull before it remakes the admin. */
     static final long RECOVERY_WAIT_MILLIS = 30_000;
+    private volatile Thread recovery;
 
     /**
      * Makes the admin from SERENGETI_ADMIN_PASSWORD, after the accounts have been pulled from a peer once (or
@@ -355,7 +356,12 @@ public final class Node implements AutoCloseable {
                 LOG.info("an admin account came from a peer; SERENGETI_ADMIN_PASSWORD is not used");
                 return;
             }
-            if (users.bootstrapAdmin(password)) {
+            Users.Bootstrap b = users.bootstrapAdmin(password);
+            if (b == Users.Bootstrap.SKIPPED) {
+                LOG.info("an admin account came from a peer; SERENGETI_ADMIN_PASSWORD is not used");
+                return;
+            }
+            if (b == Users.Bootstrap.RECOVERED) {
                 LOG.warning("no admin account was left (admins deleted, perhaps on two nodes at once"
                         + (c.accountSyncs() == before ? "; no peer answered for accounts in "
                                 + RECOVERY_WAIT_MILLIS / 1000 + " s" : "") + "); the admin is made again from "
@@ -377,6 +383,16 @@ public final class Node implements AutoCloseable {
     @Override
     public void close() throws IOException {
         api.close();
+        Thread r = recovery;
+        if (r != null) {
+            // It may be about to write the account files, which close unlocks.
+            r.interrupt();
+            try {
+                r.join(5_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         if (maintenance != null) {
             maintenance.shutdownNow();
         }

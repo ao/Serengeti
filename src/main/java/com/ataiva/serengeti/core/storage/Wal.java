@@ -34,7 +34,7 @@ public final class Wal implements AutoCloseable {
     private final AtomicLong fsyncNanos = new AtomicLong();
 
     /** Result of reading the log on open. */
-    public record Recovered(List<List<Op>> batches, long validBytes, long discardedBytes) {}
+    public record Recovered(List<List<Op>> batches, long validBytes, long discardedBytes, long records) {}
 
     /** Counters for {@code GET /metrics}: the log's size, and the forces done on it since the node started. */
     public record Stats(long bytes, long fsyncs, long fsyncNanos) {}
@@ -81,19 +81,22 @@ public final class Wal implements AutoCloseable {
             ch.force(true);
         }
         ch.position(r.validBytes());
-        return new Wal(path, ch, policy, testFsyncDelayMs, r.validBytes());
+        Wal w = new Wal(path, ch, policy, testFsyncDelayMs, r.validBytes());
+        w.recordsAtOpen = r.records();
+        return w;
     }
 
     static Recovered read(FileChannel ch) throws IOException {
         List<List<Op>> batches = new ArrayList<>();
         Recovered r = read(ch, batches::add);
-        return new Recovered(batches, r.validBytes(), r.discardedBytes());
+        return new Recovered(batches, r.validBytes(), r.discardedBytes(), r.records());
     }
 
     /** Reads the log, handing each batch to {@code sink}; the result's batch list is empty. */
     static Recovered read(FileChannel ch, java.util.function.Consumer<List<Op>> sink) throws IOException {
         long total = ch.size();
         long pos = 0;
+        long records = 0;
         ByteBuffer header = ByteBuffer.allocate(HEADER);
         while (pos + HEADER <= total) {
             header.clear();
@@ -121,6 +124,7 @@ public final class Wal implements AutoCloseable {
                             + " Serengeti. Nothing was discarded; start that version, or move the data directory aside.", e);
                 }
                 pos += HEADER + len;
+                records++;
                 continue;
             }
             ByteBuffer payload = ByteBuffer.allocate(len);
@@ -143,8 +147,9 @@ public final class Wal implements AutoCloseable {
             }
             sink.accept(batch);
             pos += HEADER + len;
+            records++;
         }
-        return new Recovered(List.of(), pos, total - pos);
+        return new Recovered(List.of(), pos, total - pos, records);
     }
 
     /** Records larger than this are read in pieces (see {@link #read(FileChannel, java.util.function.Consumer)}). */
@@ -482,6 +487,12 @@ public final class Wal implements AutoCloseable {
     private final Object syncLock = new Object();
     /** Bytes written since the log was opened, across resets; positions handed out by {@link #write}. */
     private long written;
+    /** Records read when the log was opened (a large one reaches the sink in several parts). */
+    private long recordsAtOpen;
+
+    public long recordsAtOpen() {
+        return recordsAtOpen;
+    }
     private volatile long durable;
     private volatile IOException failure;
 

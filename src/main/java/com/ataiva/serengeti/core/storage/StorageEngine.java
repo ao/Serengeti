@@ -73,7 +73,7 @@ public final class StorageEngine implements AutoCloseable {
                 Snapshot.read(in, false, store::apply);
             }
         }
-        this.openStats = new OpenStats(snapOps, batches[0], before - wal.size());
+        this.openStats = new OpenStats(snapOps, wal.recordsAtOpen(), before - wal.size());
         if (policy == FsyncPolicy.INTERVAL) {
             flusher = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "wal-flush");

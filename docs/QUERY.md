@@ -178,8 +178,9 @@ SELECT kind, COUNT(*), MAX(price) FROM shop.items GROUP BY kind ORDER BY count(*
 - `COUNT(*)` counts rows, and `COUNT(c)` the rows where c is not null (a missing c counts as null).
 - `SUM(c)` and `AVG(c)` take the numbers of c and skip every other value: null, strings, booleans,
   objects and arrays. If the numbers are all integers, SUM is an integer, added exactly; if the total
-  does not fit in 64 bits the statement fails with `SUM overflows a 64-bit integer` (400 over HTTP), even
-  where a running total would have come back into range. Once a double is among them, SUM is a double:
+  does not fit in 64 bits the statement fails with `SUM overflows a 64-bit integer` (400 over HTTP). Only
+  the total counts, so a sum that passes the limit part way and comes back into range is fine (the
+  largest integer, plus 1, minus 1, is the largest integer). Once a double is among them, SUM is a double:
   the integers are added exactly and the doubles in `_id` order, then the two are added. AVG is that
   total divided by how many numbers there are, always a double. A double total beyond the range of a
   double fails the statement (`SUM overflows a double`, `AVG overflows a double`).

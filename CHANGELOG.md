@@ -11,7 +11,8 @@ GitHub release notes and tags.
   keytool, and deletes the CA key afterwards unless asked to keep it. `examples/cluster/compose.yaml` runs
   three TLS nodes with Docker Compose, publishing to 127.0.0.1 only; CI runs it.
 - `examples/kubernetes/`: a three-node cluster as a StatefulSet with TLS, a volume per pod, a ClusterIP
-  Service and a disruption budget, pods as uid 10001 on a read-only root. `run.sh` runs it on a kind
+  Service and a disruption budget, pods as uid 10001 on a read-only root (and `fsGroupChangePolicy:
+  OnRootMismatch`, so the kubelet leaves the account files' modes alone). `run.sh` runs it on a kind
   cluster (pods ready, a write on every pod, a deleted pod back with its data); CI runs it.
 - A change feed: `GET /v1/changes?db=&table=&after=&wait=` returns the changes a node applied after a
   cursor (rows written there or merged from peers, tables and databases dropped or created), long-polling
@@ -95,6 +96,9 @@ GitHub release notes and tags.
 - Starting replayed each log record whole (its bytes, a string, a JSON tree and its ops at once), so a
   node that deleted its rows when full did not start again: the delete was one record of tens of MB. A
   record over 1 MiB is now checked against its checksum in pieces and its ops parsed one at a time.
+- A SELECT listing tens of thousands of columns (a 1 MiB body holds 60,000) ran the node out of memory:
+  each row carried a slot for each. A statement now lists at most 256 items, GROUP BY at most 32 columns,
+  and a LIKE pattern is at most 1,000 characters; more is a 400.
 - A node that was stopping (SIGTERM, `docker stop`) answered 500 for about a second, also to writes it had
   already logged: it closed its cluster layer before its HTTP server, which goes on serving kept-alive
   connections while requests in flight finish. It now stops the HTTP server first, answers what still
