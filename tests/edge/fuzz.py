@@ -277,6 +277,8 @@ def run(host, n=None, seed=None):
     counts = {"valid-200": 0, "valid-400": 0, "mutated-200": 0, "mutated-400": 0, "metamorphic": 0}
     problems = []
     meta_problems = []
+    refusals = {}
+    dropped = []
     t0 = time.time()
     for i in range(n):
         toks, kind = g.statement()
@@ -295,6 +297,14 @@ def run(host, n=None, seed=None):
                 break
         else:
             counts[("valid" if valid else "mutated") + ("-200" if s == 200 else "-400")] += 1
+            if valid and s == 400:
+                reason = re.sub(r"'[^']*'|\d+", "_", (j or {}).get("error", ""))[:60]
+                refusals[reason] = refusals.get(reason, 0) + 1
+        # A changed token can turn DROP DATABASE f2 into DROP DATABASE f; then every later statement on f
+        # would be refused. Put back what is missing, as at the end of the run.
+        if not valid and s == 200 and toks[:1] == ["DROP"] and (j or {}).get("affected"):
+            dropped.append((i, query))
+            setup(c)
         # The same rows (or groups and aggregates) without the index: (e) OR (e) never uses one.
         if valid and s == 200 and kind == "select" and "WHERE" in toks:
             w = toks.index("WHERE")
@@ -314,6 +324,11 @@ def run(host, n=None, seed=None):
                 break
     took = time.time() - t0
     ok(f"sent {n} statements in {took:.0f} s: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    top = sorted(refusals.items(), key=lambda kv: -kv[1])[:4]
+    print("  valid statements refused, most often: " + "; ".join(f"{v}x {k!r}" for k, v in top), flush=True)
+    for i, query in dropped[:5]:
+        print(f"  #{i} a changed statement dropped something, so the tables were set up again: {query!r:.120}",
+              flush=True)
     for i, valid, query, p in problems[:8]:
         print(f"  #{i} {'valid' if valid else 'mutated'} {query!r:.300}: {p}", flush=True)
     check(f"every answer is 200 or a 400 with a message (seed {seed})", not problems,
