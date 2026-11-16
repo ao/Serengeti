@@ -350,7 +350,7 @@ public final class HttpApi implements AutoCloseable {
         if (method.equals("POST")) {
             requireContentType(ex, "application/json");
             try {
-                body = Json.parseObject(new String(readBody(ex, MAX_INTERNAL_BODY), StandardCharsets.UTF_8));
+                body = Json.parseObject(utf8(readBody(ex, MAX_INTERNAL_BODY)));
             } catch (JsonException e) {
                 throw new HttpError(400, "body is not a JSON object");
             }
@@ -455,11 +455,26 @@ public final class HttpApi implements AutoCloseable {
 
     private static Map<String, Object> jsonBody(HttpExchange ex) throws IOException {
         requireContentType(ex, "application/json");
-        String text = new String(readBody(ex), StandardCharsets.UTF_8);
+        String text = utf8(readBody(ex));
         try {
             return Json.parseObject(text);
         } catch (JsonException e) {
             throw new HttpError(400, "body is not a JSON object: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Decodes a body that must be UTF-8 (RFC 8259). {@code new String(bytes, UTF_8)} would turn bad bytes into
+     * U+FFFD and store that in place of what the client sent.
+     */
+    static String utf8(byte[] body) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(body)).toString();
+        } catch (java.nio.charset.CharacterCodingException e) {
+            throw new HttpError(400, "body is not valid UTF-8");
         }
     }
 
