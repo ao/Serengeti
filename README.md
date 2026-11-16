@@ -196,6 +196,21 @@ On one dedicated EC2 c7g.2xlarge (8 Graviton3 vCPUs, gp3 EBS at 3000 IOPS), node
 Docker on that machine, medians of three runs. [docs/BENCHMARKS.md](docs/BENCHMARKS.md) has the method,
 the spread and every table.
 
+2.2 against 2.1, measured in one session (2.1 against 2.0.0 is below):
+
+| | 2.1 | 2.2 |
+|---|---:|---:|
+| One node, each write fsynced, 32 clients | 2,632 writes/s | 4,822 writes/s |
+| Three nodes, majority writes, 32 clients | 1,309 writes/s | 2,349 writes/s |
+| `WHERE n = x` over 100,000 rows (a scan), 8 clients | 228 reads/s | 467 reads/s |
+| Lookup by `_id` in 100,000 rows, 8 clients | 16,546 reads/s | 15,244 reads/s |
+
+2.2 answers on 64 request threads instead of 16 and its image uses G1. The cheapest requests are 6 to 12%
+slower, and non-durable writes (`fsync=interval`) at 32 clients 12 to 15% slower; see
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md#22-against-21).
+
+2.1 against 2.0.0, measured in an earlier session:
+
 | | 2.0.0 | 2.1 |
 |---|---:|---:|
 | One node, each write fsynced, 32 clients | 351 writes/s | 2,661 writes/s |

@@ -1,6 +1,6 @@
 # Benchmarks
 
-Serengeti 2.0.0 and the 2.1 development branch, measured on one dedicated EC2 c7g.2xlarge (8 Graviton3
+Serengeti 2.0.0, 2.1 and 2.2, measured on dedicated EC2 c7g.2xlarge machines (8 Graviton3
 vCPUs, 16 GiB, a gp3 EBS volume at 3000 IOPS and 125 MB/s). The nodes and the load generator run in Docker
 on that machine, on a private Docker network, and nothing else ran on it. The scripts are in `tests/bench/`;
 the tables below are the output of `tests/bench/report.sh` for the runs they name, unedited. Every 2.1 table
@@ -237,6 +237,154 @@ No indexes. `SELECT * FROM t WHERE n = x` returns one row; x is a random value, 
 | SELECT * WHERE _id = x | 100000 | 137 (136-138) | 16015 (16007-16019) | 57.0 | 0.47 | 61.0 | 0.98 |
 
 <!-- bench-shipped:end -->
+
+## 2.2 against 2.1
+
+Measured on the same machine type, disk and method as above, in one session on 2026-11-16 (a new dedicated
+c7g.2xlarge): 2.1 is engine commit 5978713 and 2.2 is 010ed54, each as built, with its own image settings and
+no `NODE_ARGS`. The tables in this section are the output of `tests/bench/report.sh` for those two runs,
+unedited; A is 2.1 and B is 2.2. The mean time of one 4 KiB O_DSYNC write was 1.49 ms at the start of the
+2.1 run and 2.75 ms at the start of the 2.2 run, the same volume.
+
+What changed, and why:
+
+- Durable writes with many clients nearly doubled: one node at 32 clients went from 2,632 to 4,822 writes/s
+  (15.7 writes per fsync instead of 7.8), the three-node cluster from 1,309 to 2,349 majority writes/s, and
+  `"ack": "local"` from 2,059 to 3,133. 2.2 answers on 64 request threads instead of 16, so more writes wait
+  for the same fsync. At 1 and 8 clients nothing changed.
+- With `fsync=interval` or `off` at 32 clients, 2.2 is 12 to 15% slower (13,864 to 11,842 inserts/s), with a
+  lower p99 (17.2 to 7.8 ms): the same 64 threads contend where the disk is not the limit. A run of 2.2 with
+  `SERENGETI_HTTP_THREADS=16` took 13,471 (table below).
+- Filtered scans over 100,000 rows are about twice as fast (`WHERE n = x`: 228 to 467 requests/s here, 221
+  to 525 in the later run), and 10 to 40% faster over 10,000. The 2.2 image sets G1; 2.1's left the choice
+  to the JVM, which takes SerialGC in a 1 GiB container. A run of 2.2 with 2.1's JVM settings took 266.
+- The cheapest requests (a lookup by `_id`, COUNT(*) of 1,000 rows, an index lookup) are 6 to 12% slower,
+  and COUNT(*) over 100,000 rows varied from 795 to 1,409 requests/s across runs of nearly the same code
+  (table below), more than any setting moved it. The image's `MALLOC_ARENA_MAX=2` is kept: without it, a
+  node filling a 512 MiB container was killed by the kernel (see the CHANGELOG), and runs with 4 or 8
+  arenas did not differ from 2 by more than the runs vary.
+- In a three-node cluster under writes, CPU is within 15% of 2.1's and peer traffic within about 20%; the
+  difference is probably the account digest each node asks its peers for every few seconds, which was not
+  measured apart.
+
+### a. Single node, plain HTTP, fsync=always: INSERT
+
+| Concurrency | Requests/s, A | Requests/s, B | p50 ms, A | p50 ms, B | p99 ms, A | p99 ms, B | Writes per fsync (mean fsync), A | Writes per fsync (mean fsync), B |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 340 (334-340) | 336 (333-341) | 2.92 | 2.96 | 3.23 | 3.25 | 1.0 (2.73 ms) | 1.0 (2.74 ms) |
+| 8 | 1418 (1411-1478) | 1417 (1410-1420) | 5.61 | 5.62 | 7.07 | 6.94 | 4.0 (2.78 ms) | 4.0 (2.78 ms) |
+| 32 | 2632 (2627-2640) | 4822 (4813-4842) | 11.5 | 5.99 | 16.0 | 10.3 | 7.8 (2.86 ms) | 15.7 (2.96 ms) |
+
+### a2. Single node, TLS, fsync=always: INSERT
+
+| Concurrency | Requests/s, A | Requests/s, B | p50 ms, A | p50 ms, B | p99 ms, A | p99 ms, B | Writes per fsync (mean fsync), A | Writes per fsync (mean fsync), B |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 340 (337-341) | 335 (329-343) | 2.91 | 2.97 | 3.25 | 3.25 | 1.0 (2.68 ms) | 1.0 (2.72 ms) |
+| 8 | 1430 (1428-1431) | 1412 (1403-1412) | 5.54 | 5.62 | 8.04 | 6.55 | 4.0 (2.74 ms) | 4.0 (2.79 ms) |
+| 32 | 2666 (2659-2668) | 4765 (4757-4807) | 11.4 | 6.02 | 15.3 | 10.2 | 7.9 (2.83 ms) | 15.7 (2.98 ms) |
+
+### b. Single node, plain HTTP: INSERT with other fsync settings
+
+| Config | Concurrency | Requests/s, A | Requests/s, B | p50 ms, A | p50 ms, B | p99 ms, A | p99 ms, B | Writes per fsync (mean fsync), A | Writes per fsync (mean fsync), B |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| fsync=interval | 1 | 5898 (5780-6081) | 5479 (5449-5491) | 0.15 | 0.17 | 0.20 | 0.23 | 5899.2 (3.73 ms) | 5480.1 (3.87 ms) |
+| fsync=interval | 8 | 13464 (13286-14311) | 13009 (12956-13081) | 0.49 | 0.56 | 0.80 | 1.10 | 13571.1 (5.93 ms) | 13011.4 (6.53 ms) |
+| fsync=interval | 32 | 13864 (13190-15021) | 11842 (11712-13083) | 1.93 | 2.22 | 17.2 | 7.76 | 13872.3 (7.00 ms) | 11846.5 (6.27 ms) |
+| fsync=off | 1 | 5877 (5797-5980) | 5438 (5434-5473) | 0.16 | 0.18 | 0.20 | 0.23 | no fsync | no fsync |
+| fsync=off | 8 | 13355 (13215-14286) | 12997 (12914-13156) | 0.49 | 0.56 | 0.83 | 1.10 | no fsync | no fsync |
+| fsync=off | 32 | 13816 (13086-14656) | 12091 (11610-13146) | 1.94 | 2.19 | 17.4 | 7.85 | no fsync | no fsync |
+
+### c. Single node reads, concurrency 8
+
+No indexes. `SELECT * FROM t WHERE n = x` returns one row; x is a random value, the same sequence in every run. `WHERE _id = x` looks up a random id of the table, also the same sequence in every run.
+
+| Query | Rows in table | Requests/s, A | Requests/s, B | p50 ms, A | p50 ms, B | p99 ms, A | p99 ms, B |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SELECT * WHERE n = x | 1000 | 15586 (15536-15609) | 13842 (13783-13909) | 0.49 | 0.52 | 1.07 | 1.55 |
+| SELECT COUNT(*) | 1000 | 16686 (16665-16747) | 14806 (14763-14860) | 0.46 | 0.50 | 0.98 | 1.37 |
+| SELECT * WHERE _id = x | 1000 | 16640 (16568-16645) | 15271 (15258-15333) | 0.45 | 0.47 | 0.96 | 1.29 |
+| SELECT * WHERE n = x | 10000 | 4621 (4470-4664) | 5104 (5073-5106) | 1.53 | 1.29 | 3.61 | 4.29 |
+| SELECT COUNT(*) | 10000 | 11761 (11634-11766) | 8779 (8757-8832) | 0.63 | 0.79 | 1.46 | 2.59 |
+| SELECT * WHERE _id = x | 10000 | 16594 (16568-16598) | 15308 (15209-15323) | 0.46 | 0.47 | 0.98 | 1.29 |
+| SELECT * WHERE n = x | 100000 | 228 (226-228) | 467 (455-472) | 35.0 | 15.9 | 46.2 | 29.5 |
+| SELECT COUNT(*) | 100000 | 1254 (1223-1265) | 817 (813-825) | 6.00 | 8.96 | 11.1 | 18.9 |
+| SELECT * WHERE _id = x | 100000 | 16546 (16475-16554) | 15244 (15163-15277) | 0.46 | 0.47 | 0.97 | 1.28 |
+
+### c-index. Single node reads through an index on n, concurrency 8
+
+The same node and tables as c, after `CREATE INDEX ON t (n)` on each. Both queries compare n with a random value, the same sequence in every run. Time each CREATE INDEX took: A: 1000 rows 0.12 s, 10000 rows 0.30 s, 100000 rows 0.31 s; B: 1000 rows 0.02 s, 10000 rows 0.01 s, 100000 rows 0.12 s.
+
+| Query | Rows in table | Requests/s, A | Requests/s, B | p50 ms, A | p50 ms, B | p99 ms, A | p99 ms, B |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SELECT * WHERE n = x | 1000 | 17219 (16796-17241) | 15171 (14880-15286) | 0.45 | 0.48 | 0.91 | 1.33 |
+| SELECT COUNT(*) WHERE n = x | 1000 | 17260 (16835-17283) | 15324 (14848-15386) | 0.45 | 0.48 | 0.89 | 1.33 |
+| SELECT * WHERE n = x | 10000 | 17085 (16687-17151) | 15015 (14671-15119) | 0.46 | 0.49 | 0.90 | 1.35 |
+| SELECT COUNT(*) WHERE n = x | 10000 | 17274 (16760-17277) | 15187 (14898-15277) | 0.45 | 0.48 | 0.89 | 1.33 |
+| SELECT * WHERE n = x | 100000 | 16910 (16540-16992) | 15049 (14658-15066) | 0.46 | 0.49 | 0.93 | 1.36 |
+| SELECT COUNT(*) WHERE n = x | 100000 | 17026 (16660-17040) | 15128 (14837-15136) | 0.46 | 0.48 | 0.92 | 1.34 |
+
+### d. Three-node TLS cluster, fsync=always, majority writes: INSERT through n1
+
+The fsync figures are n1's. The last column is the time from the end of a run until all three nodes held its rows, with the counts read one node after the other about four times a second.
+
+| Concurrency | Requests/s, A | Requests/s, B | p50 ms, A | p50 ms, B | p99 ms, A | p99 ms, B | Writes per fsync (mean fsync), A | Writes per fsync (mean fsync), B | All nodes equal after, s, A | All nodes equal after, s, B |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 159 (156-159) | 158 (156-159) | 6.25 | 6.30 | 8.83 | 6.87 | 1.0 (2.75 ms) | 1.0 (2.75 ms) | 0 (0-0) | 0 (0-0) |
+| 8 | 732 (730-741) | 730 (722-740) | 11.2 | 11.2 | 15.4 | 14.8 | 2.3 (2.87 ms) | 2.2 (2.87 ms) | 0 (0-0) | 0 (0-0) |
+| 32 | 1309 (1248-1310) | 2349 (2340-2350) | 24.8 | 13.6 | 32.0 | 20.6 | 4.2 (2.90 ms) | 8.0 (3.09 ms) | 0 (0-0) | 0 (0-0) |
+
+### d-local. Three-node TLS cluster, fsync=always, `"ack": "local"` writes: INSERT through n1
+
+Each write is acknowledged once it is in n1's log; n2 and n3 get it through sync. Otherwise as d.
+
+| Concurrency | Requests/s, A | Requests/s, B | p50 ms, A | p50 ms, B | p99 ms, A | p99 ms, B | Writes per fsync (mean fsync), A | Writes per fsync (mean fsync), B | All nodes equal after, s, A | All nodes equal after, s, B |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 310 (307-310) | 305 (302-307) | 3.05 | 3.11 | 5.10 | 5.12 | 1.0 (2.77 ms) | 1.0 (2.85 ms) | 0 (0-0) | 0 (0-0) |
+| 8 | 1253 (1239-1254) | 1214 (1195-1218) | 6.07 | 6.36 | 10.4 | 10.0 | 3.6 (2.80 ms) | 3.9 (3.15 ms) | 0 (0-0) | 0 (0-0) |
+| 32 | 2059 (1892-2078) | 3133 (3103-3173) | 15.3 | 9.83 | 24.7 | 19.5 | 6.7 (3.10 ms) | 14.1 (4.31 ms) | 0 (0-0) | 0 (0-0) |
+
+### e. Sync cost, three-node TLS cluster, table preloaded, 20 writes/s for 60 s through n1
+
+Each run is a new cluster: the table is preloaded through n1 (1000 rows per INSERT), all three nodes must hold every row, then 15 s pass. The idle window (30 s) has no client requests; the write window is 20 INSERTs per second, majority-acknowledged, with up to 32 in flight. Rates are over the window, from each container's cgroup CPU counter, its network counters and the node's `/metrics`. For n1 the load generator's own traffic is subtracted, so the traffic columns are node-to-node only.
+
+CPU and node-to-node traffic, sum of the three nodes:
+
+| Rows | Window | CPU, cores, A | CPU, cores, B | Peer traffic, KB/s, A | Peer traffic, KB/s, B |
+|---:|---|---:|---:|---:|---:|
+| 10000 | idle | 0.03 (0.03-0.03) | 0.04 (0.04-0.04) | 5.63 (5.62-5.66) | 6.64 (6.59-6.68) |
+| 10000 | writes | 0.25 (0.25-0.26) | 0.27 (0.26-0.28) | 61.7 (58.3-62.4) | 70.2 (58.6-71.2) |
+| 100000 | idle | 0.03 (0.03-0.03) | 0.04 (0.03-0.04) | 5.66 (5.60-5.67) | 6.70 (6.65-6.72) |
+| 100000 | writes | 0.21 (0.21-0.22) | 0.24 (0.24-0.27) | 64.4 (61.9-67.6) | 77.9 (76.7-80.2) |
+
+The writes, through n1, and what followed them:
+
+| Rows | Writes/s, A | Writes/s, B | p50 ms, A | p50 ms, B | p99 ms, A | p99 ms, B | All nodes equal after, s, A | All nodes equal after, s, B |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10000 | 20.0 (20.0-20.0) | 20.0 (20.0-20.0) | 7.47 (7.47-7.50) | 7.54 (7.53-7.57) | 12.6 (12.6-13.6) | 12.8 (10.9-13.1) | 0 (0-0) | 0 (0-0) |
+| 100000 | 20.0 (20.0-20.0) | 20.0 (20.0-20.0) | 7.25 (7.23-7.27) | 7.37 (7.37-7.44) | 12.5 (12.2-18.9) | 18.6 (12.3-19.0) | 0 (0-0) | 0 (0-0) |
+
+| Rows | One whole-database answer, MB, A | One whole-database answer, MB, B | Preload until all nodes equal, s, A | Preload until all nodes equal, s, B | Memory at the end, MiB (n1 / n2 / n3), A | Memory at the end, MiB (n1 / n2 / n3), B |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10000 | 1.94 (1.94-1.94) | 1.94 (1.94-1.94) | 1.20 (1.10-1.20) | 1.80 (1.80-1.80) | 239 / 199 / 199 | 164 / 147 / 155 |
+| 100000 | 19.5 (19.5-19.5) | 19.5 (19.5-19.5) | 8.30 (7.70-10.3) | 7.00 (6.90-7.00) | 596 / 536 / 610 | 595 / 327 / 450 |
+
+
+### Variants of 2.2, scenario c
+
+Later the same day on the same machine, 2.2 at 4721304 (010ed54 plus the query additions and fixes) with one
+setting changed per run, and 2.1 again for reference: `t16` is `SERENGETI_HTTP_THREADS=16`, `arenas4`,
+`arenas8` and `arenas64` set `MALLOC_ARENA_MAX`, and `serial75` is `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75`
+(2.1's setting, which leaves SerialGC in a 1 GiB container). Requests/s, median of 3 runs:
+
+| Query | Rows | 2.1 | 2.2 | t16 | arenas4 | arenas8 | arenas64 | serial75 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| SELECT * WHERE n = x | 1000 | 15450 | 14337 | 14107 | 13819 | 13621 | 15226 | 14551 |
+| SELECT COUNT(*) | 1000 | 16446 | 15499 | 14734 | 15275 | 14673 | 16422 | 16724 |
+| SELECT * WHERE _id = x | 1000 | 16447 | 15564 | 15175 | 15102 | 14700 | 16602 | 16419 |
+| SELECT * WHERE n = x | 10000 | 4407 | 6292 | 6247 | 6044 | 5802 | 6127 | 4270 |
+| SELECT COUNT(*) | 10000 | 11269 | 9033 | 9073 | 8797 | 8464 | 9628 | 10621 |
+| SELECT * WHERE n = x | 100000 | 221 | 525 | 604 | 669 | 559 | 818 | 266 |
+| SELECT COUNT(*) | 100000 | 1197 | 795 | 873 | 1060 | 804 | 1409 | 1225 |
 
 ## Running it again
 
