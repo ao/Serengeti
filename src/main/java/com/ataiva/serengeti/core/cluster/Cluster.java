@@ -729,7 +729,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             return CompletableFuture.failedFuture(why);
         }
         List<Integer> page = List.copyOf(differ.subList(from, Math.min(differ.size(), from + buckets)));
-        return limiter.run(() -> client.rows(p.address, db, table, page)).thenCompose(ops -> {
+        return limiter.run(() -> unlessStopped(stop, () -> client.rows(p.address, db, table, page))).thenCompose(ops -> {
             p.lastContact = clock.getAsLong();
             bucketPages.incrementAndGet();
             int n = mergeOrThrow(ops);
@@ -750,6 +750,16 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     /** For tests: pulls running and waiting. */
     int[] pullsForTest() {
         return new int[] {pullLimiter.running(), pullLimiter.waiting()};
+    }
+
+    /**
+     * The call, unless the sync is over by the time the limiter starts it: a page can wait in the limiter's
+     * queue long after it was asked for, and a read that has given up must not still pull it.
+     */
+    private <T> CompletableFuture<T> unlessStopped(java.util.function.BooleanSupplier stop,
+            java.util.function.Supplier<CompletableFuture<T>> call) {
+        RuntimeException why = stopReason(stop);
+        return why != null ? CompletableFuture.failedFuture(why) : call.get();
     }
 
     /**
@@ -861,7 +871,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         Peer p = t.peer();
         int n = hashPageBuckets(held, from, counts, peerPerBucket, targetIds, maxBuckets);
         List<Integer> page = List.copyOf(held.subList(from, from + n));
-        return t.limiter().run(() -> client.hashes(p.address, t.db(), t.table(), page)).handle((theirs, err) -> {
+        return t.limiter().run(() -> unlessStopped(t.stop(), () -> client.hashes(p.address, t.db(), t.table(), page))).handle((theirs, err) -> {
             if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
                 throw new java.util.concurrent.CompletionException(unwrap(err));
             }
@@ -940,7 +950,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         }
         int n = idPageSize(ids, from, max);
         List<String> page = List.copyOf(ids.subList(from, from + n));
-        return t.limiter().run(() -> client.rowsById(t.peer().address, t.db(), t.table(), page)).thenCompose(ops -> {
+        return t.limiter().run(() -> unlessStopped(t.stop(), () -> client.rowsById(t.peer().address, t.db(), t.table(), page))).thenCompose(ops -> {
             t.peer().lastContact = clock.getAsLong();
             idPages.incrementAndGet();
             int k = mergeOrThrow(ops);
