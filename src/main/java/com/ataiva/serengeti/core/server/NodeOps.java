@@ -66,7 +66,7 @@ public interface NodeOps {
      * start, so they are counters; the others are gauges.
      */
     record Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases, long conflicts,
-            long dataBytes, long dataBudget, boolean memoryFull) {
-        public static final Gauges ZERO = new Gauges(0, 0, 0, 0, 0, 0, 0, false);
+            long dataBytes, long dataBudget, boolean memoryFull, long changesHeld, long changesBytes) {
+        public static final Gauges ZERO = new Gauges(0, 0, 0, 0, 0, 0, 0, false, 0, 0);
     }
 }

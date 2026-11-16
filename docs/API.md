@@ -58,6 +58,8 @@ Needs Basic credentials of any account. The body is Prometheus text format 0.0.4
 | `serengeti_data_budget_bytes` | gauge | The estimate at which writes that add data are refused (`memory_limit_percent`; 0 when off). |
 | `serengeti_heap_bytes` | gauge | The JVM heap, by `kind`: `used` (garbage included), `committed` and `max`. |
 | `serengeti_memory_full` | gauge | 1 while writes that add data are refused (`memory_limit_percent`). |
+| `serengeti_changes_held` | gauge | Changes the feed holds for `GET /v1/changes` (`changes_buffer`, fewer when they are large). |
+| `serengeti_changes_bytes` | gauge | Estimated heap bytes of the changes the feed holds, at most a sixteenth of the heap. |
 | `serengeti_build_info{version}` | gauge | Always 1. |
 | `serengeti_start_time_seconds` | gauge | Unix time at which the node started. |
 

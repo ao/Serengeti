@@ -112,7 +112,7 @@ public final class ChangeFeed {
         }
     }
     /** How many changes are held, and their estimated weight in bytes. */
-    synchronized long[] held() {
+    public synchronized long[] held() {
         return new long[] {next - oldest, bytes};
     }
 

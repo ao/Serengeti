@@ -109,6 +109,10 @@ final class Metrics {
         sample(b, "serengeti_data_budget_bytes", g.dataBudget());
         family(b, "serengeti_memory_full", "gauge", "1 while writes that add data are refused (memory_limit_percent).");
         sample(b, "serengeti_memory_full", g.memoryFull() ? 1 : 0);
+        family(b, "serengeti_changes_held", "gauge", "Changes the feed holds for GET /v1/changes (changes_buffer, fewer when large).");
+        sample(b, "serengeti_changes_held", g.changesHeld());
+        family(b, "serengeti_changes_bytes", "gauge", "Estimated heap bytes of the changes the feed holds (at most a sixteenth of the heap).");
+        sample(b, "serengeti_changes_bytes", g.changesBytes());
         Runtime rt = Runtime.getRuntime();
         family(b, "serengeti_heap_bytes", "gauge", "The JVM heap: in use (garbage included), committed, and its maximum.");
         b.append("serengeti_heap_bytes{kind=\"used\"} ").append(rt.totalMemory() - rt.freeMemory()).append('\n');
