@@ -316,6 +316,7 @@ clients' time from sending a request to getting a 503, summed over all ten clien
 | 2926825 (pull limit) | 180,425 | 49,008 / 31,033 | 675 (9) | 15,577 s | 10 of 10 |
 | 75aa8dd (reads' own pulls) | 224,261 | 61,727 / 38,563 | 675 (9) | 11,025 s | 10 of 10 |
 | 33622c3 (a read's pulls stop with it) | 248,021 | 70,077 / 42,944 | 675 (9) | 10,142 s | 10 of 10 |
+| bde4274 (only the rows that differ) | 269,585 | 77,757 / 46,959 | 675 (9) | 7,599 s | 10 of 10 |
 
 The same seed starts the same faults at the same times; how many operations fit between them depends on
 how fast the nodes answer.
