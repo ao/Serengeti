@@ -38,7 +38,7 @@ it further; from another machine, use an SSH tunnel (`ssh -L 13000:127.0.0.1:130
 | SerengetiDiskFailed | a write to disk failed; the node needs a restart | at once |
 | SerengetiNoMajority | a node reaches fewer nodes than a majority; its majority writes and reads get 503 | 1 min |
 | SerengetiPeerUnreachable | a node does not reach every other node | 5 min |
-| SerengetiStale | a node was away longer than `tombstone_ttl_hours` and takes no writes | at once |
+| SerengetiStale | a node was away longer than `tombstone_ttl_hours` less 20 minutes and takes no writes | at once |
 | SerengetiMemoryFull | a node refuses writes that add data | at once |
 | SerengetiMemoryHigh | a node holds more than 85% of the data it may hold | 10 min |
 | SerengetiServerErrors | a node answered a 5xx other than 503 | 1 min |

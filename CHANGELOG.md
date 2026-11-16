@@ -125,8 +125,12 @@ GitHub release notes and tags.
   those with each other (`GET /internal/v3/buckets`, and a `full` root per table in `/internal/v2/roots`,
   which 2.1 ignores); with 2.1 peers they compare as before. Tombstones now expire on 10-minute boundaries
   of the wall clock with the same cutoff on every node, and sync leaves expired ones out, so nodes that
-  have dropped them and nodes that may not yet compare equal. Found by the soak (5 nodes, seed 31337,
-  check 8).
+  have dropped them and nodes that may not yet compare equal. Two nodes compare tombstones only while
+  their cutoffs agree, so the seconds around a boundary, or a different `tombstone_ttl_hours` on two
+  nodes (logged), do not make them pull expired tombstones every round. A node away longer than
+  `tombstone_ttl_hours` less 20 minutes is now stale (was: the TTL), which leaves a node that comes back
+  in time at least 20 minutes to pull the deletes it missed. Found by the soak (5 nodes, seed 31337,
+  check 8) and review.
 - Nothing stopped a second node from opening a data directory in use, for example a second container on the
   same volume, and both would write the same log. A node now holds a lock on `data_dir/lock` while it runs;
   a second one stops with exit status 2 and says the directory is in use. `serengeti restore` takes the

@@ -91,6 +91,9 @@ public final class Store {
                 weight -= w;
                 bytes[b] -= w;
                 count[b]--;
+                if (!old.live()) {
+                    dead.remove(new Dead(old.winner().stamp().wall(), id));
+                }
             }
             if (next == null) {
                 rows.remove(id);
@@ -101,6 +104,9 @@ public final class Store {
                 bytes[b] += w;
                 count[b]++;
                 rows.put(id, next);
+                if (!next.live()) {
+                    dead.add(new Dead(next.winner().stamp().wall(), id));
+                }
             }
             Map<String, Object> was = old == null ? null : old.winner().value();
             Map<String, Object> now = next == null ? null : next.winner().value();
@@ -126,9 +132,19 @@ public final class Store {
         }
 
         /** The full sums counted again from the rows, for a new expiry. */
-        void recount(long expiry) {
-            java.util.Arrays.fill(full, 0);
-            rows.forEach((id, r) -> full[bucket(id)] += r.counted(id, expiry));
+        /**
+         * The rows whose versions are all deletes, by their newest stamp's wall time: what moving the expiry
+         * and collecting tombstones visit, instead of every row (review 22e, finding 4).
+         */
+        final java.util.TreeSet<Dead> dead = new java.util.TreeSet<>();
+
+        /** The expiry moves from {@code from} to {@code to}: the tombstones in between leave or rejoin the full sums. */
+        void moveExpiry(long from, long to) {
+            boolean forward = to > from;
+            for (Dead x : dead.subSet(new Dead(Math.min(from, to), ""), true, new Dead(Math.max(from, to), ""), false)) {
+                long h = rows.get(x.id()).versionsHash(x.id());
+                full[bucket(x.id())] += forward ? -h : h;
+            }
         }
 
         long root() {
@@ -708,11 +724,20 @@ public final class Store {
         if (wallMillis == expiry) {
             return;
         }
-        expiry = wallMillis;
         for (DbState d : dbs.values()) {
             for (TableState t : d.tables.values()) {
-                t.recount(expiry);
+                t.moveExpiry(expiry, wallMillis);
             }
+        }
+        expiry = wallMillis;
+    }
+
+    /** A row whose versions are all deletes, keyed by its newest stamp's wall time, then its id. */
+    private record Dead(long wall, String id) implements Comparable<Dead> {
+        @Override
+        public int compareTo(Dead o) {
+            int c = Long.compare(wall, o.wall);
+            return c != 0 ? c : id.compareTo(o.id);
         }
     }
 
@@ -1051,20 +1076,19 @@ public final class Store {
         int n = 0;
         for (DbState d : dbs.values()) {
             for (TableState t : d.tables.values()) {
-                var it = t.rows.entrySet().iterator();
+                // The rows whose versions are all deletes stamped before the cutoff, from the index.
+                var it = t.dead.headSet(new Dead(cutoffWallMillis, ""), false).iterator();
                 while (it.hasNext()) {
-                    var e = it.next();
-                    RowState r = e.getValue();
-                    if (!r.live() && r.winner().stamp().wall() < cutoffWallMillis) {
-                        int b = bucket(e.getKey());
-                        long w = r.weight(e.getKey());
-                        t.full[b] -= r.counted(e.getKey(), expiry);
-                        t.bytes[b] -= w;
-                        t.count[b]--;
-                        t.weight -= w;
-                        it.remove();
-                        n++;
-                    }
+                    String id = it.next().id();
+                    RowState r = t.rows.remove(id);
+                    int b = bucket(id);
+                    long w = r.weight(id);
+                    t.full[b] -= r.counted(id, expiry);
+                    t.bytes[b] -= w;
+                    t.count[b]--;
+                    t.weight -= w;
+                    it.remove();
+                    n++;
                 }
             }
         }

@@ -21,8 +21,8 @@ import java.util.concurrent.Executors;
 /**
  * Forwards node-to-node requests to a node on 127.0.0.1, recording the largest answer and the number of
  * requests per route. It can answer as an older node: as 2.0 (404 to the /internal/v2 and /internal/v3
- * routes, whole-database answers slowed), or as a 2.2 node that does not send row and bucket sizes. Taken
- * from review 22d's probes.
+ * routes, whole-database answers slowed), as 2.1 (404 to /internal/v3, roots without "full"), or as a 2.2
+ * node that does not send row and bucket sizes. Taken from review 22d's and 22e's probes.
  */
 final class SyncProxy implements AutoCloseable {
     private final HttpServer server;
@@ -39,6 +39,8 @@ final class SyncProxy implements AutoCloseable {
     volatile long stateDelayMillis;
     /** Leave out the row sizes of /internal/v3/hashes and the rows and bytes of /internal/v3/buckets. */
     volatile boolean noSizes;
+    /** Answer as 2.1: 404 to the /internal/v3 routes, and roots without "full" or "expiry". */
+    volatile boolean like21;
 
     SyncProxy(int target) throws IOException {
         this.target = target;
@@ -80,7 +82,8 @@ final class SyncProxy implements AutoCloseable {
         String path = ex.getRequestURI().getRawPath();
         String q = ex.getRequestURI().getRawQuery();
         byte[] body = ex.getRequestBody().readAllBytes();
-        if (legacy && (path.startsWith("/internal/v2/") || path.startsWith("/internal/v3/"))) {
+        if (legacy && (path.startsWith("/internal/v2/") || path.startsWith("/internal/v3/"))
+                || like21 && path.startsWith("/internal/v3/")) {
             byte[] b = "{\"error\":\"no such route\"}".getBytes(StandardCharsets.UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(404, b.length);
@@ -109,6 +112,21 @@ final class SyncProxy implements AutoCloseable {
             m.remove("w");
             m.remove("rows");
             m.remove("bytes");
+            b = Json.write(m).getBytes(StandardCharsets.UTF_8);
+        }
+        if (like21 && res.statusCode() == 200 && path.equals("/internal/v2/roots")) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>(Json.parseObject(new String(b, StandardCharsets.UTF_8)));
+            m.remove("expiry");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> dbs = (Map<String, Object>) m.get("dbs");
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            dbs.forEach((db, v) -> {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> roots = new java.util.LinkedHashMap<>((Map<String, Object>) v);
+                roots.remove("full");
+                out.put(db, roots);
+            });
+            m.put("dbs", out);
             b = Json.write(m).getBytes(StandardCharsets.UTF_8);
         }
         res.headers().firstValue("Content-Type").ifPresent(v -> ex.getResponseHeaders().set("Content-Type", v));

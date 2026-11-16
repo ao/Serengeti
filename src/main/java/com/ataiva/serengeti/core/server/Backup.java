@@ -107,7 +107,7 @@ public final class Backup {
             }
         }), dataDir.resolve(StorageEngine.SNAPSHOT_FILE));
         // The backup cannot have synced with a cluster after its newest change: record that as this node's last
-        // sync, so a cluster node restored from a backup older than tombstone_ttl_hours starts stale instead of
+        // sync, so a cluster node restored from a backup older than tombstone_ttl_hours (less 20 minutes) starts stale instead of
         // bringing back rows deleted since.
         if (newest > 0) {
             Files.writeString(dataDir.resolve(com.ataiva.serengeti.core.cluster.Cluster.LAST_SYNC_FILE), newest + "\n");

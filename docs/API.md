@@ -66,7 +66,7 @@ Needs Basic credentials of any account. The body is Prometheus text format 0.0.4
 | `serengeti_cluster_reachable_nodes` | gauge | Nodes that answered this one in the last 3 seconds, this one included. |
 | `serengeti_cluster_quorum` | gauge | Nodes that make a majority. Majority writes and reads get 503 while fewer are reachable. |
 | `serengeti_cluster_caught_up` | gauge | 1 once this node has synced with a majority since it started; 1 without peers. |
-| `serengeti_cluster_stale` | gauge | 1 if the node was away longer than `tombstone_ttl_hours`: it neither syncs nor takes writes (see [CONSISTENCY.md](CONSISTENCY.md)). |
+| `serengeti_cluster_stale` | gauge | 1 if the node was away longer than `tombstone_ttl_hours` less 20 minutes: it neither syncs nor takes writes (see [CONSISTENCY.md](CONSISTENCY.md)). |
 | `serengeti_sync_ops_pulled_total` | counter | Row versions this node pulled from its peers while syncing. |
 | `serengeti_tls_expiry_time_seconds{store}` | gauge | Unix time at which the first certificate of `store="keystore"` (this node's chain) or `store="truststore"` (the CAs for peers) expires, as read at start. Absent for a store that is not set. |
 | `serengeti_backup_interval_seconds` | gauge | `backup_interval_minutes` in seconds; 0 without `backup_dir` (see CONFIGURATION.md, "Scheduled backups"). |

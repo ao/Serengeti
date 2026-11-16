@@ -83,16 +83,22 @@ boundary less the TTL as its cutoff, so all drop the same tombstones within seco
 then on sync leaves the expired ones out everywhere (from the sums that count tombstones and from the row
 hashes), also on a node that may not drop them yet, and a node does not take an expired delete from a peer
 for a row it holds nothing of. So nodes that have dropped a tombstone and nodes that still hold it compare
-equal, and it is not pulled back.
+equal, and it is not pulled back. Each node reports its cutoff with its roots, and two nodes compare the
+sums that count tombstones only while their cutoffs agree: in the seconds after a boundary, while some
+have crossed it and some not, and for as long as two nodes run with different `tombstone_ttl_hours`, they
+compare live rows only (a difference that lasts longer than a step is logged). Keep `tombstone_ttl_hours`
+the same on every node: with a different one, a newer delete does not reach a node that holds an older one.
 
-A node that has not synced with a majority for longer than the TTL might hold rows deleted meanwhile whose
-tombstones are already gone. It starts, or carries on, as stale: it neither syncs rows nor takes writes, and
+A node that has not synced with a majority for longer than the TTL less 20 minutes is stale. Past the TTL it
+might hold rows deleted meanwhile whose tombstones are already gone; the 20 minutes leave a node that comes
+back just in time at least that long to pull every delete it missed before its peers leave them out of the
+sums they compare. A stale node starts, or carries on: it neither syncs rows nor takes writes, and
 its own data is not served to peers. It does hand on, once to each peer, the changes stamped after its
 last sync with a majority, which are newer than any tombstone the cluster can have dropped, so writes it
 acknowledged with `"ack": "local"` while cut off are not lost. Then stop it, empty its data directory
 except `accounts.json`, `users.json` and `node-id`, and start it; it resyncs from its peers. The time of its last sync is
 kept in `last-sync`; `serengeti restore` sets it to the backup's newest change, so a node restored from
-a backup older than the TTL starts stale too.
+a backup older than that starts stale too.
 
 2.0 does not write `last-sync`. After running a node on 2.0 for longer than the TTL (a rollback), delete
 its `last-sync` before starting it on 2.1 or 2.2 again: the other nodes did not drop tombstones while it ran

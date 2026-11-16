@@ -666,6 +666,33 @@ class ClusterTest {
         }
     }
 
+    /**
+     * Review 22e, suspicion 1: a node that comes back just under the TTL had until the next boundary after
+     * each missed delete's expiry, possibly seconds, to pull it before every peer left it out. Now it is stale
+     * from the TTL less 20 minutes on, so one that is not has at least that long. TTL 1 h: 45 minutes away is
+     * stale, 30 minutes is not.
+     */
+    @Test
+    void aNodeAwayLongerThanTheTtlLessTwentyMinutesStartsStale() throws Exception {
+        Path data = dir.resolve("n0");
+        java.nio.file.Files.createDirectories(data);
+        Map<String, String> env = new HashMap<>();
+        env.put("SERENGETI_DATA_DIR", data.toString());
+        env.put("SERENGETI_PORT", Integer.toString(ports[0]));
+        env.put("SERENGETI_PEERS", "127.0.0.1:" + ports[1]);
+        env.put("SERENGETI_CLUSTER_KEY", KEY);
+        env.put("SERENGETI_CLUSTER_PLAINTEXT", "allow");
+        env.put("SERENGETI_ADMIN_PASSWORD", PW);
+        env.put("SERENGETI_TOMBSTONE_TTL_HOURS", "1");
+        assertEquals(40 * 60_000L, 3_600_000L - Cluster.STALE_MARGIN_MILLIS);
+        for (long away : new long[] {45 * 60_000L, 30 * 60_000L}) {
+            java.nio.file.Files.writeString(data.resolve(Cluster.LAST_SYNC_FILE), (System.currentTimeMillis() - away) + "\n");
+            try (Node n = Node.start(Config.load(null, env), Node.QUERIES)) {
+                assertEquals(away > 40 * 60_000L, n.cluster().stale(), "away " + away / 60_000 + " minutes");
+            }
+        }
+    }
+
     private static com.ataiva.serengeti.core.storage.Stamp stampAt(long wall, String node) {
         return new com.ataiva.serengeti.core.storage.Stamp(wall, 0, node);
     }

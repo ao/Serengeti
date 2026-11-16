@@ -41,7 +41,7 @@ groups:
         expr: serengeti_cluster_stale == 1
         labels: {severity: critical}
         annotations:
-          summary: "{{ $labels.instance }} was away longer than tombstone_ttl_hours and neither syncs nor takes writes"
+          summary: "{{ $labels.instance }} was away longer than tombstone_ttl_hours less 20 minutes and neither syncs nor takes writes"
 
       - alert: SerengetiMemoryFull
         expr: serengeti_memory_full == 1

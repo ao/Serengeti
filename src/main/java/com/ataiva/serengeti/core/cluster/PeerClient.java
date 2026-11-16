@@ -72,13 +72,16 @@ final class PeerClient {
         }
     }
 
+    /** A peer's roots, and the expiry its full roots were counted at (null from 2.1, which sends neither). */
+    record Roots(Map<String, Map<String, Object>> dbs, Long expiry) {}
+
     @SuppressWarnings("unchecked")
-    CompletableFuture<Map<String, Map<String, Object>>> roots(String peer) {
+    CompletableFuture<Roots> roots(String peer) {
         return send(request(peer, "/internal/v2/roots", CALL_TIMEOUT).GET().build(), true).thenApply(m -> {
             if (!(m.get("dbs") instanceof Map<?, ?> d)) {
                 throw new IllegalStateException("peer sent no roots");
             }
-            return (Map<String, Map<String, Object>>) d;
+            return new Roots((Map<String, Map<String, Object>>) d, m.get("expiry") instanceof Long e ? e : null);
         });
     }
 
@@ -95,14 +98,15 @@ final class PeerClient {
      * A peer's full bucket sums (tombstones counted), and the rows and bytes it holds per bucket; those two
      * are null from a peer that does not send them.
      */
-    record FullSums(long[] sums, long[] rows, long[] bytes) {}
+    record FullSums(long[] sums, long[] rows, long[] bytes, Long expiry) {}
 
     /** The full bucket sums; NotSupported from a peer without the route (2.1). */
     CompletableFuture<FullSums> fullBuckets(String peer, String db, String table) {
         String path = "/internal/v3/buckets?db=" + enc(db) + "&table=" + enc(table);
         return send(request(peer, path, CALL_TIMEOUT).GET().build(), true).thenApply(m -> new FullSums(sums(m),
                 m.containsKey("rows") ? longs(m, "rows", com.ataiva.serengeti.core.storage.Store.BUCKETS) : null,
-                m.containsKey("bytes") ? longs(m, "bytes", com.ataiva.serengeti.core.storage.Store.BUCKETS) : null));
+                m.containsKey("bytes") ? longs(m, "bytes", com.ataiva.serengeti.core.storage.Store.BUCKETS) : null,
+                m.get("expiry") instanceof Long e ? e : null));
     }
 
     private static long[] sums(Map<String, Object> m) {

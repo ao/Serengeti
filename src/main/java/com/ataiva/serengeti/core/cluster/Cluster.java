@@ -79,6 +79,9 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         /** The peer has no routes for rows by id (2.1, or 2.2 before them); asked again after PROBE_MILLIS. */
         volatile boolean noRowRoutes;
         volatile long noRowRoutesSince;
+        /** Since when the peer's expiry has differed from this node's (0: it agrees), and whether that was logged. */
+        volatile long expiryDiffersSince;
+        volatile boolean expiryWarned;
         /** The peer has no account routes (older than 2.2); asked again after PROBE_MILLIS. */
         volatile boolean noAccounts;
         volatile long noAccountsSince;
@@ -153,17 +156,29 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         this(config, nodeId, engine, clientTls, System::currentTimeMillis);
     }
 
+    /**
+     * A node away from a majority for longer than the TTL less this is stale. A delete it missed was made after
+     * it left, so it expires on its peers no sooner than this long after the node may come back: time to pull
+     * it before the peers leave it out of their sums and hashes (review 22e, suspicion 1).
+     */
+    static final long STALE_MARGIN_MILLIS = 2 * Store.EXPIRY_STEP_MILLIS;
+
+    /** The longest this node may go without syncing with a majority and still sync: the TTL less the margin. */
+    private long awayLimit() {
+        return tombstoneTtl - STALE_MARGIN_MILLIS;
+    }
+
     Cluster(Config config, String nodeId, StorageEngine engine, SSLContext clientTls, LongSupplier clock) {
         this.tombstoneTtl = config.tombstoneTtlMillis;
         this.localAckByDefault = config.localWriteAck;
         this.lastSyncFile = config.dataDir.resolve(LAST_SYNC_FILE);
         long last = readLastSync(lastSyncFile);
-        if (last > 0 && clock.getAsLong() - last > tombstoneTtl) {
+        if (last > 0 && clock.getAsLong() - last > awayLimit()) {
             // It starts, but stale: no sync and no writes, so its old rows cannot bring back deleted ones. It
             // still hands the changes it made after `last` to its peers (pushIsolatedWrites).
             this.stale = true;
             LOG.severe("this node last synced with a majority of its cluster at " + java.time.Instant.ofEpochMilli(last)
-                    + ", longer ago than tombstone_ttl_hours (" + tombstoneTtl / 3_600_000 + "). Rows deleted since then"
+                    + ", longer ago than tombstone_ttl_hours (" + tombstoneTtl / 3_600_000 + ") less 20 minutes. Rows deleted since then"
                     + " could come back through it, so it does not sync or take writes. It hands the changes it made"
                     + " since then to its peers; then stop it, empty its data directory except accounts.json, users.json and node-id,"
                     + " and start it again to resync.");
@@ -297,7 +312,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         }
         if (stale) {
             throw new UnavailableException("this node has been away from its cluster for longer than "
-                    + "tombstone_ttl_hours and must be emptied and resynced");
+                    + "tombstone_ttl_hours less 20 minutes and must be emptied and resynced");
         }
         if (localAck()) {
             // Accepted on this node alone; sync merges it into the others when they are reachable.
@@ -485,9 +500,9 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     caughtUp = true;
                     LOG.info("caught up with " + ok + " of " + peers.size() + " peers; accepting writes");
                 }
-            } else if (!stale && clock.getAsLong() - lastMajoritySync > tombstoneTtl) {
+            } else if (!stale && clock.getAsLong() - lastMajoritySync > awayLimit()) {
                 stale = true;
-                LOG.severe("no sync with a majority for longer than tombstone_ttl_hours; this node now refuses "
+                LOG.severe("no sync with a majority for longer than tombstone_ttl_hours less 20 minutes; this node now refuses "
                         + "writes and syncing. Stop it, empty its data directory except accounts.json, users.json and node-id, "
                         + "and start it again.");
             }
@@ -1096,9 +1111,12 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         long generation = p.generation;
         java.util.function.BooleanSupplier stop = readDone != null ? readDone::get : () -> p.generation != generation;
         AsyncLimiter limiter = readDone != null ? readPullLimiter : pullLimiter;
-        return client.roots(p.address).thenCompose(theirs -> {
+        return client.roots(p.address).thenCompose(roots -> {
             p.lastContact = clock.getAsLong(); // it answered; a long pull that follows must not age it out
-            Map<String, Map<String, Object>> mine = engine.read(Store::rootHashes);
+            Map<String, Map<String, Object>> theirs = roots.dbs();
+            Object[] local = engine.read(s -> new Object[] {s.rootHashes(), s.expiry()});
+            Map<String, Map<String, Object>> mine = (Map<String, Map<String, Object>>) local[0];
+            boolean sameExpiry = sameExpiry(p, roots.expiry(), (Long) local[1]);
             List<CompletableFuture<Integer>> work = new ArrayList<>();
             for (Map.Entry<String, Map<String, Object>> e : theirs.entrySet()) {
                 String db = e.getKey();
@@ -1108,9 +1126,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 CompletableFuture<Integer> schemaStep = mySchema == theirSchema
                         ? CompletableFuture.completedFuture(0)
                         : client.schema(p.address, db).thenApply(this::mergeOrThrow);
-                // A peer with the full sums (tombstones counted) is compared by those; 2.1 sends only "tables".
+                // A peer with the full sums (tombstones counted) and this node's expiry is compared by those;
+                // 2.1 sends only "tables", and on another expiry the full sums differ in every expired tombstone.
                 Map<String, Object> theirFull = (Map<String, Object>) e.getValue().get("full");
-                boolean full = theirFull != null && tryRowRoutes(p);
+                boolean full = theirFull != null && sameExpiry && tryRowRoutes(p);
                 Map<String, Object> theirTables = full ? theirFull : (Map<String, Object>) e.getValue().get("tables");
                 Map<String, Object> myTables = m == null ? Map.of() : (Map<String, Object>) m.get(full ? "full" : "tables");
                 for (Map.Entry<String, Object> t : theirTables.entrySet()) {
@@ -1138,7 +1157,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
      */
     private CompletableFuture<Differ> differingBuckets(Peer p, String db, String table, boolean full) {
         CompletableFuture<PeerClient.FullSums> theirs = !full
-                ? client.buckets(p.address, db, table).thenApply(s -> new PeerClient.FullSums(s, null, null))
+                ? client.buckets(p.address, db, table).thenApply(s -> new PeerClient.FullSums(s, null, null, null))
                 : client.fullBuckets(p.address, db, table).handle((sums, err) -> {
                     if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
                         throw new java.util.concurrent.CompletionException(unwrap(err));
@@ -1151,7 +1170,13 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 return differingBuckets(p, db, table, false);
             }
             long[] sums = their.sums();
-            long[] local = engine.read(s -> full ? s.fullBucketSums(db, table) : s.bucketSums(db, table));
+            Object[] mine = engine.read(s -> new Object[] {full ? s.fullBucketSums(db, table) : s.bucketSums(db, table),
+                s.expiry()});
+            if (full && !java.util.Objects.equals(their.expiry(), mine[1])) {
+                // One of the two crossed a boundary since the roots: compare the live sums this time.
+                return differingBuckets(p, db, table, false);
+            }
+            long[] local = (long[]) mine[0];
             List<Integer> differ = new ArrayList<>();
             for (int i = 0; i < sums.length; i++) {
                 if (sums[i] != local[i]) {
@@ -1160,6 +1185,31 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             }
             return CompletableFuture.completedFuture(new Differ(differ, their.rows(), their.bytes()));
         });
+    }
+
+    /**
+     * True if the peer counts its full sums at this node's expiry. Nodes cross each 10-minute boundary a few
+     * seconds apart, and nodes with different tombstone_ttl_hours never agree; until they do, the pair
+     * compares the live sums, so expired tombstones that one leaves out and the other counts are not pulled
+     * every round (review 22e, findings 2 and 5). A difference that outlasts a step is logged once.
+     */
+    private boolean sameExpiry(Peer p, Long theirs, Long mine) {
+        if (theirs != null && theirs.equals(mine)) {
+            p.expiryDiffersSince = 0;
+            p.expiryWarned = false;
+            return true;
+        }
+        long now = clock.getAsLong();
+        if (p.expiryDiffersSince == 0) {
+            p.expiryDiffersSince = now;
+        } else if (theirs != null && !p.expiryWarned && now - p.expiryDiffersSince > Store.EXPIRY_STEP_MILLIS + 60_000) {
+            p.expiryWarned = true;
+            LOG.warning("peer " + p.address + " drops tombstones made before " + java.time.Instant.ofEpochMilli(theirs)
+                    + ", this node those before " + java.time.Instant.ofEpochMilli(mine) + ": tombstone_ttl_hours differs"
+                    + " between them. Set it the same on every node; until then they compare live rows only, and a newer"
+                    + " delete may not reach a node that holds an older one.");
+        }
+        return false;
     }
 
     private final java.util.concurrent.atomic.AtomicLong readStatePulls = new java.util.concurrent.atomic.AtomicLong();
@@ -1357,7 +1407,9 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 return Map.of("node", nodeId, "users", users.entries());
             }
             case "/internal/v2/roots" -> {
-                return Map.of("node", nodeId, "dbs", engine.read(Store::rootHashes));
+                // With the expiry the full roots were counted at: a peer compares them only on the same one.
+                Object[] answer = engine.read(s -> new Object[] {s.rootHashes(), s.expiry()});
+                return Map.of("node", nodeId, "dbs", answer[0], "expiry", answer[1]);
             }
             case "/internal/v2/schema" -> {
                 String db = required(query, "db");
@@ -1394,7 +1446,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 String table = required(query, "table");
                 // The rows and bytes per bucket too: the peer sizes its pulls of buckets it holds nothing of by them.
                 Object[] answer = engine.read(s -> new Object[] {s.fullBucketSums(db, table), s.bucketRowCounts(db, table),
-                    s.bucketBytes(db, table)});
+                    s.bucketBytes(db, table), s.expiry()});
                 List<Object> sums = new ArrayList<>(Store.BUCKETS);
                 List<Object> rows = new ArrayList<>(Store.BUCKETS);
                 List<Object> bytes = new ArrayList<>(Store.BUCKETS);
@@ -1403,7 +1455,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     rows.add((long) ((int[]) answer[1])[i]);
                     bytes.add(((long[]) answer[2])[i]);
                 }
-                return Map.of("sums", sums, "rows", rows, "bytes", bytes);
+                return Map.of("sums", sums, "rows", rows, "bytes", bytes, "expiry", answer[3]);
             }
             case "/internal/v3/hashes" -> {
                 if (rowRoutesOff) {

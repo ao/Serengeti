@@ -96,7 +96,7 @@ final class Metrics {
         family(b, "serengeti_cluster_caught_up", "gauge", "1 once this node has synced with a majority since it started (1 without peers).");
         sample(b, "serengeti_cluster_caught_up", c.caughtUp() ? 1 : 0);
         family(b, "serengeti_cluster_stale", "gauge",
-                "1 if this node was away longer than tombstone_ttl_hours: it neither syncs nor takes writes.");
+                "1 if this node was away longer than tombstone_ttl_hours less 20 minutes: it neither syncs nor takes writes.");
         sample(b, "serengeti_cluster_stale", c.stale() ? 1 : 0);
         family(b, "serengeti_sync_ops_pulled_total", "counter", "Row versions this node pulled from its peers while syncing.");
         sample(b, "serengeti_sync_ops_pulled_total", c.syncOpsPulled());

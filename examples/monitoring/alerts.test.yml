@@ -49,7 +49,7 @@ tests:
         alertname: SerengetiStale
         exp_alerts:
           - exp_labels: {severity: critical, job: serengeti, instance: "n2:1985"}
-            exp_annotations: {summary: "n2:1985 was away longer than tombstone_ttl_hours and neither syncs nor takes writes"}
+            exp_annotations: {summary: "n2:1985 was away longer than tombstone_ttl_hours less 20 minutes and neither syncs nor takes writes"}
       - eval_time: 1m
         alertname: SerengetiMemoryFull
         exp_alerts:
