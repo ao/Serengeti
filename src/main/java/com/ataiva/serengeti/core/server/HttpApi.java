@@ -428,8 +428,8 @@ public final class HttpApi implements AutoCloseable {
      * buckets (2.1 does), once took a node's whole heap.
      */
     static final java.util.Set<String> HEAVY_INTERNAL = java.util.Set.of("/internal/v2/rows", "/internal/state");
-    static final int HEAVY_INTERNAL_AT_ONCE = 2;
-    static final long HEAVY_WAIT_MILLIS = 2_000;
+    static final int HEAVY_INTERNAL_AT_ONCE = 4;
+    static final long HEAVY_WAIT_MILLIS = 1_000;
     private final java.util.concurrent.Semaphore heavyInternal = new java.util.concurrent.Semaphore(HEAVY_INTERNAL_AT_ONCE, true);
 
     private Users.Role authenticate(HttpExchange ex, Caller caller) {

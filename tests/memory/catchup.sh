@@ -4,7 +4,7 @@
 # rows of 1 KB, then one node is stopped while 6,000 more are written across both tables, and started again.
 # A few thousand missed rows touch most of every table's buckets, so the restarted node has nearly all of
 # each table to compare with each peer. Before the pull limit, the two other nodes ran out of heap within
-# seconds of the restart (docs/SOAK.md, finding 3).
+# seconds of the restart (found by 2.2's soak test).
 #
 #   IMAGE=serengeti:catchup tests/memory/catchup.sh     (builds the image first unless SKIP_BUILD=1)
 #   ROWS=60000 PAD=1000 MISS=3000 MEM=768m              the defaults: rows per table and their padding
