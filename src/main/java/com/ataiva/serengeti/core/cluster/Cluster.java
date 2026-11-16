@@ -386,34 +386,42 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         if (needed <= 0) {
             return;
         }
-        List<CompletableFuture<Boolean>> runs = new ArrayList<>();
-        for (Peer p : peers) {
-            try {
-                runs.add(syncWith(p, true));
-            } catch (RuntimeException e) {
-                runs.add(CompletableFuture.completedFuture(false)); // stopping: counted as not synced
-            }
-        }
-        long deadline = System.currentTimeMillis() + WRITE_TIMEOUT_MILLIS;
-        int ok = 0;
-        for (CompletableFuture<Boolean> f : runs) {
-            long left = deadline - System.currentTimeMillis();
-            try {
-                if (left > 0 && f.get(left, TimeUnit.MILLISECONDS)) {
-                    ok++;
+        // Set once the read has its answer or gives up: its syncs then stop at their next page. Left running,
+        // every majority read refused during a long catch-up went on pulling what differed when it began, long
+        // after the node had caught up (review 22d).
+        java.util.concurrent.atomic.AtomicBoolean readDone = new java.util.concurrent.atomic.AtomicBoolean();
+        try {
+            List<CompletableFuture<Boolean>> runs = new ArrayList<>();
+            for (Peer p : peers) {
+                try {
+                    runs.add(syncWith(p, readDone));
+                } catch (RuntimeException e) {
+                    runs.add(CompletableFuture.completedFuture(false)); // stopping: counted as not synced
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            } catch (Exception e) {
-                // counted as not synced
             }
-            if (ok >= needed) {
-                return;
+            long deadline = System.currentTimeMillis() + WRITE_TIMEOUT_MILLIS;
+            int ok = 0;
+            for (CompletableFuture<Boolean> f : runs) {
+                long left = deadline - System.currentTimeMillis();
+                try {
+                    if (left > 0 && f.get(left, TimeUnit.MILLISECONDS)) {
+                        ok++;
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    // counted as not synced
+                }
+                if (ok >= needed) {
+                    return;
+                }
             }
+            throw new UnavailableException("a majority read needs " + quorum + " of " + size + " nodes; "
+                    + (ok + 1) + " answered");
+        } finally {
+            readDone.set(true);
         }
-        throw new UnavailableException("a majority read needs " + quorum + " of " + size + " nodes; "
-                + (ok + 1) + " answered");
     }
 
     // ---- sync ----
@@ -435,7 +443,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 CompletableFuture<Boolean> f = p.inFlight;
                 if (f == null || f.isDone()) {
                     p.generation++;
-                    p.inFlight = syncWith(p, false).completeOnTimeout(false,
+                    p.inFlight = syncWith(p, null).completeOnTimeout(false,
                             PeerClient.STATE_TIMEOUT.toMillis() + 5_000, TimeUnit.MILLISECONDS);
                 } else if (clock.getAsLong() - p.lastContact > SYNC_INTERVAL_MILLIS
                         && (p.probe == null || p.probe.isDone())) {
@@ -518,13 +526,13 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     }
 
     /** Pulls every database whose digest differs from the peer's. Completes with true if it worked. */
-    private CompletableFuture<Boolean> syncWith(Peer p, boolean forRead) {
+    private CompletableFuture<Boolean> syncWith(Peer p, java.util.concurrent.atomic.AtomicBoolean readDone) {
         if (stale) {
             return pushIsolatedWrites(p);
         }
         // A peer found running 2.0 is asked for the bucket routes again now and then: it may have been upgraded.
         boolean byBuckets = !p.protocol1 || clock.getAsLong() - p.protocol1Since > PROBE_MILLIS;
-        CompletableFuture<Integer> run = !byBuckets ? syncWholeDatabases(p, forRead) : syncByBuckets(p, forRead).handle((n, err) -> {
+        CompletableFuture<Integer> run = !byBuckets ? syncWholeDatabases(p, readDone) : syncByBuckets(p, readDone).handle((n, err) -> {
             if (err != null && unwrap(err) instanceof PeerClient.NotSupported) {
                 if (!p.protocol1) {
                     LOG.info("peer " + p.address + " runs 2.0; syncing with it by whole databases");
@@ -542,7 +550,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             }
             p.v2Synced = true;
             return n;
-        }).thenCompose(n -> n == null ? syncWholeDatabases(p, forRead) : CompletableFuture.completedFuture(n));
+        }).thenCompose(n -> n == null ? syncWholeDatabases(p, readDone) : CompletableFuture.completedFuture(n));
         return run.thenApply(merged -> {
             if (merged > 0) {
                 LOG.fine("merged " + merged + " ops from " + p.address);
@@ -602,7 +610,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     private final AsyncLimiter pullLimiter = new AsyncLimiter(MAX_PULLS, PeerClient.STATE_TIMEOUT.toMillis() + 5_000);
     private final AsyncLimiter readPullLimiter = new AsyncLimiter(MAX_READ_PULLS, PeerClient.STATE_TIMEOUT.toMillis() + 5_000);
 
-    /** A background sync whose pages stopped because a newer sync with the peer started. It counts as failed. */
+    /** A sync whose pages stopped: a newer background sync with the peer started, or its read is over. It fails. */
     static final class Superseded extends RuntimeException {
         Superseded() {
             super("a newer sync with the peer took over", null, false, false);
@@ -612,11 +620,11 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     /**
      * Pulls the rows of the differing buckets from {@code from} on, one page at a time and through
      * {@code limiter}, sizing each page from the last: a table of large rows gets pages of few buckets. A
-     * background sync ({@code generation} 0 or more) stops with {@link Superseded} once a newer one with the
-     * peer has started, which pulls what is still missing; it must not count as a completed sync. A read's
-     * sync ({@code generation} -1) always runs to the end or fails.
+     * sync stops with {@link Superseded} once {@code stop} says so: a background one when a newer one with the
+     * peer has started (which pulls what is still missing), a read's once the read has its answer or gave up.
+     * A stopped sync must not count as a completed one.
      */
-    private CompletableFuture<Integer> pullBuckets(Peer p, AsyncLimiter limiter, long generation, String db,
+    private CompletableFuture<Integer> pullBuckets(Peer p, AsyncLimiter limiter, java.util.function.BooleanSupplier stop, String db,
             String table, List<Integer> differ, int from, int buckets, int merged) {
         if (from >= differ.size()) {
             return CompletableFuture.completedFuture(merged);
@@ -624,7 +632,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         if (closed) {
             return CompletableFuture.failedFuture(new UnavailableException("this node is stopping"));
         }
-        if (generation >= 0 && p.generation != generation) {
+        if (stop.getAsBoolean()) {
             return CompletableFuture.failedFuture(new Superseded());
         }
         List<Integer> page = List.copyOf(differ.subList(from, Math.min(differ.size(), from + buckets)));
@@ -632,7 +640,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             p.lastContact = clock.getAsLong();
             int n = mergeOrThrow(ops);
             int next = nextPullBuckets(page.size(), ops.size(), estimateBytes(ops));
-            return pullBuckets(p, limiter, generation, db, table, differ, from + page.size(), next, merged + n);
+            return pullBuckets(p, limiter, stop, db, table, differ, from + page.size(), next, merged + n);
         });
     }
 
@@ -694,9 +702,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
      * buckets that the writes touched. Completes with the number of ops merged.
      */
     @SuppressWarnings("unchecked")
-    private CompletableFuture<Integer> syncByBuckets(Peer p, boolean forRead) {
-        long generation = forRead ? -1 : p.generation;
-        AsyncLimiter limiter = forRead ? readPullLimiter : pullLimiter;
+    private CompletableFuture<Integer> syncByBuckets(Peer p, java.util.concurrent.atomic.AtomicBoolean readDone) {
+        long generation = p.generation;
+        java.util.function.BooleanSupplier stop = readDone != null ? readDone::get : () -> p.generation != generation;
+        AsyncLimiter limiter = readDone != null ? readPullLimiter : pullLimiter;
         return client.roots(p.address).thenCompose(theirs -> {
             p.lastContact = clock.getAsLong(); // it answered; a long pull that follows must not age it out
             Map<String, Map<String, Object>> mine = engine.read(Store::rootHashes);
@@ -728,7 +737,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                                 differ.add(i);
                             }
                         }
-                        return pullBuckets(p, limiter, generation, db, table, differ, 0, FIRST_PULL_BUCKETS, 0);
+                        return pullBuckets(p, limiter, stop, db, table, differ, 0, FIRST_PULL_BUCKETS, 0);
                     }));
                 }
                 work.add(schemaStep);
@@ -738,7 +747,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     }
 
     /** Protocol 1 (2.0 peers): compare one SHA-256 per database and pull whole databases that differ. */
-    private CompletableFuture<Integer> syncWholeDatabases(Peer p, boolean forRead) {
+    private CompletableFuture<Integer> syncWholeDatabases(Peer p, java.util.concurrent.atomic.AtomicBoolean readDone) {
         return client.digests(p.address).thenCompose(theirs -> {
             p.lastContact = clock.getAsLong();
             Map<String, String> mine = engine.read(Store::digests);
@@ -751,7 +760,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             List<CompletableFuture<List<Op>>> pulls = new ArrayList<>();
             for (String db : differ) {
                 // Each answer is a whole database: through the same limit as the row pages (review 22d).
-                pulls.add((forRead ? readPullLimiter : pullLimiter).run(() -> client.state(p.address, db)));
+                pulls.add((readDone != null ? readPullLimiter : pullLimiter).run(() -> client.state(p.address, db)));
             }
             List<CompletableFuture<Integer>> merged = new ArrayList<>();
             for (CompletableFuture<List<Op>> f : pulls) {

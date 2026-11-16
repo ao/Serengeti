@@ -399,6 +399,10 @@ public final class HttpApi implements AutoCloseable {
         }
         boolean heavy = HEAVY_INTERNAL.contains(path);
         if (heavy) {
+            if (heavyBytesUnsent.get() > HEAVY_UNSENT_BYTES) {
+                // Answers stuck on peers that stopped reading still hold their bytes; more would add to them.
+                throw new HttpError(503, "busy sending rows to other nodes; try again");
+            }
             boolean got;
             try {
                 got = heavyInternal.tryAcquire(HEAVY_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
@@ -424,18 +428,32 @@ public final class HttpApi implements AutoCloseable {
                 heavyInternal.release();
             }
         }
-        send(ex, 200, "application/json; charset=utf-8", answer);
+        if (!heavy) {
+            send(ex, 200, "application/json; charset=utf-8", answer);
+            return;
+        }
+        // Until it is sent, the answer is counted, so answers stuck on peers that stopped reading bound
+        // themselves: past HEAVY_UNSENT_BYTES, new ones get 503 instead of adding to the heap (review 22d).
+        heavyBytesUnsent.addAndGet(answer.length);
+        try {
+            send(ex, 200, "application/json; charset=utf-8", answer);
+        } finally {
+            heavyBytesUnsent.addAndGet(-answer.length);
+        }
     }
 
     /**
-     * Node-to-node routes whose answer holds many rows. At most {@link #HEAVY_INTERNAL_AT_ONCE} are built and
-     * sent at once, whatever asks: several peers catching up at the same time, each asking for pages of 200
-     * buckets (2.1 does), once took a node's whole heap.
+     * Node-to-node routes whose answer holds many rows. At most {@link #HEAVY_INTERNAL_AT_ONCE} are built at
+     * once, whatever asks: several peers catching up at the same time, each asking for pages of 200 buckets
+     * (2.1 does), once took a node's whole heap. Built answers not yet sent may hold at most
+     * {@link #HEAVY_UNSENT_BYTES} between them before new ones are refused.
      */
     static final java.util.Set<String> HEAVY_INTERNAL = java.util.Set.of("/internal/v2/rows", "/internal/state");
     static final int HEAVY_INTERNAL_AT_ONCE = 4;
     static final long HEAVY_WAIT_MILLIS = 1_000;
+    static final long HEAVY_UNSENT_BYTES = Math.max(16L << 20, Runtime.getRuntime().maxMemory() / 16);
     private final java.util.concurrent.Semaphore heavyInternal = new java.util.concurrent.Semaphore(HEAVY_INTERNAL_AT_ONCE, true);
+    private final java.util.concurrent.atomic.AtomicLong heavyBytesUnsent = new java.util.concurrent.atomic.AtomicLong();
 
     private Users.Role authenticate(HttpExchange ex, Caller caller) {
         String address = ex.getRemoteAddress().getAddress().getHostAddress();
