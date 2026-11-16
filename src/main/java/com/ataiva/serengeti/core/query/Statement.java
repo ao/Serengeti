@@ -101,8 +101,27 @@ public sealed interface Statement {
 
     /** One entry of a select list, and what ORDER BY sorts on: a column or an aggregate. */
     sealed interface Item {
-        /** The column of the result. */
+        /**
+         * The column of the result. A label is never a name: a column's is its name, and an aggregate's is
+         * {@code count} (reserved) or has a {@code (}. So each label stands for one item ({@link #ofLabel}).
+         */
         String label();
+
+        /** The item whose {@link #label} is {@code label}. */
+        static Item ofLabel(String label) {
+            if (label.equals("count")) {
+                return Aggregate.COUNT_ALL;
+            }
+            int open = label.indexOf('(');
+            if (open < 0) {
+                return new Column(label);
+            }
+            String inner = label.substring(open + 1, label.length() - 1);
+            if (inner.startsWith("distinct ")) {
+                return new Aggregate(Fn.COUNT, inner.substring("distinct ".length()), true);
+            }
+            return new Aggregate(Fn.valueOf(label.substring(0, open).toUpperCase(java.util.Locale.ROOT)), inner);
+        }
 
         record Column(String name) implements Item {
             public Column {
@@ -115,8 +134,11 @@ public sealed interface Statement {
             }
         }
 
-        /** {@code COUNT(*)} when {@code column} is null (only COUNT may have that), else {@code FN(column)}. */
-        record Aggregate(Fn fn, String column) implements Item {
+        /**
+         * {@code COUNT(*)} when {@code column} is null (only COUNT may have that), else {@code FN(column)}, or
+         * {@code COUNT(DISTINCT column)} when {@code distinct} (only COUNT of a column may have that).
+         */
+        record Aggregate(Fn fn, String column, boolean distinct) implements Item {
             public static final Aggregate COUNT_ALL = new Aggregate(Fn.COUNT, null);
 
             public Aggregate {
@@ -124,12 +146,22 @@ public sealed interface Statement {
                 if (column == null && fn != Fn.COUNT) {
                     throw new IllegalArgumentException(fn + "(*)");
                 }
+                if (distinct && (fn != Fn.COUNT || column == null)) {
+                    throw new IllegalArgumentException("DISTINCT is for COUNT of a column only");
+                }
             }
 
-            /** {@code count} for COUNT(*), as in 2.1; else lowercase, as {@code sum(qty)}. */
+            public Aggregate(Fn fn, String column) {
+                this(fn, column, false);
+            }
+
+            /** {@code count} for COUNT(*), as in 2.1; else lowercase, as {@code sum(qty)} or {@code count(distinct qty)}. */
             @Override
             public String label() {
-                return column == null ? "count" : fn.name().toLowerCase(java.util.Locale.ROOT) + "(" + column + ")";
+                if (column == null) {
+                    return "count";
+                }
+                return fn.name().toLowerCase(java.util.Locale.ROOT) + (distinct ? "(distinct " : "(") + column + ")";
             }
         }
     }
@@ -202,54 +234,104 @@ public sealed interface Statement {
     }
 
     /**
-     * {@code where}, {@code orderBy} and {@code limit} may be null; {@code groupBy} is empty without GROUP BY.
-     * The rules are those of docs/QUERY.md: with an aggregate and no GROUP BY, the list has only aggregates
-     * and there is no ORDER BY or LIMIT; with GROUP BY, each column of the list is a GROUP BY column, and
-     * ORDER BY names one, or an aggregate of the list.
+     * {@code where}, {@code having} and {@code limit} may be null; {@code groupBy} is empty without GROUP BY and
+     * {@code orderBy} without ORDER BY. The rules are those of docs/QUERY.md: with an aggregate and no GROUP BY,
+     * the list has only aggregates and there is no ORDER BY or LIMIT; with GROUP BY, each column of the list is
+     * a GROUP BY column, and each ORDER BY key names one, or an aggregate of the list. {@code distinct} is
+     * SELECT DISTINCT: a list of distinct columns that act as the GROUP BY ({@link #groups}), with no GROUP BY
+     * or HAVING of its own. In {@code having}, each column of a term is the {@link Item#label} of a GROUP BY
+     * column or an aggregate, which need not be in the list.
      */
-    record Select(String db, String table, Projection projection, Expr where, List<String> groupBy, OrderBy orderBy,
-            Long limit) implements Statement {
+    record Select(String db, String table, Projection projection, boolean distinct, Expr where, List<String> groupBy,
+            Expr having, List<OrderBy> orderBy, Long limit) implements Statement {
         public Select {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
             Objects.requireNonNull(projection, "projection");
             groupBy = List.copyOf(groupBy);
+            orderBy = List.copyOf(orderBy);
             if (limit != null && limit < 0) {
                 throw new IllegalArgumentException("negative LIMIT");
             }
             if (groupBy.stream().distinct().count() != groupBy.size()) {
                 throw new IllegalArgumentException("GROUP BY columns must be distinct");
             }
+            if (orderBy.stream().map(OrderBy::key).distinct().count() != orderBy.size()) {
+                throw new IllegalArgumentException("ORDER BY keys must be distinct");
+            }
+            List<String> groups = groupBy;
+            if (distinct) {
+                if (!(projection instanceof Projection.Columns c)) {
+                    throw new IllegalArgumentException("SELECT DISTINCT takes columns only");
+                }
+                if (!groupBy.isEmpty() || having != null) {
+                    throw new IllegalArgumentException("SELECT DISTINCT takes no GROUP BY or HAVING");
+                }
+                groups = c.names();
+                if (groups.stream().distinct().count() != groups.size()) {
+                    throw new IllegalArgumentException("SELECT DISTINCT columns must be distinct");
+                }
+            }
             List<Item> items = Projection.itemsOf(projection);
-            if (groupBy.isEmpty()) {
+            if (groups.isEmpty()) {
                 if (Projection.aggregates(projection)) {
                     if (items.stream().anyMatch(i -> i instanceof Item.Column)) {
                         throw new IllegalArgumentException("a column with an aggregate needs GROUP BY");
                     }
-                    if (orderBy != null || limit != null) {
+                    if (!orderBy.isEmpty() || limit != null) {
                         throw new IllegalArgumentException("aggregates without GROUP BY take no ORDER BY or LIMIT");
                     }
-                } else if (orderBy != null && orderBy.column() == null) {
-                    throw new IllegalArgumentException("ORDER BY an aggregate needs GROUP BY");
+                } else {
+                    if (having != null) {
+                        throw new IllegalArgumentException("HAVING needs GROUP BY or a list of aggregates only");
+                    }
+                    if (orderBy.stream().anyMatch(o -> o.column() == null)) {
+                        throw new IllegalArgumentException("ORDER BY an aggregate needs GROUP BY");
+                    }
                 }
             } else {
                 if (items == null) {
                     throw new IllegalArgumentException("SELECT * takes no GROUP BY");
                 }
                 for (Item i : items) {
-                    if (i instanceof Item.Column c && !groupBy.contains(c.name())) {
+                    if (i instanceof Item.Column c && !groups.contains(c.name())) {
                         throw new IllegalArgumentException("column " + c.name() + " is not in GROUP BY");
                     }
                 }
-                if (orderBy != null && (orderBy.column() != null ? !groupBy.contains(orderBy.column())
-                        : !items.contains(orderBy.key()))) {
-                    throw new IllegalArgumentException("ORDER BY takes a GROUP BY column or an aggregate of the list");
+                for (OrderBy o : orderBy) {
+                    if (o.column() != null ? !groups.contains(o.column()) : !items.contains(o.key())) {
+                        throw new IllegalArgumentException("ORDER BY takes a GROUP BY column or an aggregate of the list");
+                    }
+                }
+            }
+            for (Item i : havingItems(having)) {
+                if (i instanceof Item.Column c && !groups.contains(c.name())) {
+                    throw new IllegalArgumentException("HAVING column " + c.name() + " is not in GROUP BY");
                 }
             }
         }
 
+        public Select(String db, String table, Projection projection, Expr where, List<String> groupBy, OrderBy orderBy,
+                Long limit) {
+            this(db, table, projection, false, where, groupBy, null, orderBy == null ? List.of() : List.of(orderBy), limit);
+        }
+
         public Select(String db, String table, Projection projection, Expr where, OrderBy orderBy, Long limit) {
             this(db, table, projection, where, List.of(), orderBy, limit);
+        }
+
+        /** The columns that make the groups: the list's with DISTINCT, else GROUP BY's (empty without either). */
+        public List<String> groups() {
+            return distinct ? ((Projection.Columns) projection).names() : groupBy;
+        }
+
+        /** The GROUP BY columns and aggregates that {@code having} tests, each once, in the order written. */
+        public static List<Item> havingItems(Expr having) {
+            java.util.LinkedHashSet<Item> out = new java.util.LinkedHashSet<>();
+            if (having != null) {
+                Expr.forEachColumn(having, label -> out.add(Item.ofLabel(label)));
+            }
+            return List.copyOf(out);
         }
     }
 

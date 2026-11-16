@@ -99,7 +99,8 @@ class QueryProperties {
                 "99999999999999999999", "NULL", "IS", "TRUE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
                 "DELETE", "CREATE", "DROP", "DATABASE", "TABLE", "IF", "EXISTS", "SHOW", "TABLES", "IN",
                 "ORDER", "BY", "DESC", "LIMIT", "COUNT", "--", "\n", " ", ".", "!", "x".repeat(70), "é",
-                "LIKE", "GROUP", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\'", "'\\%_'", "%", "_", "\\", "IN (1, 2)");
+                "LIKE", "GROUP", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\'", "'\\%_'", "%", "_", "\\", "IN (1, 2)",
+                "DISTINCT", "HAVING", "COUNT(*)", "COUNT(DISTINCT a)", "ASC");
     }
 
     @Provide
@@ -112,7 +113,8 @@ class QueryProperties {
     // Generators for statements.
 
     private static Arbitrary<String> names() {
-        Arbitrary<String> common = Arbitraries.of("a", "b", "x1", "_id", "price", "name_2", "_");
+        // distinct and having are keywords only where the grammar puts them, and names everywhere else.
+        Arbitrary<String> common = Arbitraries.of("a", "b", "x1", "_id", "price", "name_2", "_", "distinct", "having");
         Arbitrary<String> random = Arbitraries.strings().withCharRange('a', 'z').withChars('_', '0', '9')
                 .ofMinLength(1).ofMaxLength(Lexer.MAX_NAME_LENGTH);
         return Arbitraries.oneOf(common, random).filter(Lexer::isValidName);
@@ -169,7 +171,55 @@ class QueryProperties {
                 .as((db, t, p, w, o, l) -> p instanceof Statement.Projection.Count
                         ? new Statement.Select(db, t, p, w, null, null)
                         : new Statement.Select(db, t, p, w, o, l));
-        return Arbitraries.oneOf(plain, grouped());
+        return Arbitraries.oneOf(plain, grouped(), newForms());
+    }
+
+    /**
+     * SELECT DISTINCT, HAVING (with aggregates the list lacks), COUNT(DISTINCT) and ORDER BY on several keys,
+     * built to follow the rules from generated names and literals and a seed for the choices.
+     */
+    private static Arbitrary<Statement> newForms() {
+        return Combinators.combine(names(), names(), names().list().uniqueElements().ofMinSize(1).ofMaxSize(4),
+                exprs(2).injectNull(0.4), literals().list().ofSize(6), Arbitraries.longs(),
+                Arbitraries.longs().between(0, 20).injectNull(0.5)).as((db, t, cols, w, lits, seed, limit) -> {
+                    java.util.Random r = new java.util.Random(seed);
+                    if (r.nextInt(3) == 0) {
+                        List<Statement.Item> keys = cols.stream().<Statement.Item>map(Statement.Item.Column::new).toList();
+                        return new Statement.Select(db, t, new Statement.Projection.Columns(cols), true, w, List.of(), null,
+                                ExecutorProperties.randomOrder(r, keys, 4), limit);
+                    }
+                    boolean noGroup = r.nextInt(4) == 0;
+                    List<String> by = noGroup ? List.of() : cols;
+                    java.util.function.Supplier<Statement.Item.Aggregate> agg = () -> {
+                        int k = r.nextInt(4);
+                        String c = ExecutorProperties.pick(r, cols);
+                        return k == 0 ? Statement.Item.Aggregate.COUNT_ALL
+                                : k == 1 ? new Statement.Item.Aggregate(Statement.Fn.COUNT, c, true)
+                                : new Statement.Item.Aggregate(ExecutorProperties.pick(r, List.of(Statement.Fn.values())), c);
+                    };
+                    List<Statement.Item> items = new ArrayList<>();
+                    by.stream().filter(c -> r.nextBoolean()).forEach(c -> items.add(new Statement.Item.Column(c)));
+                    for (int i = r.nextInt(4); i > 0; i--) {
+                        items.add(agg.get());
+                    }
+                    if (items.isEmpty()) {
+                        items.add(noGroup ? agg.get() : new Statement.Item.Column(by.get(0)));
+                    }
+                    List<Statement.Item> lefts = new ArrayList<>();
+                    by.forEach(c -> lefts.add(new Statement.Item.Column(c)));
+                    items.stream().filter(i -> i instanceof Statement.Item.Aggregate).forEach(lefts::add);
+                    lefts.add(agg.get());
+                    Expr having = ExecutorProperties.randomHaving(r, lefts, lits, 0);
+                    Statement.Projection p = ExecutorProperties.projectionOf(items);
+                    if (noGroup) {
+                        return new Statement.Select(db, t, p, false, w, by, having, List.of(), null);
+                    }
+                    List<Statement.Item> keys = new ArrayList<>();
+                    by.forEach(c -> keys.add(new Statement.Item.Column(c)));
+                    items.stream().filter(i -> i instanceof Statement.Item.Aggregate).forEach(keys::add);
+                    return new Statement.Select(db, t, p, false, w, by, r.nextBoolean() ? having : null,
+                            ExecutorProperties.randomOrder(r, keys, 4), limit);
+                });
     }
 
     /** SELECTs with aggregates or GROUP BY that follow the rules: built so, not filtered. */

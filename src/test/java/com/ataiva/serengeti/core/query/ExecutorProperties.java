@@ -35,7 +35,9 @@ import net.jqwik.api.lifecycle.BeforeContainer;
 /**
  * The executor against models written from docs/QUERY.md: IN and LIKE give the same rows through an index,
  * through _id, and by scan, and they are the rows the rules select; GROUP BY gives what a naive grouping of
- * the rows, in _id order, gives.
+ * the rows, in _id order, gives, and HAVING what filtering those groups one by one gives; SELECT DISTINCT
+ * gives the first row of each set of equal values, as its GROUP BY form does; ORDER BY on several keys gives
+ * a stable sort of the rows in _id order.
  */
 class ExecutorProperties {
     private static Path dir;
@@ -266,49 +268,146 @@ class ExecutorProperties {
         return row.list().ofMinSize(0).ofMaxSize(50);
     }
 
+    static final List<Expr> WHERES = List.of(new Expr.IsNull("n", true), new Expr.In("g", Arrays.asList(1L, "a", null), false),
+            new Expr.Compare("_id", Expr.Cmp.GE, "r10"), new Expr.Like("h", "%", false));
+    /** Values HAVING compares with: counts, the values of GROUP_POOL and NUMBER_POOL, and null. */
+    static final List<Object> HAVING_POOL = Arrays.asList(null, true, false, 0L, 1L, 2L, 3L, 2.5, -0.0, 1.0, "a", "b", "",
+            "7", Long.MAX_VALUE);
+
+    static <T> T pick(java.util.Random r, List<T> from) {
+        return from.get(r.nextInt(from.size()));
+    }
+
+    static Statement.Item.Aggregate randomAggregate(java.util.Random r) {
+        int k = r.nextInt(8);
+        if (k == 0) {
+            return Statement.Item.Aggregate.COUNT_ALL;
+        }
+        String column = pick(r, List.of("n", "g", "h", "_id", "nope"));
+        return k == 1 ? new Statement.Item.Aggregate(Statement.Fn.COUNT, column, true)
+                : new Statement.Item.Aggregate(pick(r, List.of(Statement.Fn.values())), column);
+    }
+
+    static Statement.Projection projectionOf(List<Statement.Item> items) {
+        if (items.equals(List.of(Statement.Item.Aggregate.COUNT_ALL))) {
+            return new Statement.Projection.Count();
+        }
+        if (items.stream().allMatch(i -> i instanceof Statement.Item.Column)) {
+            return new Statement.Projection.Columns(items.stream().map(i -> ((Statement.Item.Column) i).name()).toList());
+        }
+        return new Statement.Projection.Items(items);
+    }
+
+    /** A HAVING condition whose terms test the items of {@code lefts} (by label) with values of {@code pool}. */
+    static Expr randomHaving(java.util.Random r, List<Statement.Item> lefts, List<Object> pool, int depth) {
+        int k = depth >= 2 ? 0 : r.nextInt(5);
+        if (k == 2) {
+            return new Expr.Not(randomHaving(r, lefts, pool, depth + 1));
+        }
+        if (k == 3 || k == 4) {
+            List<Expr> terms = List.of(randomHaving(r, lefts, pool, depth + 1), randomHaving(r, lefts, pool, depth + 1));
+            return k == 3 ? new Expr.And(terms) : new Expr.Or(terms);
+        }
+        String left = pick(r, lefts).label();
+        switch (r.nextInt(5)) {
+            case 0:
+                return new Expr.IsNull(left, r.nextBoolean());
+            case 1: {
+                List<Object> vs = new ArrayList<>();
+                for (int i = 1 + r.nextInt(3); i > 0; i--) {
+                    vs.add(pick(r, pool));
+                }
+                return new Expr.In(left, vs, r.nextBoolean());
+            }
+            case 2:
+                return new Expr.Like(left, pick(r, List.of("%", "a%", "_", "")), r.nextBoolean());
+            default:
+                return new Expr.Compare(left, pick(r, List.of(Expr.Cmp.values())), pick(r, pool));
+        }
+    }
+
+    /** Up to {@code max} distinct keys of {@code candidates}, in random order and directions. */
+    static List<Statement.OrderBy> randomOrder(java.util.Random r, List<Statement.Item> candidates, int max) {
+        List<Statement.Item> keys = new ArrayList<>(new java.util.LinkedHashSet<>(candidates));
+        java.util.Collections.shuffle(keys, r);
+        List<Statement.OrderBy> out = new ArrayList<>();
+        for (int n = r.nextInt(Math.min(max, keys.size()) + 1), i = 0; i < n; i++) {
+            out.add(new Statement.OrderBy(keys.get(i), r.nextBoolean()));
+        }
+        return out;
+    }
+
+    static Long randomLimit(java.util.Random r) {
+        return r.nextInt(5) < 3 ? null : Long.valueOf(r.nextInt(6));
+    }
+
+    /** SELECTs with aggregates or GROUP BY, HAVING sometimes (with aggregates the list lacks), and 0 to 3 keys. */
     @Provide
     Arbitrary<Statement.Select> groupQueries() {
-        Arbitrary<List<String>> by = Arbitraries.of(List.<String>of(), List.of("g"), List.of("h"), List.of("g", "h"),
-                List.of("h", "g"), List.of("n"));
-        Arbitrary<Statement.Item.Aggregate> agg = Arbitraries.oneOf(Arbitraries.just(Statement.Item.Aggregate.COUNT_ALL),
-                Combinators.combine(Arbitraries.of(Statement.Fn.class), Arbitraries.of("n", "g", "h", "_id", "nope"))
-                        .as(Statement.Item.Aggregate::new));
-        Arbitrary<Expr> where = Arbitraries.<Expr>of(new Expr.IsNull("n", true), new Expr.In("g", Arrays.asList(1L, "a", null), false),
-                new Expr.Compare("_id", Expr.Cmp.GE, "r10"), new Expr.Like("h", "%", false)).injectNull(0.5);
-        Arbitrary<Long> limit = Arbitraries.longs().between(0, 5).injectNull(0.6);
-        return Combinators.combine(by, agg.list().ofMinSize(0).ofMaxSize(4), where, Arbitraries.integers().between(0, 63),
-                Arbitraries.of(true, false), limit).as((b, aggs, w, pick, desc, l) -> {
-                    List<Statement.Item> items = new ArrayList<>();
-                    for (int i = 0; i < b.size(); i++) {
-                        if ((pick >> i & 1) == 1) {
-                            items.add(new Statement.Item.Column(b.get(i)));
-                        }
-                    }
-                    items.addAll(aggs);
-                    if (items.isEmpty()) {
-                        items.add(Statement.Item.Aggregate.COUNT_ALL);
-                    }
-                    if ((pick & 4) == 4 && items.size() > 1) {
-                        java.util.Collections.reverse(items);
-                    }
-                    Statement.Projection p = items.equals(List.of(Statement.Item.Aggregate.COUNT_ALL))
-                            ? new Statement.Projection.Count()
-                            : items.stream().allMatch(i -> i instanceof Statement.Item.Column)
-                                    ? new Statement.Projection.Columns(items.stream()
-                                            .map(i -> ((Statement.Item.Column) i).name()).toList())
-                                    : new Statement.Projection.Items(items);
-                    if (b.isEmpty()) {
-                        return new Statement.Select("d", "t", p, w, List.of(), null, null);
-                    }
-                    Statement.OrderBy o = null;
-                    if ((pick & 8) == 8) {
-                        List<Statement.Item> keys = new ArrayList<>();
-                        b.forEach(c -> keys.add(new Statement.Item.Column(c)));
-                        items.stream().filter(i -> i instanceof Statement.Item.Aggregate).forEach(keys::add);
-                        o = new Statement.OrderBy(keys.get((pick >> 4) % keys.size()), desc);
-                    }
-                    return new Statement.Select("d", "t", p, w, b, o, l);
-                });
+        return Arbitraries.randomValue(r -> {
+            List<String> b = pick(r, List.of(List.<String>of(), List.of("g"), List.of("h"), List.of("g", "h"),
+                    List.of("h", "g"), List.of("n")));
+            List<Statement.Item> items = new ArrayList<>();
+            for (String c : b) {
+                if (r.nextBoolean()) {
+                    items.add(new Statement.Item.Column(c));
+                }
+            }
+            for (int i = r.nextInt(5); i > 0; i--) {
+                items.add(randomAggregate(r));
+            }
+            if (items.isEmpty()) {
+                items.add(Statement.Item.Aggregate.COUNT_ALL);
+            }
+            if (r.nextInt(3) == 0) {
+                java.util.Collections.shuffle(items, r);
+            }
+            Statement.Projection p = projectionOf(items);
+            Expr w = r.nextBoolean() ? null : pick(r, WHERES);
+            Expr having = null;
+            if (r.nextInt(3) > 0 && (!b.isEmpty() || Statement.Projection.aggregates(p))) {
+                List<Statement.Item> lefts = new ArrayList<>();
+                b.forEach(c -> lefts.add(new Statement.Item.Column(c)));
+                items.stream().filter(i -> i instanceof Statement.Item.Aggregate).forEach(lefts::add);
+                lefts.add(randomAggregate(r));
+                having = randomHaving(r, lefts, HAVING_POOL, 0);
+            }
+            if (b.isEmpty()) {
+                return new Statement.Select("d", "t", p, false, w, List.of(), having, List.of(), null);
+            }
+            List<Statement.Item> keys = new ArrayList<>();
+            b.forEach(c -> keys.add(new Statement.Item.Column(c)));
+            items.stream().filter(i -> i instanceof Statement.Item.Aggregate).forEach(keys::add);
+            return new Statement.Select("d", "t", p, false, w, b, having, randomOrder(r, keys, 3), randomLimit(r));
+        });
+    }
+
+    /** SELECT DISTINCT of 1 to 3 columns, with ORDER BY on some of them. */
+    @Provide
+    Arbitrary<Statement.Select> distinctQueries() {
+        return Arbitraries.randomValue(r -> {
+            List<String> cols = new ArrayList<>(List.of("g", "h", "n", "_id", "nope"));
+            java.util.Collections.shuffle(cols, r);
+            cols = cols.subList(0, 1 + r.nextInt(3));
+            List<Statement.Item> keys = cols.stream().<Statement.Item>map(Statement.Item.Column::new).toList();
+            return new Statement.Select("d", "t", new Statement.Projection.Columns(cols), true,
+                    r.nextBoolean() ? null : pick(r, WHERES), List.of(), null, randomOrder(r, keys, 3), randomLimit(r));
+        });
+    }
+
+    /** A plain SELECT of every column with 1 to 4 ORDER BY keys, _id and a column no row has among them. */
+    @Provide
+    Arbitrary<Statement.Select> orderQueries() {
+        return Arbitraries.randomValue(r -> {
+            List<Statement.Item> keys = List.of(new Statement.Item.Column("g"), new Statement.Item.Column("h"),
+                    new Statement.Item.Column("n"), new Statement.Item.Column("_id"), new Statement.Item.Column("nope"));
+            List<Statement.OrderBy> order = List.of();
+            while (order.isEmpty()) {
+                order = randomOrder(r, keys, 4);
+            }
+            return new Statement.Select("d", "t", new Statement.Projection.Columns(List.of("_id", "g", "h", "n")), false,
+                    r.nextBoolean() ? null : pick(r, WHERES), List.of(), null, order, randomLimit(r));
+        });
     }
 
     /** Equal as a GROUP BY makes them: by = for scalars, by value for objects and arrays, null with null. */
@@ -345,6 +444,15 @@ class ExecutorProperties {
 
     /** One aggregate over the values of a group, in _id order, as docs/QUERY.md says; throws as the executor must. */
     static Object aggregate(Statement.Item.Aggregate a, List<Object> vs) {
+        if (a.distinct()) {
+            List<Object> seen = new ArrayList<>();
+            for (Object v : vs) {
+                if (v != null && seen.stream().noneMatch(s -> same(s, v))) {
+                    seen.add(v);
+                }
+            }
+            return (long) seen.size();
+        }
         switch (a.fn()) {
             case COUNT:
                 return a.column() == null ? (long) vs.size() : vs.stream().filter(Objects::nonNull).count();
@@ -400,9 +508,94 @@ class ExecutorProperties {
 
     record NaiveGroup(List<Object> values, List<Map<String, Object>> rows) {}
 
-    /** The rows a SELECT with GROUP BY or aggregates gives, computed the plain way; or the error it must raise. */
+    /** Three-valued, from docs/QUERY.md, over a row of named values (a group's labels in HAVING). */
+    static Boolean modelRow(Expr e, Map<String, Object> row) {
+        if (e instanceof Expr.Not n) {
+            return not(modelRow(n.inner(), row));
+        }
+        if (e instanceof Expr.And a) {
+            Boolean out = true;
+            for (Expr t : a.terms()) {
+                Boolean b = modelRow(t, row);
+                if (Boolean.FALSE.equals(b)) {
+                    return false;
+                }
+                if (b == null) {
+                    out = null;
+                }
+            }
+            return out;
+        }
+        if (e instanceof Expr.Or o) {
+            Boolean out = false;
+            for (Expr t : o.terms()) {
+                Boolean b = modelRow(t, row);
+                if (Boolean.TRUE.equals(b)) {
+                    return true;
+                }
+                if (b == null) {
+                    out = null;
+                }
+            }
+            return out;
+        }
+        String[] column = new String[1];
+        Expr.forEachColumn(e, c -> column[0] = c);
+        if (!row.containsKey(column[0])) {
+            throw new AssertionError("the model has no value for " + column[0]);
+        }
+        Object v = row.get(column[0]);
+        // The leaf models of model() take the value as v; "-" is a column name that is never _id.
+        return model(rename(e), "-", v);
+    }
+
+    /** A leaf with its column renamed, so that model() reads v and not the id. */
+    private static Expr rename(Expr e) {
+        if (e instanceof Expr.Compare c) {
+            return new Expr.Compare("v", c.op(), c.value());
+        }
+        if (e instanceof Expr.In in) {
+            return new Expr.In("v", in.values(), in.negated());
+        }
+        if (e instanceof Expr.Like l) {
+            return new Expr.Like("v", l.pattern(), l.negated());
+        }
+        Expr.IsNull n = (Expr.IsNull) e;
+        return new Expr.IsNull("v", n.negated());
+    }
+
+    /** A stable insertion sort, written out so as not to lean on the library sort the executor uses. */
+    static <T> List<T> stableSort(List<T> in, Comparator<T> c) {
+        List<T> out = new ArrayList<>();
+        for (T x : in) {
+            int at = out.size();
+            while (at > 0 && c.compare(out.get(at - 1), x) > 0) {
+                at--;
+            }
+            out.add(at, x);
+        }
+        return out;
+    }
+
+    /** The ORDER BY keys of {@code q} over rows of items, each key in its direction, in the order written. */
+    static Comparator<Map<Statement.Item, Object>> byKeys(Statement.Select q) {
+        return (a, b) -> {
+            for (Statement.OrderBy o : q.orderBy()) {
+                int c = Values.sortOrder(a.get(o.key()), b.get(o.key()));
+                if (c != 0) {
+                    return o.descending() ? -c : c;
+                }
+            }
+            return 0;
+        };
+    }
+
+    /**
+     * The rows a SELECT with GROUP BY, DISTINCT or aggregates gives, computed the plain way; or the error it must
+     * raise. HAVING filters the full grouped result, row by row, before ORDER BY and LIMIT.
+     */
     static List<List<Object>> naive(Statement.Select q, TreeMap<String, Map<String, Object>> table) {
-        List<String> by = q.groupBy();
+        List<String> by = q.distinct() ? ((Statement.Projection.Columns) q.projection()).names() : q.groupBy();
         List<NaiveGroup> groups = new ArrayList<>();
         table.forEach((id, row) -> {
             Map<String, Object> r = new LinkedHashMap<>(row);
@@ -440,7 +633,9 @@ class ExecutorProperties {
         });
         List<Statement.Item> items = Statement.Projection.itemsOf(q.projection());
         List<Statement.Item.Aggregate> aggs = new ArrayList<>();
-        items.stream().filter(i -> i instanceof Statement.Item.Aggregate).map(i -> (Statement.Item.Aggregate) i)
+        List<Statement.Item> all = new ArrayList<>(items);
+        all.addAll(Statement.Select.havingItems(q.having()));
+        all.stream().filter(i -> i instanceof Statement.Item.Aggregate).map(i -> (Statement.Item.Aggregate) i)
                 .filter(a -> !aggs.contains(a)).forEach(aggs::add);
         List<Map<Statement.Item, Object>> results = new ArrayList<>();
         for (NaiveGroup g : groups) {
@@ -457,11 +652,18 @@ class ExecutorProperties {
             }
             results.add(res);
         }
-        if (q.orderBy() != null) {
-            Comparator<Map<Statement.Item, Object>> c = (a, b) -> Values.sortOrder(a.get(q.orderBy().key()),
-                    b.get(q.orderBy().key()));
-            results.sort(q.orderBy().descending() ? c.reversed() : c);
+        if (q.having() != null) {
+            List<Map<Statement.Item, Object>> kept = new ArrayList<>();
+            for (Map<Statement.Item, Object> res : results) {
+                Map<String, Object> row = new java.util.HashMap<>();
+                res.forEach((item, v) -> row.put(item.label(), v));
+                if (Boolean.TRUE.equals(modelRow(q.having(), row))) {
+                    kept.add(res);
+                }
+            }
+            results = kept;
         }
+        results = stableSort(results, byKeys(q));
         if (q.limit() != null && results.size() > q.limit()) {
             results = results.subList(0, q.limit().intValue());
         }
@@ -474,10 +676,8 @@ class ExecutorProperties {
         return out;
     }
 
-    @Property(tries = 600)
-    void groupByGivesWhatANaiveGroupingGives(@ForAll("groupRows") List<List<Object>> data,
-            @ForAll("groupQueries") Statement.Select shape) throws IOException {
-        String db = "g" + RUN.incrementAndGet();
+    /** A new database with the table t holding {@code data} (columns g, h, n) in _id order; its rows by _id. */
+    private static TreeMap<String, Map<String, Object>> load(String db, List<List<Object>> data) throws IOException {
         query.run("CREATE DATABASE " + db);
         query.run("CREATE TABLE " + db + ".t");
         if (RUN.get() % 2 == 0) {
@@ -501,23 +701,126 @@ class ExecutorProperties {
             }
         }
         engine.apply(puts);
-        Statement.Select q = new Statement.Select(db, "t", shape.projection(), shape.where(), shape.groupBy(),
-                shape.orderBy(), shape.limit());
+        return table;
+    }
+
+    private static Statement.Select in(String db, Statement.Select s) {
+        return new Statement.Select(db, "t", s.projection(), s.distinct(), s.where(), s.groupBy(), s.having(), s.orderBy(),
+                s.limit());
+    }
+
+    /** Runs {@code q} and checks it against {@code want}, or against the error computing {@code want} raised. */
+    private static void answersAsModelled(Statement.Select q, java.util.function.Supplier<List<List<Object>>> want)
+            throws IOException {
         String text = Printer.print(q);
         assertEquals(q, Parser.parse(text), text);
-        List<List<Object>> want;
+        List<List<Object>> rows;
         try {
-            want = naive(q, table);
+            rows = want.get();
         } catch (QueryException e) {
             assertEquals(e.getMessage(), assertThrows(QueryException.class, () -> query.run(text), text).getMessage(),
                     text);
-            query.run("DROP DATABASE " + db);
             return;
         }
         Result.Rows got = rows(text);
         assertEquals(Statement.Projection.itemsOf(q.projection()).stream().map(Statement.Item::label).toList(),
                 got.columns(), text);
-        assertEquals(want, got.rows(), text);
+        assertEquals(rows, got.rows(), text);
+    }
+
+    @Property(tries = 600)
+    void groupByAndHavingGiveWhatANaiveGroupingGives(@ForAll("groupRows") List<List<Object>> data,
+            @ForAll("groupQueries") Statement.Select shape) throws IOException {
+        String db = "g" + RUN.incrementAndGet();
+        TreeMap<String, Map<String, Object>> table = load(db, data);
+        Statement.Select q = in(db, shape);
+        answersAsModelled(q, () -> naive(q, table));
+        query.run("DROP DATABASE " + db);
+    }
+
+    @Property(tries = 400)
+    void distinctGivesWhatANaiveDedupGivesAndWhatItsGroupByFormGives(@ForAll("groupRows") List<List<Object>> data,
+            @ForAll("distinctQueries") Statement.Select shape) throws IOException {
+        String db = "s" + RUN.incrementAndGet();
+        TreeMap<String, Map<String, Object>> table = load(db, data);
+        Statement.Select q = in(db, shape);
+        List<String> cols = ((Statement.Projection.Columns) q.projection()).names();
+        // Written out: the first row of each set of equal values, in _id order, then the GROUP BY order.
+        List<List<Object>> firsts = new ArrayList<>();
+        table.forEach((id, row) -> {
+            if (q.where() != null && !Boolean.TRUE.equals(Executor.evaluate(q.where(), id, row))) {
+                return;
+            }
+            List<Object> vals = new ArrayList<>();
+            cols.forEach(c -> vals.add(c.equals("_id") ? id : row.get(c)));
+            boolean seen = firsts.stream().anyMatch(f -> {
+                for (int i = 0; i < cols.size(); i++) {
+                    if (!same(f.get(i), vals.get(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            if (!seen) {
+                firsts.add(vals);
+            }
+        });
+        List<List<Object>> distinct = stableSort(firsts, (a, b) -> {
+            for (int i = 0; i < cols.size(); i++) {
+                int c = groupOrder(a.get(i), b.get(i));
+                if (c != 0) {
+                    return c;
+                }
+            }
+            return 0;
+        });
+        List<Map<Statement.Item, Object>> keyed = new ArrayList<>();
+        for (List<Object> r : distinct) {
+            Map<Statement.Item, Object> m = new java.util.HashMap<>();
+            for (int i = 0; i < cols.size(); i++) {
+                m.put(new Statement.Item.Column(cols.get(i)), r.get(i));
+            }
+            keyed.add(m);
+        }
+        keyed = stableSort(keyed, byKeys(q));
+        List<List<Object>> want = new ArrayList<>();
+        for (Map<Statement.Item, Object> m : keyed) {
+            if (q.limit() == null || want.size() < q.limit()) {
+                want.add(cols.stream().map(c -> m.get(new Statement.Item.Column(c))).toList());
+            }
+        }
+        answersAsModelled(q, () -> want);
+        Statement.Select grouped = new Statement.Select(db, "t", q.projection(), false, q.where(), cols, null, q.orderBy(),
+                q.limit());
+        assertEquals(rows(Printer.print(grouped)).rows(), rows(Printer.print(q)).rows(), Printer.print(q));
+        query.run("DROP DATABASE " + db);
+    }
+
+    @Property(tries = 400)
+    void orderByKeysGiveANaiveStableSortOfTheIdOrder(@ForAll("groupRows") List<List<Object>> data,
+            @ForAll("orderQueries") Statement.Select shape) throws IOException {
+        String db = "o" + RUN.incrementAndGet();
+        TreeMap<String, Map<String, Object>> table = load(db, data);
+        Statement.Select q = in(db, shape);
+        List<Map<Statement.Item, Object>> matched = new ArrayList<>();
+        table.forEach((id, row) -> {
+            if (q.where() == null || Boolean.TRUE.equals(Executor.evaluate(q.where(), id, row))) {
+                Map<Statement.Item, Object> m = new java.util.HashMap<>();
+                for (String c : List.of("g", "h", "n", "nope")) {
+                    m.put(new Statement.Item.Column(c), row.get(c));
+                }
+                m.put(new Statement.Item.Column("_id"), id);
+                matched.add(m);
+            }
+        });
+        List<List<Object>> want = new ArrayList<>();
+        for (Map<Statement.Item, Object> m : stableSort(matched, byKeys(q))) {
+            if (q.limit() == null || want.size() < q.limit()) {
+                want.add(Arrays.asList(m.get(new Statement.Item.Column("_id")), m.get(new Statement.Item.Column("g")),
+                        m.get(new Statement.Item.Column("h")), m.get(new Statement.Item.Column("n"))));
+            }
+        }
+        answersAsModelled(q, () -> want);
         query.run("DROP DATABASE " + db);
     }
 }

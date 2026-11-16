@@ -1,6 +1,7 @@
 package com.ataiva.serengeti.core.query;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -126,7 +127,7 @@ class ParserTest {
         assertEquals(new Statement.Select("d", "t", new Projection.Columns(List.of("a", "b")),
                 new Expr.IsNull("c", true), new Statement.OrderBy("a", true), 10L),
                 parse("SELECT a, B FROM d.t WHERE c IS NOT NULL ORDER BY a DESC LIMIT 10;"));
-        assertEquals(new Statement.OrderBy("a", false),
+        assertEquals(List.of(new Statement.OrderBy("a", false)),
                 ((Statement.Select) parse("SELECT * FROM d.t ORDER BY a ASC")).orderBy());
         roundTrips("SELECT a, b FROM d.t WHERE a = 'X' OR b < 2 ORDER BY b LIMIT 0");
     }
@@ -305,9 +306,9 @@ class ParserTest {
                 new Statement.OrderBy("b", true), 3L), parse("SELECT a FROM d.t GROUP BY a, b ORDER BY b DESC LIMIT 3"));
         Statement.Select s = (Statement.Select) parse(
                 "SELECT a, COUNT(*), SUM(n) FROM d.t WHERE n > 0 GROUP BY a, b ORDER BY sum(N) DESC LIMIT 5");
-        assertEquals(new Statement.OrderBy(new Statement.Item.Aggregate(Statement.Fn.SUM, "n"), true), s.orderBy());
+        assertEquals(List.of(new Statement.OrderBy(new Statement.Item.Aggregate(Statement.Fn.SUM, "n"), true)), s.orderBy());
         assertEquals(List.of("a", "b"), s.groupBy());
-        assertEquals(new Statement.OrderBy(countAll, false),
+        assertEquals(List.of(new Statement.OrderBy(countAll, false)),
                 ((Statement.Select) parse("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY count(*) ASC")).orderBy());
         roundTrips("SELECT a, COUNT(*), AVG(n), MIN(_id) FROM d.t WHERE n IN (1, 2) GROUP BY a ORDER BY AVG(n) LIMIT 0");
         roundTrips("SELECT COUNT(*), COUNT(*) FROM d.t");
@@ -347,5 +348,179 @@ class ParserTest {
         fails("SELECT SUM(a) b FROM d.t");
         fails("SELECT *, COUNT(*) FROM d.t");
         fails("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY count");
+    }
+
+    private static Statement.Select select(String s) {
+        return (Statement.Select) parse(s);
+    }
+
+    /** The message of the parse error, which must be at the first {@code at} in {@code text}. */
+    private static String failsAt(String text, String at) {
+        ParseException e = fails(text);
+        assertEquals(text.indexOf(at), e.position(), e.getMessage());
+        return e.getMessage().replaceFirst(" at position \\d+$", "");
+    }
+
+    @Test
+    void selectDistinct() {
+        assertEquals(new Statement.Select("d", "t", new Projection.Columns(List.of("a", "b")), true,
+                new Expr.Compare("a", Cmp.GT, 1L), List.of(), null,
+                List.of(new Statement.OrderBy("b", true), new Statement.OrderBy("a", false)), 3L),
+                parse("SELECT DISTINCT a, B FROM d.t WHERE a > 1 ORDER BY b DESC, a LIMIT 3"));
+        assertEquals(List.of("a", "b"), select("select distinct a, b from d.t").groups());
+        assertEquals(List.of(), select("SELECT a, b FROM d.t").groups());
+        roundTrips("SELECT DISTINCT a FROM d.t");
+        roundTrips("SELECT DISTINCT _id, a FROM d.t WHERE a IN (1, 2) ORDER BY _id DESC LIMIT 0");
+        // DISTINCT is the keyword only right after SELECT and before a column: distinct is a name everywhere else.
+        Statement.Select plain = select("SELECT distinct FROM d.t");
+        assertFalse(plain.distinct());
+        assertEquals(new Projection.Columns(List.of("distinct")), plain.projection());
+        assertEquals(new Projection.Columns(List.of("distinct", "a")), select("SELECT distinct, a FROM d.t").projection());
+        assertFalse(select("SELECT distinct, a FROM d.t").distinct());
+        Statement.Select both = select("SELECT DISTINCT distinct, a FROM distinct.distinct WHERE distinct = 1 ORDER BY distinct");
+        assertTrue(both.distinct());
+        assertEquals(new Projection.Columns(List.of("distinct", "a")), both.projection());
+        assertEquals(new Expr.Compare("distinct", Cmp.EQ, 1L), both.where());
+        roundTrips("SELECT DISTINCT distinct FROM d.t");
+        roundTrips("SELECT distinct FROM d.t");
+        roundTrips("SELECT distinct, COUNT(*) FROM d.t GROUP BY distinct ORDER BY distinct");
+        roundTrips("INSERT INTO d.t (distinct) VALUES (1)");
+        roundTrips("UPDATE d.t SET distinct = 2 WHERE distinct IS NULL");
+        assertEquals(new Statement.CreateTable("distinct", "distinct", false), parse("CREATE TABLE distinct.distinct"));
+    }
+
+    @Test
+    void selectDistinctErrors() {
+        assertEquals("SELECT DISTINCT takes columns, not *", failsAt("SELECT DISTINCT * FROM d.t", "*"));
+        assertEquals("SELECT DISTINCT cannot list an aggregate such as COUNT(*): use GROUP BY",
+                failsAt("SELECT DISTINCT a, COUNT(*) FROM d.t", "COUNT"));
+        assertEquals("SELECT DISTINCT cannot list an aggregate such as SUM(a): use GROUP BY",
+                failsAt("SELECT DISTINCT sum(a) FROM d.t", "sum"));
+        assertEquals("SELECT DISTINCT cannot have GROUP BY", failsAt("SELECT DISTINCT a FROM d.t GROUP BY a", "GROUP"));
+        assertEquals("SELECT DISTINCT cannot have HAVING", failsAt("SELECT DISTINCT a FROM d.t HAVING a > 1", "HAVING"));
+        assertEquals("column 'a' is listed twice in SELECT DISTINCT", failsAt("SELECT DISTINCT a, b, A FROM d.t", "A FROM"));
+        assertEquals("ORDER BY 'b' must name a column of the SELECT DISTINCT list",
+                failsAt("SELECT DISTINCT a FROM d.t ORDER BY a, b", "b"));
+        assertEquals("ORDER BY COUNT(*) must name a column of the SELECT DISTINCT list",
+                failsAt("SELECT DISTINCT a FROM d.t ORDER BY COUNT(*)", "COUNT"));
+        assertTrue(failsAt("SELECT DISTINCT order FROM d.t", "order").contains("keyword ORDER"));
+        fails("SELECT DISTINCT a b FROM d.t");
+        fails("SELECT DISTINCT DISTINCT a FROM d.t");
+        fails("SELECT DISTINCT");
+        fails("SELECT DISTINCT a,");
+    }
+
+    @Test
+    void countDistinct() {
+        Statement.Item.Aggregate ca = new Statement.Item.Aggregate(Statement.Fn.COUNT, "a", true);
+        Statement.Select s = select("SELECT COUNT(DISTINCT a), count(distinct B), COUNT(a) FROM d.t");
+        List<Statement.Item> items = List.of(ca, new Statement.Item.Aggregate(Statement.Fn.COUNT, "b", true),
+                new Statement.Item.Aggregate(Statement.Fn.COUNT, "a"));
+        assertEquals(new Projection.Items(items), s.projection());
+        assertEquals(List.of("count(distinct a)", "count(distinct b)", "count(a)"),
+                items.stream().map(Statement.Item::label).toList());
+        items.forEach(i -> assertEquals(i, Statement.Item.ofLabel(i.label())));
+        // COUNT(distinct) counts a column called distinct; COUNT(DISTINCT distinct) its distinct values.
+        assertEquals(new Projection.Items(List.of(new Statement.Item.Aggregate(Statement.Fn.COUNT, "distinct"),
+                new Statement.Item.Aggregate(Statement.Fn.COUNT, "distinct", true),
+                new Statement.Item.Aggregate(Statement.Fn.SUM, "distinct"))),
+                select("SELECT COUNT(distinct), COUNT(DISTINCT distinct), SUM(distinct) FROM d.t").projection());
+        assertEquals("count(distinct)", new Statement.Item.Aggregate(Statement.Fn.COUNT, "distinct").label());
+        assertEquals(new Statement.Item.Aggregate(Statement.Fn.COUNT, "distinct"), Statement.Item.ofLabel("count(distinct)"));
+        roundTrips("SELECT a, COUNT(DISTINCT b) FROM d.t GROUP BY a ORDER BY COUNT(DISTINCT b) DESC");
+        roundTrips("SELECT COUNT(distinct), COUNT(DISTINCT distinct) FROM d.t");
+        assertEquals("SUM(DISTINCT) is not an aggregate: only COUNT takes DISTINCT",
+                failsAt("SELECT SUM(DISTINCT a) FROM d.t", "DISTINCT"));
+        assertEquals("AVG(DISTINCT) is not an aggregate: only COUNT takes DISTINCT",
+                failsAt("SELECT AVG(distinct a) FROM d.t", "distinct"));
+        assertEquals("COUNT(DISTINCT *) is not an aggregate: COUNT(DISTINCT) takes a column",
+                failsAt("SELECT COUNT(DISTINCT *) FROM d.t", "*"));
+        assertEquals("ORDER BY COUNT(DISTINCT b) must be in the select list",
+                failsAt("SELECT a, COUNT(b) FROM d.t GROUP BY a ORDER BY COUNT(DISTINCT b)", "COUNT(DISTINCT"));
+        fails("SELECT COUNT(DISTINCT a, b) FROM d.t");
+        fails("SELECT COUNT(DISTINCT a b) FROM d.t");
+        fails("SELECT COUNT(DISTINCT 1) FROM d.t");
+    }
+
+    @Test
+    void having() {
+        Statement.Select s = select("SELECT a, COUNT(*) FROM d.t GROUP BY a HAVING COUNT(*) > 1 AND sum(N) IS NOT NULL "
+                + "ORDER BY a");
+        assertEquals(new Expr.And(List.of(new Expr.Compare("count", Cmp.GT, 1L), new Expr.IsNull("sum(n)", true))),
+                s.having());
+        assertEquals(List.of(Statement.Item.Aggregate.COUNT_ALL, new Statement.Item.Aggregate(Statement.Fn.SUM, "n")),
+                Statement.Select.havingItems(s.having()));
+        assertEquals(List.of(new Statement.OrderBy("a", false)), s.orderBy());
+        assertEquals(new Expr.Or(List.of(new Expr.In("a", List.of(1L, 2L), true), new Expr.Like("max(b)", "x%", false),
+                new Expr.Not(new Expr.Compare("count(distinct c)", Cmp.LE, 2.5)))),
+                select("SELECT COUNT(*) FROM d.t GROUP BY a HAVING a NOT IN (1, 2) OR MAX(b) LIKE 'x%' "
+                        + "OR NOT COUNT(DISTINCT c) <= 2.5").having());
+        roundTrips("SELECT a, COUNT(*) FROM d.t WHERE b = 1 GROUP BY a, b HAVING (COUNT(*) > 1 OR b IS NULL) "
+                + "AND NOT AVG(n) IN (1, 2.5) ORDER BY count(*) DESC, a LIMIT 3");
+        roundTrips("SELECT COUNT(*) FROM d.t HAVING COUNT(*) > 1");
+        roundTrips("SELECT SUM(n) FROM d.t WHERE n > 0 HAVING NOT (MAX(n) IN (1, 2) OR min(s) LIKE 'a%')");
+        roundTrips("SELECT a FROM d.t GROUP BY a, b HAVING b IS NULL OR COUNT(DISTINCT c) >= 2");
+        // HAVING is the keyword only after the table, WHERE or GROUP BY: having is a name everywhere else.
+        assertEquals(new Statement.Select("having", "having", new Projection.Columns(List.of("having")),
+                new Expr.Compare("having", Cmp.EQ, 1L), new Statement.OrderBy("having", false), null),
+                parse("SELECT having FROM having.having WHERE having = 1 ORDER BY having"));
+        Statement.Select h = select("SELECT having, COUNT(having) FROM d.t GROUP BY having HAVING having > 1");
+        assertEquals(List.of("having"), h.groupBy());
+        assertEquals(new Expr.Compare("having", Cmp.GT, 1L), h.having());
+        assertEquals(new Expr.IsNull("count", false), select("SELECT COUNT(*) FROM d.having HAVING COUNT(*) IS NULL").having());
+        roundTrips("SELECT having FROM d.t GROUP BY having HAVING having > 1");
+        roundTrips("INSERT INTO d.t (having, distinct) VALUES (1, 2)");
+        assertEquals(new Statement.CreateIndex("having", "having", "having", false), parse("CREATE INDEX ON having.having (having)"));
+    }
+
+    @Test
+    void havingErrors() {
+        assertEquals("HAVING 'b' must name a GROUP BY column or an aggregate",
+                failsAt("SELECT a FROM d.t GROUP BY a HAVING a = 1 AND b > 1", "b >"));
+        assertEquals("HAVING 'a' must name a GROUP BY column or an aggregate",
+                failsAt("SELECT COUNT(*) FROM d.t HAVING a > 1", "a >"));
+        assertEquals("HAVING needs GROUP BY or a select list of aggregates only",
+                failsAt("SELECT a FROM d.t HAVING a > 1", "HAVING"));
+        assertEquals("SELECT * cannot have HAVING", failsAt("SELECT * FROM d.t HAVING COUNT(*) > 1", "HAVING"));
+        assertEquals("column 'a' is listed with an aggregate, so it must be in a GROUP BY",
+                failsAt("SELECT a, COUNT(*) FROM d.t HAVING COUNT(*) > 1", "a"));
+        assertEquals("COUNT(*) cannot have ORDER BY", failsAt("SELECT COUNT(*) FROM d.t HAVING COUNT(*) > 1 ORDER BY a", "ORDER"));
+        assertEquals("aggregates without GROUP BY cannot have LIMIT",
+                failsAt("SELECT SUM(a) FROM d.t HAVING SUM(a) > 1 LIMIT 1", "LIMIT"));
+        assertTrue(fails("SELECT a FROM d.t GROUP BY a HAVING 1 = COUNT(*)").getMessage().startsWith("expected a name"));
+        fails("SELECT a FROM d.t GROUP BY a HAVING");
+        fails("SELECT a FROM d.t GROUP BY a HAVING COUNT(*)");
+        fails("SELECT a FROM d.t GROUP BY a HAVING COUNT(*) > b");
+        fails("SELECT a FROM d.t GROUP BY a HAVING COUNT(*) NOT 1");
+        fails("SELECT a FROM d.t GROUP BY a HAVING SUM(*) > 1");
+        fails("SELECT a FROM d.t GROUP BY a ORDER BY a HAVING a = 1");
+        fails("SELECT COUNT(*) FROM d.t HAVING COUNT(*) > 1 GROUP BY a");
+        fails("SELECT a FROM d.t GROUP BY a HAVING a = 1 HAVING a = 2");
+        assertTrue(fails("SELECT a FROM d.t GROUP BY a HAVING " + "(".repeat(Parser.MAX_DEPTH + 1) + "a = 1"
+                + ")".repeat(Parser.MAX_DEPTH + 1)).getMessage().contains("nested"));
+    }
+
+    @Test
+    void orderByKeys() {
+        assertEquals(List.of(new Statement.OrderBy("a", true), new Statement.OrderBy("b", false), new Statement.OrderBy("_id", false)),
+                select("SELECT * FROM d.t ORDER BY a DESC, b, _id ASC LIMIT 2").orderBy());
+        assertEquals(List.of(), select("SELECT * FROM d.t").orderBy());
+        roundTrips("SELECT a, b FROM d.t WHERE a = 1 ORDER BY b DESC, a, nope DESC LIMIT 5");
+        roundTrips("SELECT a, COUNT(*), SUM(n) FROM d.t GROUP BY a, b ORDER BY count(*) DESC, b, SUM(n), a DESC");
+        java.util.function.IntFunction<String> keys = n -> java.util.stream.IntStream.range(0, n)
+                .mapToObj(i -> "c" + i + (i % 2 == 0 ? " DESC" : "")).collect(java.util.stream.Collectors.joining(", "));
+        assertEquals(Parser.MAX_ORDER_BY, select("SELECT * FROM d.t ORDER BY " + keys.apply(Parser.MAX_ORDER_BY)).orderBy().size());
+        String over = "SELECT * FROM d.t ORDER BY " + keys.apply(Parser.MAX_ORDER_BY + 1);
+        assertEquals("ORDER BY takes at most 32 keys", failsAt(over, "c32"));
+        assertEquals("column 'a' is listed twice in ORDER BY", failsAt("SELECT * FROM d.t ORDER BY a, b, A DESC", "A DESC"));
+        assertEquals("COUNT(*) is listed twice in ORDER BY",
+                failsAt("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY COUNT(*), a, count(*) DESC", "count"));
+        assertEquals("ORDER BY 'b' must name a GROUP BY column or an aggregate of the select list",
+                failsAt("SELECT a FROM d.t GROUP BY a ORDER BY a, b", "b"));
+        assertEquals("ORDER BY COUNT(*) needs GROUP BY", failsAt("SELECT * FROM d.t ORDER BY a, COUNT(*)", "COUNT"));
+        fails("SELECT * FROM d.t ORDER BY a,");
+        fails("SELECT * FROM d.t ORDER BY a DESC DESC");
+        fails("SELECT * FROM d.t ORDER BY a b");
+        fails("SELECT * FROM d.t ORDER BY , a");
     }
 }

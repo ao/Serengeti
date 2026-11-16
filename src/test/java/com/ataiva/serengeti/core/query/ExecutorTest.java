@@ -648,6 +648,189 @@ class ExecutorTest {
         assertEquals(List.of(List.of(5L, ab)), rows("SELECT MIN(v), MAX(v) FROM d.t").rows(),
                 "MAX is an object, the first of the equal ones in _id order");
         assertEquals(List.of(List.of(4L)), rows("SELECT COUNT(v) FROM d.t").rows());
+        assertEquals(List.of(List.of(5L), List.of(List.of(1L, 2L)), List.of(ab)), rows("SELECT DISTINCT v FROM d.t").rows());
+        assertEquals(List.of(List.of(3L, 4L)), rows("SELECT COUNT(DISTINCT v), COUNT(v) FROM d.t").rows(),
+                "the two equal objects count once");
+    }
+
+    @Test
+    void selectDistinctIsItsGroupByForm() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        run("INSERT INTO d.t (_id, k, n, s) VALUES ('01', 'b', 1, 'x'), ('02', 'a', 2, 'y'), ('03', 'b', 3, NULL), "
+                + "('04', 1, 4, 'x'), ('05', 1.0, 5.5, 'x'), ('06', NULL, 6, 'z'), ('07', TRUE, 7, 'x'), "
+                + "('08', 'a', NULL, 'y'), ('09', FALSE, 'nine', 'x')");
+        run("INSERT INTO d.t (_id, n) VALUES ('10', 10)");
+        Result.Rows r = rows("SELECT DISTINCT k FROM d.t");
+        assertEquals(List.of("k"), r.columns());
+        // null with missing, false, true, numbers (1 and 1.0 are one value, shown as the lowest _id's), strings.
+        assertEquals(List.of(Arrays.asList((Object) null), List.of(false), List.of(true), List.of(1L), List.of("a"),
+                List.of("b")), r.rows());
+        assertFalse(r.truncated());
+        assertEquals(List.of(Arrays.asList(null, null), Arrays.asList(null, "z"), List.of(false, "x"), List.of(true, "x"),
+                List.of(1L, "x"), List.of("a", "y"), Arrays.asList("b", null), List.of("b", "x")),
+                rows("SELECT DISTINCT k, s FROM d.t").rows());
+        assertEquals(List.of(Arrays.asList(null, "b"), List.of("x", 1L), List.of("x", true)),
+                rows("SELECT DISTINCT s, k FROM d.t WHERE n > 2 ORDER BY k DESC, s LIMIT 3").rows());
+        for (String[] pair : new String[][] {
+                {"SELECT DISTINCT k, s FROM d.t", "SELECT k, s FROM d.t GROUP BY k, s"},
+                {"SELECT DISTINCT s, k FROM d.t WHERE n > 2 ORDER BY k DESC, s LIMIT 3",
+                        "SELECT s, k FROM d.t WHERE n > 2 GROUP BY s, k ORDER BY k DESC, s LIMIT 3"},
+                {"SELECT DISTINCT s FROM d.t ORDER BY s DESC", "SELECT s FROM d.t GROUP BY s ORDER BY s DESC"},
+                {"SELECT DISTINCT _id FROM d.t WHERE k IS NULL", "SELECT _id FROM d.t WHERE k IS NULL GROUP BY _id"}}) {
+            assertEquals(rows(pair[1]), rows(pair[0]), pair[0]);
+        }
+        assertEquals(List.of(Arrays.asList((Object) null)), rows("SELECT DISTINCT nope FROM d.t").rows());
+        assertEquals(List.of(), rows("SELECT DISTINCT k FROM d.t WHERE n > 100").rows());
+        run("CREATE INDEX ON d.t (k)");
+        assertEquals(List.of(List.of("a"), List.of("b")), rows("SELECT DISTINCT k FROM d.t WHERE k IN ('a', 'b')").rows());
+        run("INSERT INTO d.t (_id, distinct) VALUES ('11', 'd'), ('12', 'd')");
+        assertEquals(List.of(Arrays.asList((Object) null), List.of("d")), rows("SELECT DISTINCT distinct FROM d.t").rows());
+        assertEquals(List.of(List.of("d"), List.of("d")), rows("SELECT distinct FROM d.t WHERE distinct IS NOT NULL").rows());
+        query.run("SELECT DISTINCT k FROM d.t", false); // the read role may run it
+    }
+
+    @Test
+    void countDistinctCountsEachValueOnce() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        run("INSERT INTO d.t (_id, g, v) VALUES ('01', 'a', 1), ('02', 'a', 1.0), ('03', 'a', 2), ('04', 'a', NULL), "
+                + "('05', 'a', '1'), ('06', 'b', TRUE), ('07', 'b', TRUE), ('08', 'b', 'x'), ('09', 'c', NULL)");
+        run("INSERT INTO d.t (_id, g) VALUES ('10', 'c')");
+        Result.Rows r = rows("SELECT COUNT(DISTINCT v), COUNT(v), COUNT(*) FROM d.t");
+        assertEquals(List.of("count(distinct v)", "count(v)", "count"), r.columns());
+        // 1 and 1.0 are one value, and the string '1' another; null and missing are not counted.
+        assertEquals(List.of(List.of(5L, 7L, 10L)), r.rows());
+        assertEquals(List.of(List.of("a", 3L, 4L), List.of("b", 2L, 3L), List.of("c", 0L, 0L)),
+                rows("SELECT g, COUNT(DISTINCT v), COUNT(v) FROM d.t GROUP BY g").rows());
+        assertEquals(List.of(List.of("c", 0L), List.of("b", 2L), List.of("a", 3L)),
+                rows("SELECT g, COUNT(DISTINCT v) FROM d.t GROUP BY g ORDER BY COUNT(DISTINCT v)").rows());
+        assertEquals(List.of(List.of(0L)), rows("SELECT COUNT(DISTINCT v) FROM d.t WHERE g = 'z'").rows(), "over no rows");
+        assertEquals(List.of(List.of(10L, 3L)), rows("SELECT COUNT(DISTINCT _id), COUNT(DISTINCT g) FROM d.t").rows());
+        assertEquals(List.of(List.of("a"), List.of("b")),
+                rows("SELECT g FROM d.t GROUP BY g HAVING COUNT(DISTINCT v) >= 2").rows());
+    }
+
+    @Test
+    void countDistinctHoldsAtMostItsBoundOverAllGroups() throws IOException {
+        query = new Query(new Executor(engine, new Hlc("n1"), 10, 100, 5));
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        run("INSERT INTO d.t (_id, g, v) VALUES ('1', 1, 'a'), ('2', 1, 'b'), ('3', 1, 'c'), ('4', 2, 'a'), "
+                + "('5', 2, 'b'), ('6', 2, 'c')");
+        String over = "COUNT(DISTINCT) would hold more than 5 values";
+        assertEquals(List.of(List.of(3L)), rows("SELECT COUNT(DISTINCT v) FROM d.t").rows());
+        assertEquals(over, fails("SELECT g, COUNT(DISTINCT v) FROM d.t GROUP BY g").getMessage(), "3 values in each of 2 groups");
+        assertEquals(List.of(List.of(1L, 3L)), rows("SELECT g, COUNT(DISTINCT v) FROM d.t WHERE g = 1 GROUP BY g").rows());
+        assertEquals(List.of(List.of(3L, 2L)), rows("SELECT COUNT(DISTINCT v), COUNT(DISTINCT g) FROM d.t").rows(),
+                "3 + 2 values: at the bound, not over it");
+        assertEquals(over, fails("SELECT COUNT(DISTINCT v), COUNT(DISTINCT _id) FROM d.t").getMessage());
+        assertEquals(List.of(List.of(3L, 3L)), rows("SELECT COUNT(DISTINCT v), COUNT(DISTINCT v) FROM d.t").rows(),
+                "an aggregate listed twice is held once");
+        assertEquals(over, fails("SELECT g FROM d.t GROUP BY g HAVING COUNT(DISTINCT v) > 1").getMessage(),
+                "an aggregate of HAVING counts too");
+        assertEquals(over, fails("SELECT COUNT(DISTINCT v) FROM d.t GROUP BY g LIMIT 1").getMessage(), "LIMIT does not change it");
+    }
+
+    @Test
+    void havingFiltersGroupsByTheirValuesAndAggregates() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        run("INSERT INTO d.t (_id, k, n, s) VALUES ('01', 'a', 1, 'x'), ('02', 'a', 2, 'y'), ('03', 'a', 3, 'x'), "
+                + "('04', 'b', 10, 'x'), ('05', 'b', NULL, 'y'), ('06', 'c', 's', 'z'), ('07', NULL, 4, 'x')");
+        // Groups: null (COUNT 1, SUM 4), a (3, 6), b (2, 10), c (1, null: 's' is no number).
+        assertEquals(List.of(List.of("a", 3L), List.of("b", 2L)),
+                rows("SELECT k, COUNT(*) FROM d.t GROUP BY k HAVING COUNT(*) > 1").rows());
+        Result.Rows r = rows("SELECT k FROM d.t GROUP BY k HAVING SUM(n) >= 4");
+        assertEquals(List.of("k"), r.columns(), "an aggregate of HAVING need not be listed");
+        assertEquals(List.of(Arrays.asList((Object) null), List.of("a"), List.of("b")), r.rows());
+        assertEquals(List.of(Arrays.asList(null, 1L), List.of("a", 3L), List.of("c", 1L)),
+                rows("SELECT k, COUNT(*) FROM d.t GROUP BY k HAVING k IN ('a', 'c') OR k IS NULL").rows());
+        assertEquals(List.of(List.of("a"), List.of("b")), rows("SELECT k FROM d.t GROUP BY k HAVING MAX(s) LIKE 'y%'").rows());
+        // Values as the list shows them: AVG is a double, SUM of integers an integer; = compares numbers by value.
+        assertEquals(List.of(List.of("a", 2.0)), rows("SELECT k, AVG(n) FROM d.t GROUP BY k HAVING AVG(n) = 2").rows());
+        assertEquals(List.of(List.of("a", 6L)), rows("SELECT k, SUM(n) FROM d.t GROUP BY k HAVING SUM(n) = 6.0").rows());
+        assertEquals(4, rows("SELECT k FROM d.t GROUP BY k HAVING MAX(s) != 1").rows().size(), "a string is never 1");
+        // Three-valued: c's SUM is null, so a comparison with it is unknown, and so is its NOT.
+        assertEquals(List.of(Arrays.asList((Object) null), List.of("a"), List.of("b")),
+                rows("SELECT k FROM d.t GROUP BY k HAVING SUM(n) > 0").rows());
+        assertEquals(List.of(), rows("SELECT k FROM d.t GROUP BY k HAVING NOT SUM(n) > 0").rows());
+        assertEquals(List.of(List.of("c")), rows("SELECT k FROM d.t GROUP BY k HAVING SUM(n) IS NULL").rows());
+        assertEquals(List.of(Arrays.asList((Object) null), List.of("c")),
+                rows("SELECT k FROM d.t GROUP BY k HAVING SUM(n) > 100 OR COUNT(*) = 1").rows(), "unknown OR true is true");
+        assertEquals(List.of(), rows("SELECT k FROM d.t GROUP BY k HAVING SUM(n) > 100 AND COUNT(*) = 1").rows());
+        assertEquals(List.of(Arrays.asList((Object) null), List.of("a"), List.of("b")),
+                rows("SELECT k FROM d.t GROUP BY k HAVING NOT (SUM(n) > 100 AND COUNT(*) = 1)").rows(),
+                "NOT (unknown AND true) is unknown");
+        // HAVING comes before ORDER BY and LIMIT.
+        assertEquals(List.of(List.of("b", 2L), List.of("c", 1L)),
+                rows("SELECT k, COUNT(*) FROM d.t GROUP BY k HAVING COUNT(*) < 3 ORDER BY count(*) DESC, k DESC LIMIT 2").rows());
+        assertEquals(List.of(), rows("SELECT k FROM d.t WHERE n > 100 GROUP BY k HAVING COUNT(*) = 0").rows(),
+                "with GROUP BY, no rows make no groups");
+        assertEquals(List.of(List.of("a", "x", 2L)),
+                rows("SELECT k, s, COUNT(*) FROM d.t GROUP BY k, s HAVING s = 'x' AND COUNT(*) > 1").rows());
+        assertEquals(List.of(List.of("06"), List.of("07")), rows("SELECT _id FROM d.t GROUP BY _id HAVING _id > '05'").rows());
+        query.run("SELECT k FROM d.t GROUP BY k HAVING COUNT(*) > 1", false); // the read role may run it
+    }
+
+    @Test
+    void havingWithoutGroupByTestsTheOneGroupEvenOverNoRows() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        Result.Rows r = rows("SELECT COUNT(*) FROM d.t HAVING COUNT(*) = 0");
+        assertEquals(List.of("count"), r.columns());
+        assertEquals(List.of(List.of(0L)), r.rows());
+        r = rows("SELECT COUNT(*) FROM d.t HAVING COUNT(*) > 0");
+        assertEquals(List.of("count"), r.columns());
+        assertEquals(List.of(), r.rows());
+        assertFalse(r.truncated());
+        assertEquals(List.of(Arrays.asList(null, null)), rows("SELECT SUM(n), MAX(n) FROM d.t HAVING SUM(n) IS NULL").rows());
+        assertEquals(List.of(Arrays.asList((Object) null)), rows("SELECT MAX(n) FROM d.t HAVING COUNT(*) >= 0").rows());
+        run("INSERT INTO d.t (_id, n) VALUES ('1', 1), ('2', 2)");
+        assertEquals(List.of(List.of(2L)), rows("SELECT COUNT(*) FROM d.t HAVING COUNT(*) > 1").rows());
+        assertEquals(List.of(Arrays.asList(0L, null)), rows("SELECT COUNT(*), SUM(n) FROM d.t WHERE n > 100 HAVING COUNT(*) = 0").rows());
+        assertEquals(List.of(), rows("SELECT MAX(n) FROM d.t HAVING COUNT(*) > 2").rows());
+        assertEquals(List.of(List.of(1.5)), rows("SELECT AVG(n) FROM d.t HAVING AVG(n) = 1.5").rows());
+    }
+
+    @Test
+    void orderByKeysSortInTurnAndTiesKeepIdOrGroupOrder() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        run("INSERT INTO d.t (_id, a, b) VALUES ('1', 2, 'x'), ('2', 1, 'y'), ('3', 2, 'y'), ('4', 1, 'x'), ('5', 2, 'x'), "
+                + "('6', NULL, 'x'), ('7', 'z', NULL), ('8', 1, 'y')");
+        java.util.function.Function<String, List<Object>> ids = q -> {
+            try {
+                return column("SELECT _id FROM d.t " + q, "_id");
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+        assertEquals(List.of("6", "2", "4", "8", "1", "3", "5", "7"), ids.apply("ORDER BY a"), "one key, as before");
+        assertEquals(List.of("7", "1", "3", "5", "2", "4", "8", "6"), ids.apply("ORDER BY a DESC"));
+        assertEquals(List.of("6", "2", "8", "4", "3", "1", "5", "7"), ids.apply("ORDER BY a, b DESC"));
+        assertEquals(List.of("7", "1", "5", "3", "4", "2", "8", "6"), ids.apply("ORDER BY a DESC, b"));
+        assertEquals(List.of("7", "6", "4", "1", "5", "2", "8", "3"), ids.apply("ORDER BY b, a"));
+        assertEquals(List.of("7", "3", "1", "5", "2", "8", "4", "6"), ids.apply("ORDER BY a DESC, b DESC"),
+                "rows equal on every key keep _id order, ascending, in any direction");
+        assertEquals(List.of("6", "8", "4", "2", "5", "3", "1", "7"), ids.apply("ORDER BY a, _id DESC"));
+        assertEquals(List.of("1", "2", "3"), ids.apply("ORDER BY _id, a DESC LIMIT 3"));
+        assertEquals(List.of("8", "7", "6"), ids.apply("ORDER BY _id DESC, a LIMIT 3"));
+        assertEquals(List.of("6", "2", "8"), ids.apply("ORDER BY a, b DESC LIMIT 3"));
+        assertEquals(List.of("4", "8"), ids.apply("WHERE a = 1 ORDER BY b, _id DESC LIMIT 2"));
+        // Groups equal on every key keep their GROUP BY order.
+        assertEquals(List.of(List.of(2L, "y", 1L), List.of(1L, "y", 2L), Arrays.asList(null, "x", 1L), List.of(1L, "x", 1L),
+                List.of(2L, "x", 2L), Arrays.asList("z", null, 1L)),
+                rows("SELECT a, b, COUNT(*) FROM d.t GROUP BY a, b ORDER BY b DESC, count(*)").rows());
+        assertEquals(List.of(List.of("y", 1L), List.of("x", 1L), List.of("x", 1L), Arrays.asList(null, 1L), List.of("y", 2L),
+                List.of("x", 2L)), rows("SELECT b, COUNT(*) FROM d.t GROUP BY a, b ORDER BY count(*), b DESC").rows());
+        // At most 32 keys.
+        StringBuilder keys = new StringBuilder();
+        for (int i = 0; i < Parser.MAX_ORDER_BY - 1; i++) {
+            keys.append("c").append(i).append(i % 3 == 0 ? " DESC, " : ", ");
+        }
+        assertEquals(ids.apply("ORDER BY a"), ids.apply("ORDER BY " + keys + "a"), "31 keys no row has, then a");
+        assertTrue(fails("SELECT _id FROM d.t ORDER BY " + keys + "a, b").getMessage().startsWith("ORDER BY takes at most 32 keys"));
     }
 
     @Test
@@ -664,16 +847,30 @@ class ExecutorTest {
         assertFalse(r.truncated());
         assertEquals("LIMIT 4 is over the maximum of 3",
                 fails("SELECT g, COUNT(*) FROM d.t GROUP BY g LIMIT 4").getMessage());
+        r = rows("SELECT DISTINCT g FROM d.t");
+        assertEquals(List.of(List.of(1L), List.of(2L), List.of(3L)), r.rows());
+        assertTrue(r.truncated(), "5 distinct values, 3 returned");
+        assertEquals("LIMIT 4 is over the maximum of 3", fails("SELECT DISTINCT g FROM d.t LIMIT 4").getMessage());
+        // The cap on rows returned counts the groups HAVING keeps.
+        assertTrue(rows("SELECT g FROM d.t GROUP BY g HAVING COUNT(*) = 1").truncated(), "4 groups kept, 3 returned");
+        r = rows("SELECT g FROM d.t GROUP BY g HAVING g > 2");
+        assertEquals(List.of(List.of(3L), List.of(4L), List.of(5L)), r.rows());
+        assertFalse(r.truncated());
         run("INSERT INTO d.t (_id, g) VALUES ('7', 7)");
         assertEquals("GROUP BY would make more than 5 groups", fails("SELECT g FROM d.t GROUP BY g").getMessage());
         assertEquals("GROUP BY would make more than 5 groups",
                 fails("SELECT COUNT(*) FROM d.t GROUP BY g LIMIT 1").getMessage(), "LIMIT does not change it");
+        assertEquals("GROUP BY would make more than 5 groups",
+                fails("SELECT g FROM d.t GROUP BY g HAVING g = 7").getMessage(), "the cap counts groups before HAVING");
+        assertEquals("SELECT DISTINCT would hold more than 5 rows", fails("SELECT DISTINCT g FROM d.t").getMessage());
+        assertEquals("SELECT DISTINCT would hold more than 5 rows", fails("SELECT DISTINCT g FROM d.t LIMIT 1").getMessage());
+        assertEquals(List.of(List.of(5L), List.of(7L)), rows("SELECT DISTINCT g FROM d.t WHERE g > 4").rows());
         assertEquals(List.of(List.of(1L)), rows("SELECT COUNT(*) FROM d.t WHERE g = 7 GROUP BY g").rows());
         assertEquals(List.of(List.of(7L)), rows("SELECT COUNT(*) FROM d.t").rows());
     }
 
     @Test
-    void theDefaultGroupCapIs100000() throws IOException {
+    void theDefaultGroupAndDistinctCapsAre100000() throws IOException {
         run("CREATE DATABASE d");
         run("CREATE TABLE d.t");
         StringBuilder b = new StringBuilder("INSERT INTO d.t (_id, g) VALUES ");
@@ -683,6 +880,13 @@ class ExecutorTest {
         run(b.toString());
         assertEquals("GROUP BY would make more than 100,000 groups",
                 fails("SELECT _id, COUNT(*) FROM d.t GROUP BY _id").getMessage());
+        assertEquals("SELECT DISTINCT would hold more than 100,000 rows", fails("SELECT DISTINCT _id FROM d.t").getMessage());
+        assertEquals(100_000, Executor.DEFAULT_MAX_DISTINCT);
+        assertEquals("COUNT(DISTINCT) would hold more than 100,000 values",
+                fails("SELECT COUNT(DISTINCT _id) FROM d.t").getMessage());
+        assertEquals(List.of(List.of(100_000L)), rows("SELECT COUNT(DISTINCT _id) FROM d.t WHERE _id != 'r7'").rows(),
+                "100,000 values are not over the cap");
+        assertEquals(List.of(List.of(10_001L)), rows("SELECT COUNT(DISTINCT g) FROM d.t").rows());
         Result.Rows r = rows("SELECT g, COUNT(*) FROM d.t GROUP BY g");
         assertEquals(10_000, r.rows().size());
         assertTrue(r.truncated(), "10,001 groups, capped at 10,000 rows");
@@ -720,6 +924,17 @@ class ExecutorTest {
             all.add("k" + (char) ('a' + i));
         }
         assertEquals(all, seen);
+        // These read rows in _id order and stop after the page; any other order sorts every match.
+        for (String q : List.of("SELECT * FROM d.t", "SELECT * FROM d.t WHERE _id > 'x' ORDER BY _id LIMIT 4",
+                "SELECT n FROM d.t ORDER BY _id ASC, n DESC LIMIT 4")) {
+            assertTrue(Executor.readsInIdOrder((Statement.Select) Parser.parse(q)), q);
+        }
+        for (String q : List.of("SELECT * FROM d.t ORDER BY _id DESC", "SELECT * FROM d.t ORDER BY n, _id",
+                "SELECT * FROM d.t ORDER BY n")) {
+            assertFalse(Executor.readsInIdOrder((Statement.Select) Parser.parse(q)), q);
+        }
+        assertEquals(rows("SELECT _id, n FROM d.t WHERE _id > 'kc' ORDER BY _id LIMIT 4"),
+                rows("SELECT _id, n FROM d.t WHERE _id > 'kc' ORDER BY _id, n DESC LIMIT 4"));
     }
 
     @Test

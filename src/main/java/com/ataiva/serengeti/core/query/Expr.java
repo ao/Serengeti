@@ -3,8 +3,30 @@ package com.ataiva.serengeti.core.query;
 import java.util.List;
 import java.util.Objects;
 
-/** A WHERE condition. Columns are names as the lexer produces them; values are literals. */
+/**
+ * A WHERE or HAVING condition. In WHERE, columns are names as the lexer produces them; in HAVING, they are the
+ * labels of GROUP BY columns and aggregates ({@link Statement.Item#label}). Values are literals.
+ */
 public sealed interface Expr {
+    /** Gives {@code visitor} the column of each term of {@code e}, in the order written. */
+    static void forEachColumn(Expr e, java.util.function.Consumer<String> visitor) {
+        if (e instanceof Compare c) {
+            visitor.accept(c.column());
+        } else if (e instanceof In in) {
+            visitor.accept(in.column());
+        } else if (e instanceof Like l) {
+            visitor.accept(l.column());
+        } else if (e instanceof IsNull n) {
+            visitor.accept(n.column());
+        } else if (e instanceof Not n) {
+            forEachColumn(n.inner(), visitor);
+        } else if (e instanceof And a) {
+            a.terms().forEach(t -> forEachColumn(t, visitor));
+        } else if (e instanceof Or o) {
+            o.terms().forEach(t -> forEachColumn(t, visitor));
+        }
+    }
+
     /** Comparison operators. {@code <>} parses to {@link #NE}. */
     enum Cmp {
         EQ("="), NE("!="), LT("<"), LE("<="), GT(">"), GE(">=");

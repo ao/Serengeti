@@ -20,10 +20,15 @@ public final class Parser {
     public static final int MAX_SELECT_ITEMS = 256;
     public static final int MAX_GROUP_BY = 32;
     public static final int MAX_LIKE_PATTERN = 1000;
+    /** Most keys in one ORDER BY. */
+    public static final int MAX_ORDER_BY = 32;
 
     private final Lexer lexer;
     private Token tok;
+    private Token peeked;
     private int depth;
+    /** While a HAVING condition is read: the GROUP BY columns its terms may name. Null elsewhere. */
+    private List<String> havingGroups;
 
     private Parser(String text) {
         this.lexer = new Lexer(text);
@@ -197,18 +202,42 @@ public final class Parser {
     }
 
     private Statement select() {
+        // DISTINCT is not reserved: right after SELECT it is the keyword unless a comma or FROM follows, so
+        // "SELECT distinct FROM t" and "SELECT distinct, a FROM t" still read a column called distinct.
+        boolean distinct = false;
+        if (isWord("distinct") && !isSymbol(peek(), ",") && !isKeyword(peek(), "from")) {
+            advance();
+            distinct = true;
+        }
         Statement.Projection projection;
         List<Statement.Item> items = new ArrayList<>();
         List<Integer> itemAt = new ArrayList<>();
-        if (acceptSymbol("*")) {
+        if (isSymbol("*")) {
+            if (distinct) {
+                throw new ParseException("SELECT DISTINCT takes columns, not *", tok.start());
+            }
+            advance();
             projection = new Statement.Projection.All();
         } else {
+            Set<String> listed = new HashSet<>();
             do {
                 if (items.size() == MAX_SELECT_ITEMS) {
                     throw new ParseException("a SELECT lists at most " + MAX_SELECT_ITEMS + " items", tok.start());
                 }
-                itemAt.add(tok.start());
-                items.add(item());
+                int at = tok.start();
+                itemAt.add(at);
+                Statement.Item item = item();
+                if (distinct) {
+                    if (item instanceof Statement.Item.Aggregate a) {
+                        throw new ParseException("SELECT DISTINCT cannot list an aggregate such as " + print(a)
+                                + ": use GROUP BY", at);
+                    }
+                    String c = ((Statement.Item.Column) item).name();
+                    if (!listed.add(c)) {
+                        throw new ParseException("column '" + c + "' is listed twice in SELECT DISTINCT", at);
+                    }
+                }
+                items.add(item);
             } while (acceptSymbol(","));
             if (items.equals(List.of(Statement.Item.Aggregate.COUNT_ALL))) {
                 projection = new Statement.Projection.Count();
@@ -231,6 +260,9 @@ public final class Parser {
             if (projection instanceof Statement.Projection.All) {
                 throw new ParseException("SELECT * cannot have GROUP BY", groupAt);
             }
+            if (distinct) {
+                throw new ParseException("SELECT DISTINCT cannot have GROUP BY", groupAt);
+            }
             expectKeyword("by");
             do {
                 int at = tok.start();
@@ -252,12 +284,28 @@ public final class Parser {
                         : "column '" + c.name() + "' is listed but is not in GROUP BY", itemAt.get(i));
             }
         }
+        // HAVING is not reserved either: it is the keyword only here, after the table, WHERE or GROUP BY.
+        Expr having = null;
+        int havingAt = tok.start();
+        if (acceptWord("having")) {
+            if (distinct) {
+                throw new ParseException("SELECT DISTINCT cannot have HAVING", havingAt);
+            }
+            if (groupBy.isEmpty() && !aggregates) {
+                throw new ParseException((projection instanceof Statement.Projection.All ? "SELECT * cannot have HAVING"
+                        : "HAVING needs GROUP BY or a select list of aggregates only"), havingAt);
+            }
+            havingGroups = groupBy;
+            having = expr();
+            havingGroups = null;
+        }
         // Aggregates without GROUP BY make one row, which has nothing to sort or cut: as COUNT(*) in 2.1.
         String single = aggregates && groupBy.isEmpty()
                 ? projection instanceof Statement.Projection.Count ? "COUNT(*)" : "aggregates without GROUP BY"
                 : null;
 
-        Statement.OrderBy orderBy = null;
+        List<String> distinctColumns = distinct ? ((Statement.Projection.Columns) projection).names() : null;
+        List<Statement.OrderBy> orderBy = new ArrayList<>();
         Long limit = null;
         if (isKeyword("order")) {
             if (single != null) {
@@ -265,24 +313,40 @@ public final class Parser {
             }
             advance();
             expectKeyword("by");
-            int at = tok.start();
-            Statement.Item key = item();
-            if (key instanceof Statement.Item.Column c) {
-                if (!groupBy.isEmpty() && !groupBy.contains(c.name())) {
-                    throw new ParseException("ORDER BY '" + c.name() + "' must name a GROUP BY column or an aggregate"
-                            + " of the select list", at);
+            do {
+                int at = tok.start();
+                if (orderBy.size() == MAX_ORDER_BY) {
+                    throw new ParseException("ORDER BY takes at most " + MAX_ORDER_BY + " keys", at);
                 }
-            } else if (groupBy.isEmpty() || !items.contains(key)) {
-                throw new ParseException("ORDER BY " + print(key) + (groupBy.isEmpty() ? " needs GROUP BY"
-                        : " must be in the select list"), at);
-            }
-            boolean desc = false;
-            if (acceptKeyword("desc")) {
-                desc = true;
-            } else {
-                acceptKeyword("asc");
-            }
-            orderBy = new Statement.OrderBy(key, desc);
+                Statement.Item key = item();
+                if (distinct) {
+                    if (!(key instanceof Statement.Item.Column c) || !distinctColumns.contains(c.name())) {
+                        throw new ParseException("ORDER BY " + quoted(key) + " must name a column of the SELECT DISTINCT"
+                                + " list", at);
+                    }
+                } else if (key instanceof Statement.Item.Column c) {
+                    if (!groupBy.isEmpty() && !groupBy.contains(c.name())) {
+                        throw new ParseException("ORDER BY '" + c.name() + "' must name a GROUP BY column or an aggregate"
+                                + " of the select list", at);
+                    }
+                } else if (groupBy.isEmpty() || !items.contains(key)) {
+                    throw new ParseException("ORDER BY " + print(key) + (groupBy.isEmpty() ? " needs GROUP BY"
+                            : " must be in the select list"), at);
+                }
+                for (Statement.OrderBy o : orderBy) {
+                    if (o.key().equals(key)) {
+                        throw new ParseException((key instanceof Statement.Item.Column ? "column " : "") + quoted(key)
+                                + " is listed twice in ORDER BY", at);
+                    }
+                }
+                boolean desc = false;
+                if (acceptKeyword("desc")) {
+                    desc = true;
+                } else {
+                    acceptKeyword("asc");
+                }
+                orderBy.add(new Statement.OrderBy(key, desc));
+            } while (acceptSymbol(","));
         }
         if (isKeyword("limit")) {
             if (single != null) {
@@ -295,19 +359,34 @@ public final class Parser {
             limit = n;
             advance();
         }
-        return new Statement.Select(q[0], q[1], projection, where, groupBy, orderBy, limit);
+        return new Statement.Select(q[0], q[1], projection, distinct, where, groupBy, having, orderBy, limit);
     }
 
     private static String print(Statement.Item i) {
         return i instanceof Statement.Item.Aggregate a
-                ? a.fn() + "(" + (a.column() == null ? "*" : a.column()) + ")"
+                ? a.fn() + "(" + (a.column() == null ? "*" : (a.distinct() ? "DISTINCT " : "") + a.column()) + ")"
                 : ((Statement.Item.Column) i).name();
     }
 
+    /** A column in quotes, as {@code 'a'}; an aggregate as {@link #print}. */
+    private static String quoted(Statement.Item i) {
+        return i instanceof Statement.Item.Column c ? "'" + c.name() + "'" : print(i);
+    }
+
+    /** The left side of a HAVING term: a GROUP BY column or an aggregate, as its label. */
+    private String havingOperand() {
+        int at = tok.start();
+        Statement.Item i = item();
+        if (i instanceof Statement.Item.Column c && !havingGroups.contains(c.name())) {
+            throw new ParseException("HAVING '" + c.name() + "' must name a GROUP BY column or an aggregate", at);
+        }
+        return i.label();
+    }
+
     /**
-     * A column, or an aggregate: {@code COUNT(*)}, or COUNT, SUM, MIN, MAX or AVG of a column. Only COUNT is
-     * reserved; {@code sum} and the others are aggregates only when a {@code (} follows, so columns may still
-     * have those names.
+     * A column, or an aggregate: {@code COUNT(*)}, {@code COUNT(DISTINCT column)}, or COUNT, SUM, MIN, MAX or
+     * AVG of a column. Only COUNT is reserved; {@code sum} and the others are aggregates only when a {@code (}
+     * follows, and DISTINCT is the keyword only before a column, so columns may still have those names.
      */
     private Statement.Item item() {
         Statement.Fn fn;
@@ -339,9 +418,22 @@ public final class Parser {
         if (isSymbol("*")) {
             throw new ParseException(fn + "(*) is not an aggregate: only COUNT takes *", tok.start());
         }
+        // COUNT(distinct) counts a column called distinct; COUNT(DISTINCT distinct) its distinct values.
+        boolean distinct = false;
+        if (isWord("distinct") && !isSymbol(peek(), ")")) {
+            if (fn != Statement.Fn.COUNT) {
+                throw new ParseException(fn + "(DISTINCT) is not an aggregate: only COUNT takes DISTINCT", tok.start());
+            }
+            advance();
+            distinct = true;
+            if (isSymbol("*")) {
+                throw new ParseException("COUNT(DISTINCT *) is not an aggregate: COUNT(DISTINCT) takes a column",
+                        tok.start());
+            }
+        }
         String column = name();
         expectSymbol(")");
-        return new Statement.Item.Aggregate(fn, column);
+        return new Statement.Item.Aggregate(fn, column, distinct);
     }
 
     private Statement update() {
@@ -419,7 +511,7 @@ public final class Parser {
             depth--;
             return e;
         }
-        String column = name();
+        String column = havingGroups != null ? havingOperand() : name();
         if (acceptKeyword("is")) {
             boolean negated = acceptKeyword("not");
             expectKeyword("null");
@@ -555,15 +647,41 @@ public final class Parser {
     }
 
     private void advance() {
-        tok = lexer.next();
+        if (peeked != null) {
+            tok = peeked;
+            peeked = null;
+        } else {
+            tok = lexer.next();
+        }
+    }
+
+    /** The token after the current one, read ahead once. */
+    private Token peek() {
+        if (peeked == null) {
+            peeked = lexer.next();
+        }
+        return peeked;
     }
 
     private boolean isKeyword(String k) {
-        return tok.kind() == Token.Kind.KEYWORD && tok.text().equals(k);
+        return isKeyword(tok, k);
+    }
+
+    private static boolean isKeyword(Token t, String k) {
+        return t.kind() == Token.Kind.KEYWORD && t.text().equals(k);
     }
 
     private boolean isSymbol(String s) {
-        return tok.kind() == Token.Kind.SYMBOL && tok.text().equals(s);
+        return isSymbol(tok, s);
+    }
+
+    private static boolean isSymbol(Token t, String s) {
+        return t.kind() == Token.Kind.SYMBOL && t.text().equals(s);
+    }
+
+    /** True if the current token is the unreserved word {@code w} (a name to the lexer). */
+    private boolean isWord(String w) {
+        return tok.kind() == Token.Kind.NAME && tok.text().equals(w);
     }
 
     private boolean acceptKeyword(String k) {

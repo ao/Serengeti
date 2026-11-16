@@ -26,8 +26,10 @@ import java.util.UUID;
 public final class Executor {
     /** The most rows one SELECT returns, unless the executor is built with another cap. */
     public static final int DEFAULT_MAX_ROWS = 10_000;
-    /** The most groups a GROUP BY may hold while it runs, unless the executor is built with another cap. */
+    /** The most groups a GROUP BY (or rows a SELECT DISTINCT) may hold while it runs, unless built with another cap. */
     public static final int DEFAULT_MAX_GROUPS = 100_000;
+    /** The most values the COUNT(DISTINCT) of one statement may hold in all, unless built with another cap. */
+    public static final int DEFAULT_MAX_DISTINCT = 100_000;
     /** The column that holds each row's key. */
     public static final String ID = "_id";
 
@@ -35,6 +37,7 @@ public final class Executor {
     private final Hlc clock;
     private final int maxRows;
     private final int maxGroups;
+    private final int maxDistinct;
 
     public Executor(StorageEngine engine, Hlc clock) {
         this(engine, clock, DEFAULT_MAX_ROWS);
@@ -45,13 +48,18 @@ public final class Executor {
     }
 
     public Executor(StorageEngine engine, Hlc clock, int maxRows, int maxGroups) {
-        if (maxRows < 1 || maxGroups < 1) {
-            throw new IllegalArgumentException("maxRows and maxGroups must be at least 1");
+        this(engine, clock, maxRows, maxGroups, DEFAULT_MAX_DISTINCT);
+    }
+
+    public Executor(StorageEngine engine, Hlc clock, int maxRows, int maxGroups, int maxDistinct) {
+        if (maxRows < 1 || maxGroups < 1 || maxDistinct < 1) {
+            throw new IllegalArgumentException("maxRows, maxGroups and maxDistinct must be at least 1");
         }
         this.engine = engine;
         this.clock = clock;
         this.maxRows = maxRows;
         this.maxGroups = maxGroups;
+        this.maxDistinct = maxDistinct;
         clock.observe(engine.read(Store::maxStamp));
     }
 
@@ -336,9 +344,22 @@ public final class Executor {
 
     private record Match(String id, Map<String, Object> row) {}
 
+    /**
+     * True when a SELECT without aggregates or groups answers in _id order, so it reads rows in that order and
+     * stops after its page instead of sorting: without ORDER BY, or with _id ascending as the first key (_id
+     * is unique, so the keys after it never decide anything).
+     */
+    static boolean readsInIdOrder(Statement.Select q) {
+        if (q.orderBy().isEmpty()) {
+            return true;
+        }
+        Statement.OrderBy first = q.orderBy().get(0);
+        return ID.equals(first.column()) && !first.descending();
+    }
+
     private Result select(Store store, Statement.Select q) {
         requireTable(store, q.db(), q.table());
-        if (q.projection() instanceof Statement.Projection.Count && q.groupBy().isEmpty()) {
+        if (q.projection() instanceof Statement.Projection.Count && q.groupBy().isEmpty() && q.having() == null) {
             long[] n = {0};
             scan(store, q.db(), q.table(), q.where(), (id, row) -> {
                 if (matches(q.where(), id, row)) {
@@ -350,12 +371,12 @@ public final class Executor {
         if (q.limit() != null && q.limit() > maxRows) {
             throw new QueryException("LIMIT " + q.limit() + " is over the maximum of " + maxRows);
         }
-        if (Statement.Projection.aggregates(q.projection()) || !q.groupBy().isEmpty()) {
+        if (Statement.Projection.aggregates(q.projection()) || !q.groups().isEmpty()) {
             return grouped(store, q);
         }
         long cap = q.limit() != null ? q.limit() : maxRows;
         List<Match> found = new ArrayList<>();
-        boolean idOrder = q.orderBy() == null || (ID.equals(q.orderBy().column()) && !q.orderBy().descending());
+        boolean idOrder = readsInIdOrder(q);
         if (idOrder) {
             // Rows come in _id order, so the first matches are the answer, and one past the cap is enough to
             // know about truncation: stop there (a keyset page reads only its rows).
@@ -374,12 +395,16 @@ public final class Executor {
             });
         }
         if (!idOrder) {
-            String col = q.orderBy().column();
-            Comparator<Match> byValue = (a, b) -> Values.sortOrder(get(a.id, a.row, col), get(b.id, b.row, col));
-            if (q.orderBy().descending()) {
-                byValue = byValue.reversed();
+            Comparator<Match> byKeys = null;
+            for (Statement.OrderBy o : q.orderBy()) {
+                String col = o.column();
+                Comparator<Match> byValue = (a, b) -> Values.sortOrder(get(a.id, a.row, col), get(b.id, b.row, col));
+                if (o.descending()) {
+                    byValue = byValue.reversed();
+                }
+                byKeys = byKeys == null ? byValue : byKeys.thenComparing(byValue);
             }
-            found.sort(byValue.thenComparing(Match::id));
+            found.sort(byKeys.thenComparing(Match::id));
         }
         boolean truncated = q.limit() == null && found.size() > cap;
         List<Match> page = found.size() > cap ? found.subList(0, (int) cap) : found;
@@ -413,34 +438,59 @@ public final class Executor {
         final Acc[] accs;
         final Object[] results;
 
-        Group(Object[] keys, Object[] values, List<Statement.Item.Aggregate> aggs) {
+        Group(Object[] keys, Object[] values, List<Statement.Item.Aggregate> aggs, Budget budget) {
             this.keys = keys;
             this.values = values;
             this.accs = new Acc[aggs.size()];
             for (int i = 0; i < accs.length; i++) {
-                accs[i] = Acc.of(aggs.get(i));
+                accs[i] = Acc.of(aggs.get(i), budget);
             }
             this.results = new Object[accs.length];
+        }
+    }
+
+    /** How many more values the COUNT(DISTINCT) aggregates of one statement may hold, in all groups together. */
+    private static final class Budget {
+        final int max;
+        int left;
+
+        Budget(int max) {
+            this.max = max;
+            this.left = max;
+        }
+
+        void take() {
+            if (left == 0) {
+                throw new QueryException(String.format(java.util.Locale.ROOT,
+                        "COUNT(DISTINCT) would hold more than %,d values", max));
+            }
+            left--;
         }
     }
 
     private static final List<Object> NO_GROUP_COLUMNS = List.of();
 
     /**
-     * SELECT with aggregates or GROUP BY: one row per distinct combination of the GROUP BY values (null and
-     * missing are one value), or a single row without GROUP BY even over no rows. Groups are kept while the
-     * matching rows are read, and the statement fails once there would be more than {@code maxGroups}.
+     * SELECT with aggregates, GROUP BY or DISTINCT: one row per distinct combination of the GROUP BY values
+     * (null and missing are one value), or a single row without GROUP BY even over no rows. Groups are kept
+     * while the matching rows are read, and the statement fails once there would be more than {@code maxGroups}.
+     * Every aggregate, of the list and of HAVING, is computed for every group; then HAVING drops groups, and
+     * ORDER BY and LIMIT apply to the rest.
      */
     private Result grouped(Store store, Statement.Select q) {
         List<Statement.Item> items = Statement.Projection.itemsOf(q.projection());
-        List<String> by = q.groupBy();
+        List<String> by = q.groups();
         int k = by.size();
         List<Statement.Item.Aggregate> aggs = new ArrayList<>();
-        for (Statement.Item i : items) {
-            if (i instanceof Statement.Item.Aggregate a && !aggs.contains(a)) {
-                aggs.add(a);
+        List<Statement.Item> tested = Statement.Select.havingItems(q.having());
+        for (List<Statement.Item> from : List.of(items, tested)) {
+            for (Statement.Item i : from) {
+                if (i instanceof Statement.Item.Aggregate a && !aggs.contains(a)) {
+                    aggs.add(a);
+                }
             }
         }
+        Budget budget = new Budget(maxDistinct);
         Map<Object, Group> groups = new java.util.HashMap<>();
         scan(store, q.db(), q.table(), q.where(), (id, row) -> {
             if (!matches(q.where(), id, row)) {
@@ -461,15 +511,16 @@ public final class Executor {
             Group g = groups.get(key);
             if (g == null) {
                 if (groups.size() >= maxGroups) {
-                    throw new QueryException(String.format(java.util.Locale.ROOT,
-                            "GROUP BY would make more than %,d groups", maxGroups));
+                    throw new QueryException(String.format(java.util.Locale.ROOT, q.distinct()
+                            ? "SELECT DISTINCT would hold more than %,d rows"
+                            : "GROUP BY would make more than %,d groups", maxGroups));
                 }
                 Object[] values = new Object[k];
                 for (int i = 0; i < k; i++) {
                     values[i] = get(id, row, by.get(i));
                 }
                 Object[] keys = k == 1 ? new Object[] {key} : ((List<?>) key).toArray();
-                g = new Group(keys, values, aggs);
+                g = new Group(keys, values, aggs, budget);
                 groups.put(key, g);
             }
             for (int i = 0; i < aggs.size(); i++) {
@@ -478,7 +529,7 @@ public final class Executor {
             }
         });
         if (k == 0 && groups.isEmpty()) {
-            groups.put(NO_GROUP_COLUMNS, new Group(new Object[0], new Object[0], aggs));
+            groups.put(NO_GROUP_COLUMNS, new Group(new Object[0], new Object[0], aggs, budget));
         }
         List<Group> list = new ArrayList<>(groups.values());
         list.sort((a, b) -> {
@@ -496,14 +547,39 @@ public final class Executor {
                 g.results[i] = g.accs[i].result();
             }
         }
-        if (q.orderBy() != null) {
-            String col = q.orderBy().column();
-            int at = col != null ? by.indexOf(col) : aggs.indexOf((Statement.Item.Aggregate) q.orderBy().key());
-            Comparator<Group> byValue = col != null
-                    ? (a, b) -> Values.sortOrder(a.values[at], b.values[at])
-                    : (a, b) -> Values.sortOrder(a.results[at], b.results[at]);
-            // The sort is stable: groups with equal values stay in GROUP BY order, in both directions.
-            list.sort(q.orderBy().descending() ? byValue.reversed() : byValue);
+        if (q.having() != null) {
+            // HAVING reads a group as a row whose columns are the labels of its GROUP BY values and aggregates.
+            int idAt = by.indexOf(ID);
+            List<Group> kept = new ArrayList<>();
+            for (Group g : list) {
+                Map<String, Object> row = new java.util.HashMap<>();
+                for (int i = 0; i < k; i++) {
+                    row.put(by.get(i), g.values[i]);
+                }
+                for (int i = 0; i < aggs.size(); i++) {
+                    row.put(aggs.get(i).label(), g.results[i]);
+                }
+                if (matches(q.having(), idAt < 0 ? null : (String) g.values[idAt], row)) {
+                    kept.add(g);
+                }
+            }
+            list = kept;
+        }
+        if (!q.orderBy().isEmpty()) {
+            Comparator<Group> byKeys = null;
+            for (Statement.OrderBy o : q.orderBy()) {
+                String col = o.column();
+                int at = col != null ? by.indexOf(col) : aggs.indexOf((Statement.Item.Aggregate) o.key());
+                Comparator<Group> byValue = col != null
+                        ? (a, b) -> Values.sortOrder(a.values[at], b.values[at])
+                        : (a, b) -> Values.sortOrder(a.results[at], b.results[at]);
+                if (o.descending()) {
+                    byValue = byValue.reversed();
+                }
+                byKeys = byKeys == null ? byValue : byKeys.thenComparing(byValue);
+            }
+            // The sort is stable: groups equal on every key stay in GROUP BY order, in both directions.
+            list.sort(byKeys);
         }
         long cap = q.limit() != null ? q.limit() : maxRows;
         boolean truncated = q.limit() == null && list.size() > cap;
@@ -532,7 +608,10 @@ public final class Executor {
 
         abstract Object result();
 
-        static Acc of(Statement.Item.Aggregate a) {
+        static Acc of(Statement.Item.Aggregate a, Budget budget) {
+            if (a.distinct()) {
+                return new CountDistinct(budget);
+            }
             return switch (a.fn()) {
                 case COUNT -> new Count();
                 case SUM -> new Sum(false);
@@ -540,6 +619,32 @@ public final class Executor {
                 case MIN -> new Extreme(false);
                 case MAX -> new Extreme(true);
             };
+        }
+    }
+
+    /** COUNT(DISTINCT column): the values that are not null, each once, equal as GROUP BY makes them. */
+    private static final class CountDistinct extends Acc {
+        final Set<Object> seen = new HashSet<>();
+        final Budget budget;
+
+        CountDistinct(Budget budget) {
+            this.budget = budget;
+        }
+
+        @Override
+        void add(Object v) {
+            if (v != null) {
+                Object key = Values.key(v);
+                if (!seen.contains(key)) {
+                    budget.take();
+                    seen.add(key);
+                }
+            }
+        }
+
+        @Override
+        Object result() {
+            return (long) seen.size();
         }
     }
 

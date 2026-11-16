@@ -55,7 +55,7 @@ public final class Printer {
             return b.toString();
         }
         if (s instanceof Statement.Select q) {
-            StringBuilder b = new StringBuilder("SELECT ");
+            StringBuilder b = new StringBuilder(q.distinct() ? "SELECT DISTINCT " : "SELECT ");
             if (q.projection() instanceof Statement.Projection.All) {
                 b.append('*');
             } else {
@@ -67,11 +67,13 @@ public final class Printer {
             if (!q.groupBy().isEmpty()) {
                 b.append(" GROUP BY ").append(String.join(", ", q.groupBy()));
             }
-            if (q.orderBy() != null) {
-                b.append(" ORDER BY ").append(item(q.orderBy().key()));
-                if (q.orderBy().descending()) {
-                    b.append(" DESC");
-                }
+            if (q.having() != null) {
+                b.append(" HAVING ");
+                expr(b, q.having(), true);
+            }
+            if (!q.orderBy().isEmpty()) {
+                b.append(" ORDER BY ").append(q.orderBy().stream()
+                        .map(o -> item(o.key()) + (o.descending() ? " DESC" : "")).collect(Collectors.joining(", ")));
             }
             if (q.limit() != null) {
                 b.append(" LIMIT ").append(q.limit());
@@ -94,54 +96,61 @@ public final class Printer {
         throw new IllegalArgumentException("unknown statement " + s);
     }
 
+    /** A WHERE condition. */
     public static String print(Expr e) {
         StringBuilder b = new StringBuilder();
-        expr(b, e);
+        expr(b, e, false);
         return b.toString();
     }
 
     private static void where(StringBuilder b, Expr e) {
         if (e != null) {
             b.append(" WHERE ");
-            expr(b, e);
+            expr(b, e, false);
         }
     }
 
-    private static void expr(StringBuilder b, Expr e) {
+    /** With {@code having}, each column is the label of a GROUP BY column or an aggregate, written as such. */
+    private static void expr(StringBuilder b, Expr e, boolean having) {
         if (e instanceof Expr.Compare c) {
-            b.append(c.column()).append(' ').append(c.op().symbol()).append(' ').append(Values.format(c.value()));
+            left(b, c.column(), having).append(' ').append(c.op().symbol()).append(' ').append(Values.format(c.value()));
         } else if (e instanceof Expr.IsNull n) {
-            b.append(n.column()).append(n.negated() ? " IS NOT NULL" : " IS NULL");
+            left(b, n.column(), having).append(n.negated() ? " IS NOT NULL" : " IS NULL");
         } else if (e instanceof Expr.In in) {
-            b.append(in.column()).append(in.negated() ? " NOT IN (" : " IN (").append(values(in.values())).append(')');
+            left(b, in.column(), having).append(in.negated() ? " NOT IN (" : " IN (").append(values(in.values())).append(')');
         } else if (e instanceof Expr.Like l) {
-            b.append(l.column()).append(l.negated() ? " NOT LIKE " : " LIKE ").append(Values.format(l.pattern().text()));
+            left(b, l.column(), having).append(l.negated() ? " NOT LIKE " : " LIKE ")
+                    .append(Values.format(l.pattern().text()));
         } else if (e instanceof Expr.Not n) {
             b.append("NOT ");
-            expr(b, n.inner());
+            expr(b, n.inner(), having);
         } else if (e instanceof Expr.And a) {
-            group(b, a.terms(), " AND ");
+            group(b, a.terms(), " AND ", having);
         } else if (e instanceof Expr.Or o) {
-            group(b, o.terms(), " OR ");
+            group(b, o.terms(), " OR ", having);
         } else {
             throw new IllegalArgumentException("unknown expression " + e);
         }
     }
 
-    private static void group(StringBuilder b, List<Expr> terms, String joiner) {
+    private static StringBuilder left(StringBuilder b, String column, boolean having) {
+        return b.append(having ? item(Statement.Item.ofLabel(column)) : column);
+    }
+
+    private static void group(StringBuilder b, List<Expr> terms, String joiner, boolean having) {
         b.append('(');
         for (int i = 0; i < terms.size(); i++) {
             if (i > 0) {
                 b.append(joiner);
             }
-            expr(b, terms.get(i));
+            expr(b, terms.get(i), having);
         }
         b.append(')');
     }
 
     private static String item(Statement.Item i) {
         if (i instanceof Statement.Item.Aggregate a) {
-            return a.fn() + "(" + (a.column() == null ? "*" : a.column()) + ")";
+            return a.fn() + "(" + (a.column() == null ? "*" : (a.distinct() ? "DISTINCT " : "") + a.column()) + ")";
         }
         return ((Statement.Item.Column) i).name();
     }
