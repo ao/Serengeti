@@ -9,6 +9,7 @@ import com.ataiva.serengeti.core.config.Config;
 import com.ataiva.serengeti.core.config.ConfigException;
 import com.ataiva.serengeti.core.server.SetupToken;
 import com.ataiva.serengeti.core.server.Users;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -116,20 +117,15 @@ class NodeTest {
     void aStoppingNodeAnswers503OnAKeptAliveConnection() throws Exception {
         Node n = Node.start(config(tmp.resolve("data"), "SERENGETI_ADMIN_PASSWORD", PW), Node.QUERIES);
         assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
-        String cursor = (String) changes(n, "db=shop&after=now").get("cursor");
         HttpClient kept = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
         HttpRequest health = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + n.address().getPort() + "/health")).build();
         assertEquals(200, kept.send(health, HttpResponse.BodyHandlers.ofString()).statusCode()); // opens the connection
-        // A long poll stays in flight, so close() waits up to a second for it, and meanwhile the JDK server
-        // still dispatches requests on connections it has.
-        Thread poll = new Thread(() -> {
-            try {
-                changes(n, "db=shop&wait=5&after=" + cursor);
-            } catch (Exception e) {
-                // cut off by the stop: expected
-            }
-        });
-        poll.start();
+        // A request whose body has not all arrived stays in flight, so close() waits up to a second for it, and
+        // meanwhile the JDK server still dispatches requests on connections it has.
+        java.net.Socket slow = new java.net.Socket("127.0.0.1", n.address().getPort());
+        slow.getOutputStream().write(("POST /v1/query HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                + "Content-Length: 100\r\n\r\n{").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        slow.getOutputStream().flush();
         Thread.sleep(300);
         Thread closer = new Thread(() -> {
             try {
@@ -142,7 +138,7 @@ class NodeTest {
         Thread.sleep(200);
         HttpResponse<String> r = kept.send(health, HttpResponse.BodyHandlers.ofString());
         closer.join();
-        poll.join();
+        slow.close();
         assertEquals(503, r.statusCode(), r.body());
         assertTrue(r.body().contains("stopping"), r.body());
         assertEquals("close", r.headers().firstValue("Connection").orElse(""));
