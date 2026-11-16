@@ -705,15 +705,20 @@ public final class HttpApi implements AutoCloseable {
                 throw new HttpError(503, "busy sending rows to other nodes; try again");
             }
         }
+        byte[] answer;
         try {
-            sendJson(ex, 200, routes.handle(method, path, query, body));
+            answer = (Json.write(routes.handle(method, path, query, body)) + "\n").getBytes(StandardCharsets.UTF_8);
         } catch (QueryService.Rejected r) {
             throw new HttpError(r.status(), r.getMessage());
         } finally {
             if (heavy) {
+                // Building the answer is what takes the memory. Sending it is not bounded in time: a peer cut
+                // off mid-answer by a partition can hold the write for minutes, and with the permit it would
+                // have closed these routes to every other peer for that long (review 22d).
                 heavyInternal.release();
             }
         }
+        send(ex, 200, "application/json; charset=utf-8", answer);
     }
 
     /**
@@ -912,11 +917,21 @@ public final class HttpApi implements AutoCloseable {
                 (Json.write(body) + "\n").getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Bytes written to the socket in one call. The JDK copies what one write passes into a temporary direct
+     * buffer of that size and keeps it for the thread: with one write per answer, a node held its largest
+     * answers once per HTTP thread outside the heap, where the memory limit does not see them, and a few
+     * 20 MB SELECTs got it killed (review 22d). In slices, that buffer stays 64 KiB.
+     */
+    static final int WRITE_SLICE = 64 * 1024;
+
     private static void send(HttpExchange ex, int status, String type, byte[] body) throws IOException {
         ex.getResponseHeaders().set("Content-Type", type);
         ex.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
         try (OutputStream out = ex.getResponseBody()) {
-            out.write(body);
+            for (int off = 0; off < body.length; off += WRITE_SLICE) {
+                out.write(body, off, Math.min(WRITE_SLICE, body.length - off));
+            }
         }
     }
 

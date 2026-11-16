@@ -26,10 +26,12 @@ USER 10001:10001
 # MALLOC_ARENA_MAX: glibc otherwise keeps a malloc arena per thread; filling a node in a 512 MiB container,
 # that held about 150 MB the JVM does not count (measured with Native Memory Tracking against the cgroup's
 # anonymous memory), and the kernel killed the node before its memory limit refused a write.
+# jdk.nio.maxCachedBufferSize: the JDK keeps, per thread, a direct buffer as large as the largest single
+# socket write it made; unbounded, 64 request threads each kept their largest answer outside the heap.
 ENV SERENGETI_BIND=0.0.0.0 \
     SERENGETI_DATA_DIR=/data \
     MALLOC_ARENA_MAX=2 \
-    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Djdk.nio.maxCachedBufferSize=262144"
 VOLUME /data
 EXPOSE 1985
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \

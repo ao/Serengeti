@@ -254,8 +254,10 @@ and the list comes back sorted. `GET /v1/users` and the answers to `PUT` show it
 removes the limit. A change that leaves `databases` out keeps the list, and so does the account's own
 password change. Admin accounts (accounts and backups reach every database) and metrics accounts (no data)
 cannot have a list: that is a 400, and so is giving a limited account one of those roles, unless the same
-change has `"databases": null`. A limited account still sees the number of databases on the node in
-`/v1/status` and `/metrics`.
+change has `"databases": null`. A limited account still sees node-wide numbers: the number of databases
+in `/v1/status`, the counters of `/metrics` (log size, fsyncs, data size, conflicts, requests), and, in
+the change feed's cursor, a sequence that counts changes to every database, so it can tell how often other
+databases are written. It sees no names or rows of other databases.
 
 Read, metrics and limited accounts are not in the `users.json` that 2.0 and 2.1 read (they would let a
 limited account reach every database), so after a rollback to either they do not exist. A write account
@@ -266,6 +268,12 @@ version, the newest change to a name wins on every node, and a node that was dow
 returns. A list of databases is part of the account and travels with it, ordered like a role change; a node
 refuses an account whose list it cannot read rather than take it without one. Accounts travel between nodes
 as bcrypt hashes, over the cluster's TLS and behind its cluster key.
+
+A change replaces the whole account (password, role and list). So two admins changing one account on two
+nodes within the same few seconds, before either change has reached the other node, end with the newer
+change only: a password reset made on one node can undo a list or a role given on another a moment
+before, and neither admin is told. Change an account from one node at a time, and read it back with `GET
+/v1/users` after a change that restricts it.
 Nodes older than 2.2 do not take part: in a cluster being upgraded, an account made on a 2.2 node works on
 the 2.2 nodes only.
 

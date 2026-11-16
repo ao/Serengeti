@@ -29,12 +29,14 @@ class ScheduledBackupsTest {
     @TempDir
     Path tmp;
 
+    private static final String NODE = "a1b2c3d4-0000-4000-8000-000000000001";
+
     private final AtomicLong now = new AtomicLong(T0);
     private final AtomicInteger written = new AtomicInteger();
     private final AtomicBoolean diskFailed = new AtomicBoolean();
 
     private ScheduledBackups open(Path dir, int keep, ScheduledBackups.Writer w) {
-        return ScheduledBackups.open(dir, 60, keep, w, diskFailed::get, now::get, false);
+        return ScheduledBackups.open(dir, null, NODE, 60, keep, w, diskFailed::get, now::get, false);
     }
 
     private ScheduledBackups open(Path dir, int keep) {
@@ -57,9 +59,9 @@ class ScheduledBackupsTest {
                 assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(f)));
                 now.addAndGet(HOUR);
             }
-            assertEquals(List.of("serengeti-backup-20261116T120000Z.jsonl", "serengeti-backup-20261116T130000Z.jsonl",
-                    "serengeti-backup-20261116T140000Z.jsonl"), names(dir));
-            assertEquals("backup 5", Files.readString(dir.resolve("serengeti-backup-20261116T140000Z.jsonl")));
+            assertEquals(List.of("serengeti-backup-a1b2c3d4-20261116T120000Z.jsonl", "serengeti-backup-a1b2c3d4-20261116T130000Z.jsonl",
+                    "serengeti-backup-a1b2c3d4-20261116T140000Z.jsonl"), names(dir));
+            assertEquals("backup 5", Files.readString(dir.resolve("serengeti-backup-a1b2c3d4-20261116T140000Z.jsonl")));
             assertEquals((T0 + 4 * HOUR) / 1000, b.lastSuccessSeconds());
             assertEquals(8, b.lastBytes());
             assertEquals(0, b.failures());
@@ -73,8 +75,8 @@ class ScheduledBackupsTest {
             b.runNow();
             now.addAndGet(400);
             Path second = b.runNow();
-            assertEquals("serengeti-backup-20261116T100000Z-1.jsonl", second.getFileName().toString());
-            assertEquals(List.of("serengeti-backup-20261116T100000Z-1.jsonl"), names(dir));
+            assertEquals("serengeti-backup-a1b2c3d4-20261116T100000Z-1.jsonl", second.getFileName().toString());
+            assertEquals(List.of("serengeti-backup-a1b2c3d4-20261116T100000Z-1.jsonl"), names(dir));
             assertEquals("backup 2", Files.readString(second));
         }
     }
@@ -109,26 +111,86 @@ class ScheduledBackupsTest {
     @Test
     void leftoverTemporaryFilesGoAndNothingElseIsEverDeleted() throws IOException {
         Path dir = Files.createDirectories(tmp.resolve("backups"));
-        Files.writeString(dir.resolve(".serengeti-backup-12345.tmp"), "from a node that stopped");
+        Files.writeString(dir.resolve(".serengeti-backup-a1b2c3d4-12345.tmp"), "from this node, stopped");
+        Files.writeString(dir.resolve(".serengeti-backup-ffff0000-12345.tmp"), "another node's, being written");
         Files.writeString(dir.resolve("notes.txt"), "mine");
-        Files.writeString(dir.resolve("serengeti-backup-latest.jsonl"), "not a name with a time");
-        Files.writeString(dir.resolve("serengeti-backup-20261399T000000Z.jsonl"), "no such month");
-        Files.createDirectory(dir.resolve("serengeti-backup-20200101T000000Z.jsonl"));
+        Files.writeString(dir.resolve("serengeti-backup-a1b2c3d4-latest.jsonl"), "not a name with a time");
+        Files.writeString(dir.resolve("serengeti-backup-a1b2c3d4-20261399T000000Z.jsonl"), "no such month");
+        Files.writeString(dir.resolve("serengeti-backup-20200101T000000Z.jsonl"), "no node in the name");
+        Files.writeString(dir.resolve("serengeti-backup-ffff0000-20200101T000000Z.jsonl"), "another node's");
+        Files.createDirectory(dir.resolve("serengeti-backup-a1b2c3d4-20200101T000000Z.jsonl"));
         try (ScheduledBackups b = open(dir, 1)) {
             b.runNow();
             now.addAndGet(HOUR);
             b.runNow();
-            assertEquals(List.of("notes.txt", "serengeti-backup-20200101T000000Z.jsonl",
-                    "serengeti-backup-20261116T110000Z.jsonl", "serengeti-backup-20261399T000000Z.jsonl",
-                    "serengeti-backup-latest.jsonl"), names(dir));
+            assertEquals(List.of(".serengeti-backup-ffff0000-12345.tmp", "notes.txt",
+                    "serengeti-backup-20200101T000000Z.jsonl", "serengeti-backup-a1b2c3d4-20200101T000000Z.jsonl",
+                    "serengeti-backup-a1b2c3d4-20261116T110000Z.jsonl", "serengeti-backup-a1b2c3d4-20261399T000000Z.jsonl",
+                    "serengeti-backup-a1b2c3d4-latest.jsonl", "serengeti-backup-ffff0000-20200101T000000Z.jsonl"),
+                    names(dir));
         }
+    }
+
+    @Test
+    void nodesSharingADirectoryKeepTheirOwnBackups() throws IOException {
+        Path dir = tmp.resolve("shared");
+        try (ScheduledBackups a = open(dir, 1);
+                ScheduledBackups b = ScheduledBackups.open(dir, null, "ffff0000-1111", 60, 1,
+                        f -> Files.writeString(f, "other"), diskFailed::get, now::get, false)) {
+            a.runNow();
+            b.runNow();
+            now.addAndGet(HOUR);
+            a.runNow();
+            assertEquals(List.of("serengeti-backup-a1b2c3d4-20261116T110000Z.jsonl",
+                    "serengeti-backup-ffff0000-20261116T100000Z.jsonl"), names(dir));
+        }
+    }
+
+    @Test
+    void aBackupWrittenAfterTheClockWentBackIsKeptAndTheScheduleGoesOn() throws IOException {
+        Path dir = tmp.resolve("backups");
+        try (ScheduledBackups b = open(dir, 2)) {
+            b.runNow();                 // 10:00
+            now.addAndGet(HOUR);
+            b.runNow();                 // 11:00
+            now.addAndGet(-2 * HOUR);   // the clock steps back to 09:00
+            b.runIfDue();
+            assertEquals(3, written.get(), "the clock is before the newest backup: one is due");
+            assertEquals(List.of("serengeti-backup-a1b2c3d4-20261116T090000Z.jsonl",
+                    "serengeti-backup-a1b2c3d4-20261116T110000Z.jsonl"), names(dir), "the new one stays");
+            assertEquals(T0 / 1000 - 3600, b.lastSuccessSeconds());
+        }
+    }
+
+    @Test
+    void aBackupNamedInTheFutureDoesNotPutTheScheduleOff() throws IOException {
+        Path dir = Files.createDirectories(tmp.resolve("backups"));
+        Files.writeString(dir.resolve("serengeti-backup-a1b2c3d4-20261117T100000Z.jsonl"), "a day ahead");
+        try (ScheduledBackups b = open(dir, 5)) {
+            assertEquals(T0 / 1000, b.lastSuccessSeconds(), "counted from now, not from the name");
+            now.addAndGet(HOUR);
+            b.runIfDue();
+            assertEquals(1, written.get(), "due an interval after the start");
+        }
+    }
+
+    @Test
+    void aBackupDirectoryThatLinksIntoTheDataDirectoryIsRefused() throws IOException {
+        Path data = Files.createDirectories(tmp.resolve("data"));
+        Files.createDirectories(data.resolve("bk"));
+        Path link = Files.createSymbolicLink(tmp.resolve("backups"), data.resolve("bk"));
+        ConfigException e = assertThrows(ConfigException.class, () -> ScheduledBackups.open(link, data, NODE, 60, 1,
+                f -> { }, diskFailed::get, now::get, false));
+        assertTrue(e.getMessage().contains("inside the data directory"), e.getMessage());
+        ScheduledBackups.open(tmp.resolve("elsewhere"), data, NODE, 60, 1, f -> { }, diskFailed::get, now::get, false)
+                .close();
     }
 
     @Test
     void theNewestBackupFoundAtStartDecidesWhenTheNextIsDue() throws IOException {
         Path dir = Files.createDirectories(tmp.resolve("backups"));
-        Files.writeString(dir.resolve("serengeti-backup-20261116T093000Z.jsonl"), "older");
-        Files.writeString(dir.resolve("serengeti-backup-20261116T094500Z.jsonl"), "newest");
+        Files.writeString(dir.resolve("serengeti-backup-a1b2c3d4-20261116T093000Z.jsonl"), "older");
+        Files.writeString(dir.resolve("serengeti-backup-a1b2c3d4-20261116T094500Z.jsonl"), "newest");
         try (ScheduledBackups b = open(dir, 5)) {
             assertEquals((T0 - 15 * 60_000L) / 1000, b.lastSuccessSeconds());
             b.runIfDue(); // 15 minutes after the newest, with a 60-minute interval

@@ -30,7 +30,7 @@ final class AsyncLimiter {
             CompletableFuture<T> f;
             try {
                 f = call.get();
-            } catch (RuntimeException e) {
+            } catch (Throwable e) { // an Error too: the permit must come back and the caller hear of it
                 f = CompletableFuture.failedFuture(e);
             }
             boolean[] released = {false};
@@ -77,7 +77,9 @@ final class AsyncLimiter {
             }
         }
         if (next != null) {
-            next.run(); // takes over the permit
+            // Takes over the permit, on another thread: calls that fail at once (a client refusing work while
+            // it stops) would otherwise start each other through the whole queue on one stack.
+            CompletableFuture.runAsync(next);
         }
     }
 

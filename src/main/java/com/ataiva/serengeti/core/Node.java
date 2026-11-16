@@ -172,8 +172,8 @@ public final class Node implements AutoCloseable {
         }
         if (config.backupDir != null) {
             try {
-                this.backups = ScheduledBackups.open(config.backupDir, config.backupIntervalMinutes, config.backupKeep,
-                        storage::writeBackup, storage::failed, System::currentTimeMillis, true);
+                this.backups = ScheduledBackups.open(config.backupDir, dir, id, config.backupIntervalMinutes,
+                        config.backupKeep, this::writeScheduledBackup, storage::failed, System::currentTimeMillis, true);
             } catch (ConfigException e) {
                 storage.close();
                 throw e;
@@ -457,6 +457,24 @@ public final class Node implements AutoCloseable {
             cluster.close();
         }
         storage.close();
+    }
+
+    /**
+     * A scheduled backup: written first to a temporary file in the data directory, which holds the storage's
+     * read lock (writes wait meanwhile, as for {@code GET /v1/backup}), then copied into {@code target} without
+     * it. So a slow or hung backup volume holds up only the copy, never the node's writes.
+     */
+    private void writeScheduledBackup(Path target) throws IOException {
+        Path local = Files.createTempFile(storage.dir(), BACKUP_PREFIX, ".tmp");
+        try {
+            storage.writeBackup(local);
+            try (java.io.OutputStream out = Files.newOutputStream(target, java.nio.file.StandardOpenOption.WRITE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                Files.copy(local, out);
+            }
+        } finally {
+            Files.deleteIfExists(local);
+        }
     }
 
     /** Writes a scheduled backup now, for tests; empty when backup_dir is not set. */

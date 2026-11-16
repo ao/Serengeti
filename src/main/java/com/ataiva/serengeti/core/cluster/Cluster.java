@@ -616,7 +616,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         }
         // A peer found running 2.0 is asked for the bucket routes again now and then: it may have been upgraded.
         boolean byBuckets = !p.protocol1 || clock.getAsLong() - p.protocol1Since > PROBE_MILLIS;
-        CompletableFuture<Integer> run = !byBuckets ? syncWholeDatabases(p) : syncByBuckets(p, forRead).handle((n, err) -> {
+        CompletableFuture<Integer> run = !byBuckets ? syncWholeDatabases(p, forRead) : syncByBuckets(p, forRead).handle((n, err) -> {
             if (err != null && unwrap(err) instanceof PeerClient.NotSupported) {
                 if (!p.protocol1) {
                     LOG.info("peer " + p.address + " runs 2.0; syncing with it by whole databases");
@@ -634,7 +634,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             }
             p.v2Synced = true;
             return n;
-        }).thenCompose(n -> n == null ? syncWholeDatabases(p) : CompletableFuture.completedFuture(n));
+        }).thenCompose(n -> n == null ? syncWholeDatabases(p, forRead) : CompletableFuture.completedFuture(n));
         return run.thenApply(merged -> {
             if (merged > 0) {
                 LOG.fine("merged " + merged + " ops from " + p.address);
@@ -792,7 +792,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     }
 
     /** Protocol 1 (2.0 peers): compare one SHA-256 per database and pull whole databases that differ. */
-    private CompletableFuture<Integer> syncWholeDatabases(Peer p) {
+    private CompletableFuture<Integer> syncWholeDatabases(Peer p, boolean forRead) {
         return client.digests(p.address).thenCompose(theirs -> {
             p.lastContact = clock.getAsLong();
             Map<String, String> mine = engine.read(Store::digests);
@@ -804,7 +804,8 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             }
             List<CompletableFuture<List<Op>>> pulls = new ArrayList<>();
             for (String db : differ) {
-                pulls.add(client.state(p.address, db));
+                // Each answer is a whole database: through the same limit as the row pages (review 22d).
+                pulls.add((forRead ? readPullLimiter : pullLimiter).run(() -> client.state(p.address, db)));
             }
             List<CompletableFuture<Integer>> merged = new ArrayList<>();
             for (CompletableFuture<List<Op>> f : pulls) {

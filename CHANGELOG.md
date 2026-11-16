@@ -70,11 +70,13 @@ GitHub release notes and tags.
   output or a 0600 file, and checks that it is complete: `kubectl exec serengeti-0 -- serengeti backup >
   backup.jsonl`.
 - Scheduled backups: with `backup_dir` set, a node writes a backup there every `backup_interval_minutes`
-  (60) and keeps the newest `backup_keep` (24), each a 0600 file `serengeti-backup-YYYYMMDDTHHMMSSZ.jsonl`
-  written to a temporary file, forced to disk and renamed. The next one is due an interval after the newest
-  in the directory, also across restarts. A directory inside the data directory, or one that cannot be
-  written, stops the node at start. `/metrics` reports the time of the newest and the failures; the image
-  has an empty `/backups` for a volume.
+  (60) and keeps its newest `backup_keep` (24), each a 0600 file
+  `serengeti-backup-NODE-YYYYMMDDTHHMMSSZ.jsonl` written to a temporary file, forced to disk and renamed;
+  nodes can share a directory. The backup is made in the data directory and then copied, so a slow backup
+  volume never holds up writes. The next one is due an interval after the newest, also across restarts. A
+  directory inside the data directory (also through a link), or one that cannot be written, stops the node
+  at start. `/metrics` reports the time of the newest and the failures; the image has an empty `/backups`
+  for a volume.
 - `tests/edge/run.sh`, a conformance and limits suite for the HTTP API and the query language: about 970
   checks plus 5,000 generated statements per run, concurrency, kill -9 and backup cases. It found the bugs
   listed under Fixed; CI runs it.

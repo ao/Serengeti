@@ -12,6 +12,47 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class AsyncLimiterTest {
+    /** The next waiting call starts on another thread once a permit comes back. */
+    private static void awaitStarted(List<Integer> started, int n) throws InterruptedException {
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            synchronized (started) {
+                if (started.size() >= n) {
+                    return;
+                }
+            }
+            Thread.sleep(5);
+        }
+    }
+
+    @Test
+    void anErrorFromTheCallGivesThePermitBackAndFailsTheCall() throws Exception {
+        AsyncLimiter l = new AsyncLimiter(1, 60_000);
+        CompletableFuture<Object> bad = l.run(() -> {
+            throw new StackOverflowError("deep");
+        });
+        ExecutionException e = assertThrows(ExecutionException.class, () -> bad.get(1, TimeUnit.SECONDS));
+        assertTrue(e.getCause() instanceof StackOverflowError);
+        assertEquals("ok", l.run(() -> CompletableFuture.completedFuture("ok")).get(1, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void aLongQueueOfCallsThatFailAtOnceDrainsWithoutDeepRecursion() throws Exception {
+        AsyncLimiter l = new AsyncLimiter(1, 60_000);
+        CompletableFuture<Object> gate = new CompletableFuture<>();
+        l.run(() -> gate);
+        List<CompletableFuture<Object>> queued = new ArrayList<>();
+        for (int i = 0; i < 20_000; i++) {
+            queued.add(l.run(() -> CompletableFuture.failedFuture(new IllegalStateException("client closed"))));
+        }
+        gate.complete("open");
+        CompletableFuture.allOf(queued.toArray(new CompletableFuture[0])).handle((v, err) -> null).get(30, TimeUnit.SECONDS);
+        assertEquals(0, l.waiting());
+        for (int i = 0; i < 200 && l.running() > 0; i++) {
+            Thread.sleep(10);
+        }
+        assertEquals(0, l.running());
+    }
     @Test
     void atMostThePermitsRunAndTheRestStartInOrderAsOthersFinish() throws Exception {
         AsyncLimiter l = new AsyncLimiter(2, 60_000);
@@ -33,8 +74,10 @@ class AsyncLimiterTest {
         assertEquals(2, l.running());
         assertEquals(3, l.waiting());
         calls.get(1).complete(1);
+        awaitStarted(started, 3);
         assertEquals(List.of(0, 1, 2), started, "a finished call lets the next one start");
         calls.get(0).completeExceptionally(new IllegalStateException("peer gone"));
+        awaitStarted(started, 4);
         assertEquals(List.of(0, 1, 2, 3), started, "so does a failed one");
         ExecutionException e = assertThrows(ExecutionException.class, () -> results.get(0).get(1, TimeUnit.SECONDS));
         assertEquals("peer gone", e.getCause().getMessage());
@@ -42,6 +85,7 @@ class AsyncLimiterTest {
         for (int i = 2; i < 5; i++) {
             calls.get(i).complete(i);
         }
+        awaitStarted(started, 5);
         assertEquals(List.of(0, 1, 2, 3, 4), started);
         assertEquals(4, results.get(4).get(1, TimeUnit.SECONDS));
         assertEquals(0, l.running());
