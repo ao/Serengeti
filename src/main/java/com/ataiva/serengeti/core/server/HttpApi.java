@@ -289,8 +289,15 @@ public final class HttpApi implements AutoCloseable {
                 if (role != Users.Role.ADMIN) {
                     throw new HttpError(403, "backups need the admin role");
                 }
-                java.nio.file.Path file = deps.ops().backup()
-                        .orElseThrow(() -> new HttpError(501, "backups are not available in this build"));
+                java.nio.file.Path file;
+                try {
+                    file = deps.ops().backup()
+                            .orElseThrow(() -> new HttpError(501, "backups are not available in this build"));
+                } catch (IOException e) {
+                    // Nothing is sent yet, so the client can be told; the path and the cause go to the log only.
+                    LOG.log(Level.WARNING, "backup failed: the copy could not be written in the data directory", e);
+                    throw new HttpError(503, "the backup could not be written in the data directory (is the disk full?)");
+                }
                 try {
                     Backup.send(ex, file);
                 } finally {

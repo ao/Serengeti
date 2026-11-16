@@ -138,6 +138,21 @@ class ConfigTest {
     }
 
     @Test
+    void anAdminPasswordOver72BytesAndAPlaintextValueOtherThanAllowAreRefusedAtLoad() {
+        assertEquals("é".repeat(36), Config.load(null, env("SERENGETI_ADMIN_PASSWORD", "é".repeat(36))).adminPassword,
+                "72 bytes is the limit");
+        ConfigException e = assertThrows(ConfigException.class,
+                () -> Config.load(null, env("SERENGETI_ADMIN_PASSWORD", "é".repeat(36) + "x")));
+        assertEquals("the admin password must be at most 72 bytes", e.getMessage());
+        for (String v : new String[] {"yes", "true", "Allow", "deny"}) {
+            ConfigException p = assertThrows(ConfigException.class,
+                    () -> Config.load(null, env("SERENGETI_CLUSTER_PLAINTEXT", v)), v);
+            assertTrue(p.getMessage().startsWith("cluster_plaintext must be allow"), p.getMessage());
+        }
+        assertFalse(Config.load(null, env("SERENGETI_CLUSTER_PLAINTEXT", " ")).clusterPlaintext);
+    }
+
+    @Test
     void peersWithoutTlsNeedTheExplicitPlaintextOptIn() {
         ConfigException e = assertThrows(ConfigException.class,
                 () -> Config.load(null, env("SERENGETI_PEERS", "a:1985", "SERENGETI_CLUSTER_KEY", KEY)));

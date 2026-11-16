@@ -525,6 +525,26 @@ class HttpApiTest {
     }
 
     @Test
+    void aBackupThatCannotBeWrittenIs503WithAReasonAndNoPath() throws Exception {
+        setUp();
+        NodeOps full = new NodeOps() {
+            @Override
+            public java.util.Optional<java.nio.file.Path> backup() throws IOException {
+                throw new IOException("/secret/data/backup-123.tmp: No space left on device");
+            }
+        };
+        try (HttpApi other = HttpApi.start("127.0.0.1", 0, new HttpApi.Deps(users, token, queries::run,
+                () -> Map.of(), now::get, full))) {
+            HttpResponse<String> r = send(HttpRequest.newBuilder(URI.create(
+                    "http://127.0.0.1:" + other.address().getPort() + "/v1/backup")).GET()
+                    .header("Authorization", basic("admin", PASSWORD)));
+            assertEquals(503, r.statusCode(), r.body());
+            assertTrue(r.body().contains("could not be written"), r.body());
+            assertFalse(r.body().contains("/secret"), "no path in the answer: " + r.body());
+        }
+    }
+
+    @Test
     void theMetricsRoleReachesMetricsStatusAndItsPasswordAndNothingElse() throws Exception {
         setUp();
         String pw = "scraper password 1";

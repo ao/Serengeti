@@ -132,6 +132,9 @@ public final class Node implements AutoCloseable {
             throw new ConfigException("the data directory " + dir + " is not a writable directory");
         }
         this.id = nodeId(dir);
+        if (config.advertise != null) {
+            LOG.warning("advertise is set but no version uses it; it is ignored");
+        }
         this.storage = StorageEngine.open(dir, config.fsync, 64L * 1024 * 1024, config.testFsyncDelayMs);
         // Backups left behind by a node that stopped while sending one. The data directory is locked now.
         try (java.nio.file.DirectoryStream<Path> old = Files.newDirectoryStream(dir, BACKUP_PREFIX + "*.tmp")) {
@@ -184,7 +187,7 @@ public final class Node implements AutoCloseable {
                 token.set(SetupToken.create(dir));
                 LOG.warning((users.hasAccounts()
                         ? "no admin account is left; the other accounts still work. To make the admin again, "
-                        : "no admin password yet. Every request except /health is refused until it is set: ")
+                        : "no admin password yet. Every request except /health, /ready and /v1/setup is refused until it is set: ")
                         + "POST /v1/setup with {\"token\": ..., \"password\": ...}, using the token in "
                         + token.get().file().toAbsolutePath());
             }

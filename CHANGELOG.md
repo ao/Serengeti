@@ -131,8 +131,18 @@ GitHub release notes and tags.
 - A graceful stop sometimes waited out docker's 10 s grace and was killed: the JDK server's stop closes
   every connection, and closing a TLS connection waits for a write blocked on a peer that stopped reading.
   The node now waits for it 3 s at most, then closes its cluster layer and storage and exits.
+- An admin password of more than 72 bytes in `SERENGETI_ADMIN_PASSWORD` or its file passed the settings
+  check, and the node then exited with status 1 and a stack trace; it is now refused with exit status 2 and
+  a one-line message, like a short one.
+- `GET /v1/backup` on a node whose data directory had no room for the backup closed the connection without
+  an answer; it now answers 503 with a message, and logs the cause.
+- The startup warning of a node without an admin said every request but `/health` was refused; `/ready`
+  and `/v1/setup` answer too, and it now says so. A node with `advertise` set, which nothing has used,
+  logs that it is ignored.
 
 ### Changed
+- `cluster_plaintext` takes only `allow`. Another value (`yes`, `true`) meant "not allowed" without a word;
+  it now stops the node with exit status 2, like any other invalid setting.
 - A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past
   the LIMIT or the cap) instead of visiting the rest of the table, and `ORDER BY _id` ascending no longer
   sorts, since rows are read in that order. A keyset page reads only its own rows.

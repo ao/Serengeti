@@ -23,6 +23,8 @@ import java.util.Set;
 public final class Config {
     public static final int MIN_CLUSTER_KEY = 32;
     public static final int MIN_ADMIN_PASSWORD = 12;
+    /** The same bound as the accounts code (bcrypt reads 72 bytes). */
+    public static final int MAX_ADMIN_PASSWORD_BYTES = 72;
 
     private static final Set<String> KEYS = Set.of("bind", "port", "data_dir", "fsync", "peers", "advertise",
             "discovery_cidr", "cluster_size", "cluster_key_file", "cluster_plaintext", "admin_password_file",
@@ -63,6 +65,7 @@ public final class Config {
     public final int backupKeep;
 
     private final boolean explicitSize;
+    private final String clusterPlaintextValue;
 
     private Config(Map<String, String> v, Map<String, String> secrets) {
         explicitSize = v.containsKey("cluster_size");
@@ -78,7 +81,8 @@ public final class Config {
         advertise = blankToNull(v.get("advertise"));
         discoveryCidr = blankToNull(v.get("discovery_cidr"));
         clusterKey = secrets.get("cluster_key");
-        clusterPlaintext = "allow".equals(v.getOrDefault("cluster_plaintext", "").trim());
+        clusterPlaintextValue = v.getOrDefault("cluster_plaintext", "").trim();
+        clusterPlaintext = "allow".equals(clusterPlaintextValue);
         adminPassword = secrets.get("admin_password");
         tlsKeystore = pathOrNull(v.get("tls_keystore"));
         tlsKeystorePassword = toChars(secrets.get("tls_keystore_password"));
@@ -134,6 +138,14 @@ public final class Config {
         }
         if (adminPassword != null && adminPassword.length() < MIN_ADMIN_PASSWORD) {
             throw new ConfigException("the admin password must be at least " + MIN_ADMIN_PASSWORD + " characters");
+        }
+        if (adminPassword != null && adminPassword.getBytes(StandardCharsets.UTF_8).length > MAX_ADMIN_PASSWORD_BYTES) {
+            // bcrypt reads 72 bytes; the accounts code refuses longer ones, which would stop the node later.
+            throw new ConfigException("the admin password must be at most " + MAX_ADMIN_PASSWORD_BYTES + " bytes");
+        }
+        String plaintext = clusterPlaintextValue;
+        if (!plaintext.isEmpty() && !plaintext.equals("allow")) {
+            throw new ConfigException("cluster_plaintext must be allow, or not set, not '" + plaintext + "'");
         }
         if (backupDir != null) {
             Path b = backupDir.toAbsolutePath().normalize();

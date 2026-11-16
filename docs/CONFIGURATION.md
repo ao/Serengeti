@@ -29,7 +29,7 @@ node exit with status 2 and a one-line message.
 | `backup_dir` | none | Directory for scheduled backups, created if missing (mode 0700). Not the data directory or inside it. See [Scheduled backups](#scheduled-backups). The image has an empty `/backups` for a volume. |
 | `backup_interval_minutes` | `60` | Minutes between scheduled backups, 1 to 10080 (a week). |
 | `backup_keep` | `24` | How many scheduled backups to keep, 1 to 10000; the oldest beyond that are deleted. |
-| `cluster_plaintext` | none | `allow` lets a node with peers run without TLS, sending the cluster key and data in clear. For a private network only. |
+| `cluster_plaintext` | none | `allow` lets a node with peers run without TLS, sending the cluster key and data in clear. For a private network only. Any other value stops the node. |
 | `tls_truststore` | JDK CAs | PKCS#12 file with the CA certificates that peers' certificates must chain to. Needs its password below. |
 | `tls_keystore` | none | PKCS#12 file with this node's key and certificate chain. When set, the node serves HTTPS only (TLS 1.2 and 1.3) and there is no plaintext listener. Needs the keystore password below. |
 
