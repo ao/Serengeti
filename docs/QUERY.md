@@ -67,9 +67,10 @@ Further parse rules:
 ## Errors
 
 Text that does not follow the grammar raises `ParseException`. The message ends with
-`at position N`, where N is the 0-based character offset where the problem was found, for example
+`at position N`, where N is the 0-based offset where the problem was found, for example
 `expected FROM but found name 'form' at position 9`. `ParseException.position()` returns the same
-number.
+number. The offset counts UTF-16 code units, as Java and JavaScript strings do: a character outside the
+Basic Multilingual Plane, such as an emoji, counts as two.
 
 A statement that parses but cannot run raises `QueryException` (the parent class of
 `ParseException`), for example `table 'shop.items' does not exist`. Nothing is written when a
