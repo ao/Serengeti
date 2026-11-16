@@ -12,6 +12,11 @@ import java.util.Set;
 public final class Parser {
     /** How deeply parentheses and NOT may nest in a WHERE condition. */
     public static final int MAX_DEPTH = 64;
+    /**
+     * Most columns in one SELECT list. A list of thousands (a 1 MiB body holds 60,000) made one statement hold
+     * far more memory than its rows, as every row carries a slot for each: a node ran out of memory on one read.
+     */
+    public static final int MAX_SELECT_ITEMS = 256;
 
     private final Lexer lexer;
     private Token tok;
@@ -200,6 +205,9 @@ public final class Parser {
         } else {
             List<String> names = new ArrayList<>();
             do {
+                if (names.size() == MAX_SELECT_ITEMS) {
+                    throw new ParseException("a SELECT lists at most " + MAX_SELECT_ITEMS + " items", tok.start());
+                }
                 names.add(name());
             } while (acceptSymbol(","));
             projection = new Statement.Projection.Columns(names);

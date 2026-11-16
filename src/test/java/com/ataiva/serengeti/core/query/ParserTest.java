@@ -25,6 +25,15 @@ class ParserTest {
     }
 
     @Test
+    void aSelectListHasALimit() {
+        java.util.function.IntFunction<String> cols = n -> java.util.stream.IntStream.range(0, n)
+                .mapToObj(i -> "c" + i).collect(java.util.stream.Collectors.joining(", "));
+        Parser.parse("SELECT " + cols.apply(Parser.MAX_SELECT_ITEMS) + " FROM d.t");
+        assertTrue(fails("SELECT " + cols.apply(Parser.MAX_SELECT_ITEMS + 1) + " FROM d.t").getMessage()
+                .contains("at most 256 items"));
+    }
+
+    @Test
     void createAndDropDatabase() {
         assertEquals(new Statement.CreateDatabase("shop", false), parse("CREATE DATABASE shop"));
         assertEquals(new Statement.CreateDatabase("shop", true), parse("create database if not exists Shop;"));
