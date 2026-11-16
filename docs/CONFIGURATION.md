@@ -107,8 +107,9 @@ docker run -d --name serengeti -p 127.0.0.1:1985:1985 -v serengeti-data:/data -v
   -e SERENGETI_BACKUP_DIR=/backups -e SERENGETI_ADMIN_PASSWORD ataiva/serengeti
 ```
 
-- Each backup is `serengeti-backup-NODE-YYYYMMDDTHHMMSSZ.jsonl` (UTC; NODE is the first 8 characters of the
-  node's id, from `node-id`), mode 0600, in the format of `GET /v1/backup`, so `serengeti restore` takes it.
+- Each backup is `serengeti-backup-NODE-YYYYMMDDTHHMMSSZ-SEQ.jsonl` (UTC; NODE is the first 8 characters of the
+  node's id, from `node-id`; SEQ counts the node's backups), mode 0600, in the format of `GET /v1/backup`, so
+  `serengeti restore` takes it.
   It is written to a hidden temporary file, forced to disk and then renamed, so a file with that name is
   always whole; a node that stops while writing one leaves only the temporary file, which its next start
   deletes.
@@ -117,7 +118,7 @@ docker run -d --name serengeti -p 127.0.0.1:1985:1985 -v serengeti-data:/data -v
   the first backup of a new directory comes about a minute after the start. A backup is also due when the
   clock is before the newest name (it went back); a name after the clock is reported at start, and the
   schedule then counts from the start.
-- Only this node's files with that name are deleted, the oldest first, when it has more than `backup_keep`,
+- Only this node's files with that name are deleted, the lowest SEQ first, when it has more than `backup_keep`,
   and never the one it has just written. Other files in the directory, other nodes' backups among them, are
   left alone, so nodes can share a directory.
 - A directory that cannot be made or written, or that is the data directory or inside it (also through a
@@ -126,8 +127,10 @@ docker run -d --name serengeti -p 127.0.0.1:1985:1985 -v serengeti-data:/data -v
   disk failed writes none (see [Health](#health-readiness-and-logs)).
 - The node first writes the backup into its data directory, as `GET /v1/backup` does, and writes wait
   meanwhile; then it copies it into `backup_dir` without holding anything up, so a slow or stuck backup
-  volume never stops writes. The data directory needs room for one backup, and `backup_dir` for about
-  `backup_keep` of them; put it on a volume of its own, and better on another disk than the data.
+  volume never stops writes. The data directory needs room for one backup: when less is free than the
+  snapshot and the log take, a quarter more and 64 MiB, the backup is skipped and counted as failed rather
+  than fill the disk the node writes to. `backup_dir` needs room for about `backup_keep` backups; put it on
+  a volume of its own, and better on another disk than the data.
 - In a cluster, every node with `backup_dir` backs up what it holds. One node is enough when the cluster is
   healthy; a node that was cut off backs up its own view.
 - `serengeti_backup_last_success_time_seconds` and the alert `SerengetiBackupLate` in

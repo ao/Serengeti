@@ -71,7 +71,7 @@ GitHub release notes and tags.
   backup.jsonl`.
 - Scheduled backups: with `backup_dir` set, a node writes a backup there every `backup_interval_minutes`
   (60) and keeps its newest `backup_keep` (24), each a 0600 file
-  `serengeti-backup-NODE-YYYYMMDDTHHMMSSZ.jsonl` written to a temporary file, forced to disk and renamed;
+  `serengeti-backup-NODE-YYYYMMDDTHHMMSSZ-SEQ.jsonl` written to a temporary file, forced to disk and renamed;
   nodes can share a directory. The backup is made in the data directory and then copied, so a slow backup
   volume never holds up writes. The next one is due an interval after the newest, also across restarts. A
   directory inside the data directory (also through a link), or one that cannot be written, stops the node

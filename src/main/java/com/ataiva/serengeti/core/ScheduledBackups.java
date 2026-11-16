@@ -31,10 +31,11 @@ import java.util.regex.Pattern;
  * Backups written to a directory on a schedule, the newest {@code keep} of this node's kept.
  *
  * <p>Each backup is written to a hidden temporary file in the directory, forced to disk, and renamed to
- * {@code serengeti-backup-NODE-YYYYMMDDTHHMMSSZ.jsonl}, where NODE is the first 8 characters of the node's id,
- * so a file with that name is always whole and nodes can share a directory. Only files with this node's name
- * are ever deleted, and never the one just written. The time of the newest one decides when the next is due,
- * so a node that restarts more often than the interval still backs up.
+ * {@code serengeti-backup-NODE-YYYYMMDDTHHMMSSZ-SEQ.jsonl}, where NODE is the first 8 characters of the node's
+ * id and SEQ counts this node's backups, so a file with that name is always whole and nodes can share a
+ * directory. Only files with this node's name are ever deleted, the lowest SEQ first (the order they were
+ * written in, whatever the clock did), and never the one just written. The time of the last one written
+ * decides when the next is due, so a node that restarts more often than the interval still backs up.
  */
 final class ScheduledBackups implements AutoCloseable {
     private static final Logger LOG = Logger.getLogger(ScheduledBackups.class.getName());
@@ -42,7 +43,7 @@ final class ScheduledBackups implements AutoCloseable {
     static final String PREFIX = "serengeti-backup-";
     static final String SUFFIX = ".jsonl";
     private static final Pattern NAME =
-            Pattern.compile("serengeti-backup-([0-9a-z]{8})-(\\d{8}T\\d{6}Z)(?:-(\\d{1,4}))?\\.jsonl");
+            Pattern.compile("serengeti-backup-([0-9a-z]{8})-(\\d{8}T\\d{6}Z)-(\\d{6,18})\\.jsonl");
     private static final DateTimeFormatter STAMP =
             DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
     /** A name this far ahead of the clock is reported: the clock went back, or the file came from elsewhere. */
@@ -144,10 +145,13 @@ final class ScheduledBackups implements AutoCloseable {
         }
     }
 
-    /** A backup file of this node in the directory, the time in its name and its "-N" suffix. */
-    record Backup(Path file, long millis, int suffix) {}
+    /** A backup file of this node in the directory, the time in its name and its sequence number. */
+    record Backup(Path file, long millis, long seq) {}
 
-    /** This node's backups in the directory, oldest first by the time in their names. */
+    /**
+     * This node's backups in the directory, oldest first by sequence number: the order they were written in,
+     * whatever the clock did meanwhile.
+     */
     List<Backup> list() throws IOException {
         List<Backup> out = new ArrayList<>();
         try (DirectoryStream<Path> s = Files.newDirectoryStream(dir, PREFIX + node + "-*" + SUFFIX)) {
@@ -156,16 +160,14 @@ final class ScheduledBackups implements AutoCloseable {
                 if (m.matches() && m.group(1).equals(node) && Files.isRegularFile(p)) {
                     try {
                         out.add(new Backup(p, Instant.from(STAMP.parse(m.group(2))).toEpochMilli(),
-                                m.group(3) == null ? 0 : Integer.parseInt(m.group(3))));
-                    } catch (DateTimeParseException e) {
+                                Long.parseLong(m.group(3))));
+                    } catch (DateTimeParseException | NumberFormatException e) {
                         // not one of ours: left alone
                     }
                 }
             }
         }
-        // A "-N" suffix (two backups in one second) sorts after the plain name.
-        out.sort((x, y) -> x.millis() != y.millis() ? Long.compare(x.millis(), y.millis())
-                : Integer.compare(x.suffix(), y.suffix()));
+        out.sort((x, y) -> Long.compare(x.seq(), y.seq()));
         return out;
     }
 
@@ -222,21 +224,19 @@ final class ScheduledBackups implements AutoCloseable {
         }
     }
 
+    /** The name of the next backup: the time, and one more than the highest sequence number of this node's. */
     private Path freeName(long now) throws IOException {
-        String stamp = STAMP.format(Instant.ofEpochMilli(now));
-        for (int i = 0; i < 10_000; i++) {
-            Path p = dir.resolve(PREFIX + node + "-" + stamp + (i == 0 ? "" : "-" + i) + SUFFIX);
-            if (!Files.exists(p)) {
-                return p;
-            }
+        List<Backup> all = list();
+        long seq = all.isEmpty() ? 1 : all.get(all.size() - 1).seq() + 1;
+        Path p = dir.resolve(String.format(java.util.Locale.ROOT, "%s%s-%s-%06d%s", PREFIX, node,
+                STAMP.format(Instant.ofEpochMilli(now)), seq, SUFFIX));
+        if (Files.exists(p)) {
+            throw new FileAlreadyExistsException(p.toString());
         }
-        throw new FileAlreadyExistsException(dir.resolve(PREFIX + node + "-" + stamp + SUFFIX).toString());
+        return p;
     }
 
-    /**
-     * Keeps {@code written} and the newest {@code keep - 1} others. Written after the clock went back, the
-     * new file's name can sort before older ones; it is the one backup of the current data, so it stays.
-     */
+    /** Keeps {@code written} and the {@code keep - 1} others written last, by sequence number. */
     private void prune(Path written) throws IOException {
         List<Backup> others = new ArrayList<>();
         for (Backup b : list()) {

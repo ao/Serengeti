@@ -465,6 +465,17 @@ public final class Node implements AutoCloseable {
      * it. So a slow or hung backup volume holds up only the copy, never the node's writes.
      */
     private void writeScheduledBackup(Path target) throws IOException {
+        // The copy in the data directory must not take the room the node's own writes need: a full data disk
+        // fails a write's fsync and stops the node from serving until it restarts. The snapshot and the log
+        // hold about what a backup does; a quarter more and 64 MiB must be free besides.
+        Path data = storage.dir();
+        long estimate = sizeIfExists(data.resolve(StorageEngine.SNAPSHOT_FILE)) + sizeIfExists(data.resolve(StorageEngine.WAL_FILE));
+        long need = estimate + estimate / 4 + (64L << 20);
+        long free = Files.getFileStore(data).getUsableSpace();
+        if (free < need) {
+            throw new IOException("not enough room in the data directory for a backup: about " + need / (1 << 20)
+                    + " MiB needed, " + free / (1 << 20) + " MiB free");
+        }
         Path local = Files.createTempFile(storage.dir(), BACKUP_PREFIX, ".tmp");
         try {
             storage.writeBackup(local);
@@ -475,6 +486,10 @@ public final class Node implements AutoCloseable {
         } finally {
             Files.deleteIfExists(local);
         }
+    }
+
+    private static long sizeIfExists(Path p) throws IOException {
+        return Files.exists(p) ? Files.size(p) : 0;
     }
 
     /** Writes a scheduled backup now, for tests; empty when backup_dir is not set. */
