@@ -72,6 +72,43 @@ class TlsTest {
     }
 
     @Test
+    void closingDoesNotWaitForAClientThatStoppedReading() throws Exception {
+        // A backup of about 40 MB, asked for over TLS by a client that then reads nothing: the server's write
+        // blocks once the socket buffers are full, and closing that connection waits for it.
+        java.util.List<com.ataiva.serengeti.core.storage.Op> ops = new java.util.ArrayList<>();
+        String pad = "p".repeat(400);
+        for (int i = 0; i < 100_000; i++) {
+            ops.add(new com.ataiva.serengeti.core.storage.Op.Put("d", "t", "r" + i, Map.of("pad", (Object) pad),
+                    new com.ataiva.serengeti.core.storage.Stamp(i + 1, 0, "n1")));
+        }
+        Path data = Files.createDirectories(dir.resolve("stuck"));
+        Users users = Users.open(data, 4, System::currentTimeMillis);
+        users.setPassword(Users.ADMIN, ADMIN_PW, Users.Role.ADMIN);
+        NodeOps big = new NodeOps() {
+            @Override
+            public java.util.Optional<java.util.List<com.ataiva.serengeti.core.storage.Op>> snapshot() {
+                return java.util.Optional.of(ops);
+            }
+        };
+        HttpApi stuck = HttpApi.start("127.0.0.1", 0, Tls.serverContext(nodeKs, PW), new HttpApi.Deps(users,
+                new AtomicReference<>(), (q, r) -> Map.of(), () -> Map.of(), System::currentTimeMillis, big));
+        SSLContext ctx = Tls.clientContext(TestCerts.truststore(dir, "good"), PW);
+        try (SSLSocket s = (SSLSocket) ctx.getSocketFactory().createSocket("127.0.0.1", stuck.address().getPort())) {
+            s.setReceiveBufferSize(4096);
+            s.getOutputStream().write(("GET /v1/backup HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic "
+                    + Base64.getEncoder().encodeToString(("admin:" + ADMIN_PW).getBytes(StandardCharsets.UTF_8))
+                    + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            s.getOutputStream().flush();
+            s.getInputStream().read(new byte[64]); // the answer has begun; nothing more is read
+            Thread.sleep(2000);
+            long t0 = System.nanoTime();
+            stuck.close();
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue(ms < HttpApi.STOP_MILLIS + 2000, "close() took " + ms + " ms");
+        }
+    }
+
+    @Test
     void servesHttpsToAClientThatTrustsTheCa() throws Exception {
         HttpClient c = client("good");
         assertEquals(200, get(c, "https", "localhost", api, "/health").statusCode());

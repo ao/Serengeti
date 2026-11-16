@@ -116,6 +116,9 @@ GitHub release notes and tags.
   stopped reading (one cut off by a partition), so every request thread waited. There is no response limit
   now: a client that stops reading holds only its own thread. The 30 s limit on sending a request stays.
   Found by `tests/soak` (thread dumps of the stalls).
+- A graceful stop sometimes waited out docker's 10 s grace and was killed: the JDK server's stop closes
+  every connection, and closing a TLS connection waits for a write blocked on a peer that stopped reading.
+  The node now waits for it 3 s at most, then closes its cluster layer and storage and exits.
 
 ### Changed
 - A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past
