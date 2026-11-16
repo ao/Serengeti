@@ -1,0 +1,17 @@
+# Scrapes the three nodes of ../cluster/compose.yaml over HTTPS as the read-only account "metrics".
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files: [/etc/prometheus/alerts.yml]
+
+scrape_configs:
+  - job_name: serengeti
+    scheme: https
+    tls_config:
+      ca_file: /certs/ca.pem
+    basic_auth:
+      username: metrics
+      password_file: /run/secrets/metrics_password
+    static_configs:
+      - targets: [n1:1985, n2:1985, n3:1985]

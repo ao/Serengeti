@@ -1,0 +1,171 @@
+{
+  "uid": "serengeti",
+  "title": "Serengeti",
+  "description": "One row per concern; every panel reads the series in docs/API.md, Metrics.",
+  "tags": ["serengeti"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {"from": "now-3h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Node",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": {"query": "label_values(serengeti_build_info, instance)", "refId": "instance"},
+        "definition": "label_values(serengeti_build_info, instance)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": "$__all"},
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Nodes ready",
+      "description": "Nodes whose GET /ready answers 200, of those Prometheus scrapes.",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum(serengeti_ready{instance=~\"$instance\"})", "legendFormat": "ready"}],
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0}, "overrides": []}
+    },
+    {
+      "id": 2, "type": "stat", "title": "Nodes down",
+      "description": "Targets Prometheus could not scrape.",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "count(up{job=\"serengeti\", instance=~\"$instance\"} == 0) or vector(0)", "legendFormat": "down"}],
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0,
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []}
+    },
+    {
+      "id": 3, "type": "table", "title": "Nodes",
+      "description": "Version, reachable nodes against the majority, and the flags that stop a node serving.",
+      "gridPos": {"x": 8, "y": 0, "w": 16, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "serengeti_build_info{instance=~\"$instance\"}", "format": "table", "instant": true},
+        {"refId": "B", "expr": "serengeti_cluster_reachable_nodes{instance=~\"$instance\"}", "format": "table", "instant": true},
+        {"refId": "C", "expr": "serengeti_cluster_quorum{instance=~\"$instance\"}", "format": "table", "instant": true},
+        {"refId": "D", "expr": "serengeti_ready{instance=~\"$instance\"}", "format": "table", "instant": true},
+        {"refId": "E", "expr": "serengeti_cluster_caught_up{instance=~\"$instance\"}", "format": "table", "instant": true},
+        {"refId": "F", "expr": "serengeti_disk_failed{instance=~\"$instance\"}", "format": "table", "instant": true},
+        {"refId": "G", "expr": "serengeti_memory_full{instance=~\"$instance\"}", "format": "table", "instant": true},
+        {"refId": "H", "expr": "time() - serengeti_start_time_seconds{instance=~\"$instance\"}", "format": "table", "instant": true}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "Value #A": true},
+          "renameByName": {"instance": "Node", "version": "Version", "Value #B": "Reachable", "Value #C": "Majority",
+            "Value #D": "Ready", "Value #E": "Caught up", "Value #F": "Disk failed", "Value #G": "Memory full",
+            "Value #H": "Up for"}}}
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "Up for"}, "properties": [{"id": "unit", "value": "s"}]}]}
+    },
+    {
+      "id": 4, "type": "stat", "title": "Rows with conflicts",
+      "description": "Rows holding versions from writes that had not seen each other (SHOW CONFLICTS), on the node with the most.",
+      "gridPos": {"x": 0, "y": 4, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "max(serengeti_conflicts{instance=~\"$instance\"})", "legendFormat": "conflicts"}],
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0}, "overrides": []}
+    },
+    {
+      "id": 5, "type": "stat", "title": "Databases",
+      "gridPos": {"x": 4, "y": 4, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "max(serengeti_databases{instance=~\"$instance\"})", "legendFormat": "databases"}],
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0}, "overrides": []}
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Requests per second, by route",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (route) (rate(serengeti_http_requests_total{instance=~\"$instance\", route!~\"/internal/.*\"}[$__rate_interval]))", "legendFormat": "{{route}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Errors per second, by status",
+      "description": "4xx are the clients' mistakes; 503 is a node stopping, without a majority, or full; other 5xx are faults.",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (code) (rate(serengeti_http_requests_total{instance=~\"$instance\", code=~\"[045]..|0\"}[$__rate_interval]))", "legendFormat": "{{code}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Query latency",
+      "description": "From the duration histogram of POST /v1/query; the buckets run from 5 ms to 10 s.",
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.5, sum by (le) (rate(serengeti_http_request_duration_seconds_bucket{instance=~\"$instance\", route=\"/v1/query\"}[$__rate_interval])))", "legendFormat": "median"},
+        {"refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(serengeti_http_request_duration_seconds_bucket{instance=~\"$instance\", route=\"/v1/query\"}[$__rate_interval])))", "legendFormat": "99th percentile"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Log fsyncs",
+      "description": "Forces of wal.log per second, and the mean time of one.",
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "rate(serengeti_wal_fsyncs_total{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}} per second"},
+        {"refId": "B", "expr": "rate(serengeti_wal_fsync_seconds_total{instance=~\"$instance\"}[$__rate_interval]) / rate(serengeti_wal_fsyncs_total{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}} mean time"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": ".*mean time"}, "properties": [{"id": "unit", "value": "s"}, {"id": "custom.axisPlacement", "value": "right"}]}]}
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Data held against the budget",
+      "description": "Estimated bytes of rows and index entries; writes that add data get 503 at the budget (memory_limit_percent of the heap).",
+      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "serengeti_data_bytes{instance=~\"$instance\"}", "legendFormat": "{{instance}} data"},
+        {"refId": "B", "expr": "serengeti_data_budget_bytes{instance=~\"$instance\"} > 0", "legendFormat": "{{instance}} budget"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Heap and log",
+      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "serengeti_heap_bytes{instance=~\"$instance\", kind=\"used\"}", "legendFormat": "{{instance}} heap used"},
+        {"refId": "B", "expr": "serengeti_heap_bytes{instance=~\"$instance\", kind=\"max\"}", "legendFormat": "{{instance}} heap max"},
+        {"refId": "C", "expr": "serengeti_wal_bytes{instance=~\"$instance\"}", "legendFormat": "{{instance}} wal.log"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Replication",
+      "description": "Row versions pulled from peers per second; a burst follows a node that was away.",
+      "gridPos": {"x": 0, "y": 32, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "rate(serengeti_sync_ops_pulled_total{instance=~\"$instance\"}[$__rate_interval])", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []}
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Failed logins",
+      "description": "Requests with a wrong name or password, and those refused by the per-address limit (429).",
+      "gridPos": {"x": 12, "y": 32, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(serengeti_login_failures_total{instance=~\"$instance\"}[$__rate_interval]))", "legendFormat": "wrong credentials"},
+        {"refId": "B", "expr": "sum(rate(serengeti_login_limited_total{instance=~\"$instance\"}[$__rate_interval]))", "legendFormat": "limited"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}
+    }
+  ]
+}

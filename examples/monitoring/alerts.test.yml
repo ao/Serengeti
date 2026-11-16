@@ -1,0 +1,191 @@
+# Unit tests for alerts.yml: promtool test rules alerts.test.yml
+rule_files: [alerts.yml]
+evaluation_interval: 1m
+
+tests:
+  - name: a node that stops answering, and one that does not
+    interval: 1m
+    input_series:
+      - series: 'up{job="serengeti", instance="n1:1985"}'
+        values: '1 1 0 0 0'
+      - series: 'up{job="serengeti", instance="n2:1985"}'
+        values: '1x4'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SerengetiDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: SerengetiDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 has not answered Prometheus for a minute"}
+
+  - name: readiness, disk, stale and memory full
+    interval: 1m
+    input_series:
+      - series: 'serengeti_ready{job="serengeti", instance="n1:1985"}'
+        values: '1 0 0 0 0'
+      - series: 'serengeti_disk_failed{job="serengeti", instance="n1:1985"}'
+        values: '0 1 1'
+      - series: 'serengeti_cluster_stale{job="serengeti", instance="n2:1985"}'
+        values: '0 1 1'
+      - series: 'serengeti_memory_full{job="serengeti", instance="n3:1985"}'
+        values: '0 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SerengetiNotReady
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: SerengetiNotReady
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 has answered 503 to /ready for 2 minutes"}
+      - eval_time: 1m
+        alertname: SerengetiDiskFailed
+        exp_alerts:
+          - exp_labels: {severity: critical, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 failed to write to disk and serves nothing from its data until it is restarted"}
+      - eval_time: 1m
+        alertname: SerengetiStale
+        exp_alerts:
+          - exp_labels: {severity: critical, job: serengeti, instance: "n2:1985"}
+            exp_annotations: {summary: "n2:1985 was away longer than tombstone_ttl_hours and neither syncs nor takes writes"}
+      - eval_time: 1m
+        alertname: SerengetiMemoryFull
+        exp_alerts:
+          - exp_labels: {severity: critical, job: serengeti, instance: "n3:1985"}
+            exp_annotations: {summary: "n3:1985 refuses writes that add data (memory_limit_percent)"}
+
+  - name: a node cut off from the others, and a peer that stays away
+    interval: 1m
+    input_series:
+      - series: 'serengeti_cluster_reachable_nodes{job="serengeti", instance="n3:1985"}'
+        values: '3 1 1 1 1 1 1 1'
+      - series: 'serengeti_cluster_reachable_nodes{job="serengeti", instance="n1:1985"}'
+        values: '3 2 2 2 2 2 2 2'
+      - series: 'serengeti_cluster_quorum{job="serengeti", instance="n3:1985"}'
+        values: '2x7'
+      - series: 'serengeti_cluster_quorum{job="serengeti", instance="n1:1985"}'
+        values: '2x7'
+      - series: 'serengeti_cluster_nodes{job="serengeti", instance="n3:1985"}'
+        values: '3x7'
+      - series: 'serengeti_cluster_nodes{job="serengeti", instance="n1:1985"}'
+        values: '3x7'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: SerengetiNoMajority
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: SerengetiNoMajority
+        exp_alerts:
+          - exp_labels: {severity: critical, job: serengeti, instance: "n3:1985"}
+            exp_annotations: {summary: "n3:1985 reaches 1 nodes, fewer than a majority: its majority writes and reads get 503"}
+      - eval_time: 5m
+        alertname: SerengetiPeerUnreachable
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: SerengetiPeerUnreachable
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 has reached only 2 of the cluster's nodes for 5 minutes"}
+          - exp_labels: {severity: warning, job: serengeti, instance: "n3:1985"}
+            exp_annotations: {summary: "n3:1985 has reached only 1 of the cluster's nodes for 5 minutes"}
+
+  - name: data close to the budget, and a node without a budget
+    interval: 1m
+    input_series:
+      - series: 'serengeti_data_bytes{job="serengeti", instance="n1:1985"}'
+        values: '500x10 900x20'
+      - series: 'serengeti_data_budget_bytes{job="serengeti", instance="n1:1985"}'
+        values: '1000x30'
+      - series: 'serengeti_data_bytes{job="serengeti", instance="n2:1985"}'
+        values: '500x30'
+      - series: 'serengeti_data_budget_bytes{job="serengeti", instance="n2:1985"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SerengetiMemoryHigh
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: SerengetiMemoryHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 holds 90% of the data it may hold before it refuses writes"}
+
+  - name: internal errors count, 503s do not
+    interval: 1m
+    input_series:
+      - series: 'serengeti_http_requests_total{job="serengeti", instance="n1:1985", route="/v1/query", code="500"}'
+        values: '0 0 5 10 15 20'
+      - series: 'serengeti_http_requests_total{job="serengeti", instance="n1:1985", route="/v1/query", code="200"}'
+        values: '0+100x5'
+      - series: 'serengeti_http_requests_total{job="serengeti", instance="n2:1985", route="/v1/query", code="503"}'
+        values: '0+100x5'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SerengetiServerErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 answered with a 5xx other than 503"}
+
+  - name: slow fsyncs on one node
+    interval: 1m
+    input_series:
+      - series: 'serengeti_wal_fsync_seconds_total{job="serengeti", instance="n1:1985"}'
+        values: '0+6x20'
+      - series: 'serengeti_wal_fsyncs_total{job="serengeti", instance="n1:1985"}'
+        values: '0+60x20'
+      - series: 'serengeti_wal_fsync_seconds_total{job="serengeti", instance="n2:1985"}'
+        values: '0+0.6x20'
+      - series: 'serengeti_wal_fsyncs_total{job="serengeti", instance="n2:1985"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SerengetiSlowFsync
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 has taken over 50 ms per fsync of its log for 10 minutes"}
+
+  - name: limited logins, restarts, conflicts and mixed versions
+    interval: 1m
+    input_series:
+      - series: 'serengeti_login_limited_total{job="serengeti", instance="n1:1985"}'
+        values: '0 0 3 3 3'
+      - series: 'serengeti_start_time_seconds{job="serengeti", instance="n2:1985"}'
+        values: '100 100 200 300 400'
+      - series: 'serengeti_conflicts{job="serengeti", instance="n3:1985"}'
+        values: '0 2x70'
+      - series: 'serengeti_build_info{job="serengeti", instance="n1:1985", version="2.1.0"}'
+        values: '1x150'
+      - series: 'serengeti_build_info{job="serengeti", instance="n2:1985", version="2.2.0"}'
+        values: '1x150'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SerengetiLoginsLimited
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 refused logins from an address with too many failed attempts"}
+      - eval_time: 3m
+        alertname: SerengetiRestarts
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: SerengetiRestarts
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n2:1985"}
+            exp_annotations: {summary: "n2:1985 started 3 or more times in 30 minutes"}
+      - eval_time: 30m
+        alertname: SerengetiConflicts
+        exp_alerts: []
+      - eval_time: 65m
+        alertname: SerengetiConflicts
+        exp_alerts:
+          - exp_labels: {severity: info, job: serengeti, instance: "n3:1985"}
+            exp_annotations: {summary: "n3:1985 has held conflicting versions of 2 rows for an hour (SHOW CONFLICTS)"}
+      - eval_time: 60m
+        alertname: SerengetiVersionsDiffer
+        exp_alerts: []
+      - eval_time: 125m
+        alertname: SerengetiVersionsDiffer
+        exp_alerts:
+          - exp_labels: {severity: info}
+            exp_annotations: {summary: "The nodes have run different versions for 2 hours"}

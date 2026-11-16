@@ -1,0 +1,87 @@
+# Prometheus and Grafana for the three-node cluster of ../cluster/compose.yaml, with alert rules and a
+# dashboard. Run everything from this directory; the cluster's file is included, so its services, volumes
+# and steps are the same.
+#
+#   1. Put the secrets in a file named .env next to this one (never commit it):
+#        SERENGETI_ADMIN_PASSWORD=a long admin password
+#        SERENGETI_CLUSTER_KEY=a random string of at least 32 characters
+#        SERENGETI_METRICS_PASSWORD=a password of 12 to 72 bytes for the account Prometheus uses
+#        GRAFANA_ADMIN_PASSWORD=a long password for Grafana's admin user
+#   2. Make the certificates once:          docker compose run --rm certs
+#   3. Start the nodes and the monitoring:  docker compose up -d
+#   4. Make the account Prometheus uses:    docker compose run --rm metrics-account
+#   5. Open Grafana at http://127.0.0.1:13000 (user admin) and Prometheus at http://127.0.0.1:19090.
+#
+# Grafana and Prometheus are published to 127.0.0.1 only, like the nodes. Prometheus has no login of its
+# own: do not publish it further. To look from another machine, use an SSH tunnel
+# (ssh -L 13000:127.0.0.1:13000 this-host).
+include:
+  - path: ../cluster/compose.yaml
+    env_file: .env
+
+secrets:
+  metrics_password:
+    environment: SERENGETI_METRICS_PASSWORD
+  grafana_admin_password:
+    environment: GRAFANA_ADMIN_PASSWORD
+
+services:
+  metrics-account:
+    # Makes (or updates) the read-only account "metrics" on n1; the cluster copies it to the others.
+    image: curlimages/curl:8.11.1
+    profiles: [setup]
+    volumes: [certs:/certs:ro]
+    secrets: [metrics_password]
+    environment:
+      SERENGETI_ADMIN_PASSWORD: ${SERENGETI_ADMIN_PASSWORD:?set SERENGETI_ADMIN_PASSWORD in .env}
+      SERENGETI_METRICS_PASSWORD: ${SERENGETI_METRICS_PASSWORD:?set SERENGETI_METRICS_PASSWORD in .env}
+    entrypoint: [/bin/sh, -c]
+    command:
+      - |
+        set -eu
+        esc() { sed 's/\\/\\\\/g; s/"/\\"/g'; }
+        printf 'user = "admin:%s"\n' "$$(printf %s "$$SERENGETI_ADMIN_PASSWORD" | esc)" > /tmp/curlrc
+        printf '{"password": "%s", "role": "read"}' "$$(esc < /run/secrets/metrics_password)" > /tmp/body
+        curl -sS --fail-with-body --retry 30 --retry-delay 2 --retry-all-errors -K /tmp/curlrc \
+          --cacert /certs/ca.pem -X PUT -H 'Content-Type: application/json' --data-binary @/tmp/body \
+          https://n1:1985/v1/users/metrics
+        echo
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    mem_limit: 512m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - certs:/certs:ro
+      - prometheus:/prometheus
+    secrets: [metrics_password]
+    ports: ["127.0.0.1:19090:9090"]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    secrets: [grafana_admin_password]
+    ports: ["127.0.0.1:13000:3000"]
+
+volumes:
+  prometheus:
+  grafana:

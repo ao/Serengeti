@@ -135,6 +135,14 @@ jobs:
       - name: Certificates, three TLS nodes, a write and a read, one node stopped
         run: IMAGE=serengeti:cluster-example examples/cluster/run.sh
 
+  monitoring-example:
+    name: Monitoring example, Prometheus and Grafana (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Alert rule tests, scrapes of three TLS nodes, the dashboard's queries, an alert for a stopped node
+        run: IMAGE=serengeti:monitoring-example examples/monitoring/run.sh
+
   kubernetes:
     name: Kubernetes example on kind (amd64)
     runs-on: ubuntu-24.04

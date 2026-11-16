@@ -14,6 +14,12 @@ GitHub release notes and tags.
   Service and a disruption budget, pods as uid 10001 on a read-only root (and `fsGroupChangePolicy:
   OnRootMismatch`, so the kubelet leaves the account files' modes alone). `run.sh` runs it on a kind
   cluster (pods ready, a write on every pod, a deleted pod back with its data); CI runs it.
+- Metrics for the cluster and the node's state: `serengeti_ready`, `serengeti_disk_failed`,
+  `serengeti_cluster_nodes`, `serengeti_cluster_reachable_nodes`, `serengeti_cluster_quorum`,
+  `serengeti_cluster_caught_up`, `serengeti_cluster_stale` and `serengeti_sync_ops_pulled_total`.
+- `examples/monitoring/`: Prometheus and Grafana for the Compose cluster. Prometheus scrapes every node
+  over HTTPS with a read-only account; 14 alert rules, each with a promtool unit test; a dashboard of 13
+  panels. `run.sh` checks the scrapes, every dashboard query and an alert for a stopped node; CI runs it.
 - A change feed: `GET /v1/changes?db=&table=&after=&wait=` returns the changes a node applied after a
   cursor (rows written there or merged from peers, tables and databases dropped or created), long-polling
   up to 60 s. A change is listed once the node has it on disk, and the feed answers 503 after a write to

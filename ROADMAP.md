@@ -29,8 +29,8 @@ here has a date.
   (`GET /v1/backup` or `serengeti backup`, and `serengeti restore`).
 - `serengeti shell`, and clients for Python and JavaScript in [clients/](clients/).
 - Rolling upgrades from 2.0 and 2.1, and a rollback to either on the same data directory.
-- A console at `/`, a container image for linux/amd64 and linux/arm64, and examples for Docker Compose and
-  Kubernetes.
+- A console at `/`, a container image for linux/amd64 and linux/arm64, and examples for Docker Compose,
+  Kubernetes, and Prometheus with Grafana.
 
 2.2 has these limits:
 

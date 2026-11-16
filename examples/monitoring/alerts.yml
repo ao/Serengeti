@@ -1,0 +1,98 @@
+# Alert rules for Serengeti's metrics (docs/API.md, "Metrics"). alerts.test.yml tests each of them:
+#   docker run --rm -v "$PWD:/m:ro" -w /m --entrypoint promtool prom/prometheus:v3.5.0 test rules alerts.test.yml
+groups:
+  - name: serengeti
+    rules:
+      - alert: SerengetiDown
+        expr: up{job="serengeti"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.instance }} has not answered Prometheus for a minute"
+
+      - alert: SerengetiNotReady
+        expr: serengeti_ready == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} has answered 503 to /ready for 2 minutes"
+
+      - alert: SerengetiDiskFailed
+        expr: serengeti_disk_failed == 1
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.instance }} failed to write to disk and serves nothing from its data until it is restarted"
+
+      - alert: SerengetiNoMajority
+        expr: serengeti_cluster_reachable_nodes < serengeti_cluster_quorum
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.instance }} reaches {{ $value }} nodes, fewer than a majority: its majority writes and reads get 503"
+
+      - alert: SerengetiPeerUnreachable
+        expr: serengeti_cluster_reachable_nodes < serengeti_cluster_nodes
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} has reached only {{ $value }} of the cluster's nodes for 5 minutes"
+
+      - alert: SerengetiStale
+        expr: serengeti_cluster_stale == 1
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.instance }} was away longer than tombstone_ttl_hours and neither syncs nor takes writes"
+
+      - alert: SerengetiMemoryFull
+        expr: serengeti_memory_full == 1
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.instance }} refuses writes that add data (memory_limit_percent)"
+
+      - alert: SerengetiMemoryHigh
+        expr: serengeti_data_bytes / serengeti_data_budget_bytes > 0.85 and serengeti_data_budget_bytes > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} holds {{ $value | humanizePercentage }} of the data it may hold before it refuses writes"
+
+      - alert: SerengetiServerErrors
+        # 503 is the answer to a node that is stopping, has no majority or is full; any other 5xx is a fault.
+        expr: sum by (job, instance) (rate(serengeti_http_requests_total{code=~"5..", code!="503"}[5m])) > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} answered with a 5xx other than 503"
+
+      - alert: SerengetiSlowFsync
+        expr: rate(serengeti_wal_fsync_seconds_total[5m]) / rate(serengeti_wal_fsyncs_total[5m]) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} has taken over 50 ms per fsync of its log for 10 minutes"
+
+      - alert: SerengetiLoginsLimited
+        expr: increase(serengeti_login_limited_total[10m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} refused logins from an address with too many failed attempts"
+
+      - alert: SerengetiRestarts
+        expr: changes(serengeti_start_time_seconds[30m]) >= 3
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} started 3 or more times in 30 minutes"
+
+      - alert: SerengetiConflicts
+        expr: serengeti_conflicts > 0
+        for: 1h
+        labels: {severity: info}
+        annotations:
+          summary: "{{ $labels.instance }} has held conflicting versions of {{ $value }} rows for an hour (SHOW CONFLICTS)"
+
+      - alert: SerengetiVersionsDiffer
+        expr: count(count by (version) (serengeti_build_info)) > 1
+        for: 2h
+        labels: {severity: info}
+        annotations:
+          summary: "The nodes have run different versions for 2 hours"

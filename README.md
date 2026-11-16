@@ -94,6 +94,8 @@ docker compose up -d
 
 The comments in the Compose file say how to reach the nodes, and
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) has the settings. CI runs this example as written.
+[examples/monitoring](examples/monitoring/) adds Prometheus, 14 tested alert rules and a Grafana
+dashboard to it.
 
 ## Writes in a cluster
 
@@ -190,8 +192,8 @@ GitHub Actions runs these on every change:
   and slowed at random, then every node checked against what the clients were told (5 minutes in CI;
   hours in the runs [docs/SOAK.md](docs/SOAK.md) lists);
 - the Python and JavaScript clients against a node, a TLS node and nodes that stall or cut answers short;
-- the quick start above, the examples, the recorded demo, the Compose cluster and the Kubernetes example
-  (on kind), run as written.
+- the quick start above, the examples, the recorded demo, the Compose cluster, the monitoring example and
+  the Kubernetes example (on kind), run as written.
 
 ## Measured
 
@@ -265,7 +267,8 @@ kept-alive connection, and 2.1 sets it itself.
 - [clients/](clients/): Python and JavaScript clients, one file each with no dependencies: queries,
   failover for reads across nodes, the change feed and accounts.
 - [examples/](examples/): the HTTP API from curl, Python and JavaScript with nothing else; a three-node
-  cluster with [Docker Compose](examples/cluster/) and on [Kubernetes](examples/kubernetes/).
+  cluster with [Docker Compose](examples/cluster/) and on [Kubernetes](examples/kubernetes/); Prometheus
+  alerts and a Grafana dashboard in [examples/monitoring](examples/monitoring/).
 - [CHANGELOG.md](CHANGELOG.md), [ROADMAP.md](ROADMAP.md), [VERSIONING.md](VERSIONING.md) and
   [CONTRIBUTING.md](CONTRIBUTING.md).
 
