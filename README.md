@@ -156,10 +156,10 @@ cursor from before a restart gets 410: read the table again and follow from now.
 
 ## How it compares
 
-| | Serengeti 2.1 | rqlite | CouchDB | cr-sqlite |
+| | Serengeti 2.2 | rqlite | CouchDB | cr-sqlite |
 |---|---|---|---|---|
 | Shape | one jar or image, HTTP API | one binary, HTTP API | server, HTTP API | SQLite extension |
-| Data and queries | JSON rows, a small SQL-like language with single-column indexes, no joins | SQLite, full SQL | JSON documents, Mango and map/reduce views | SQLite, full SQL |
+| Data and queries | JSON rows, a small SQL-like language (IN, LIKE, aggregates with GROUP BY, single-column indexes), no joins | SQLite, full SQL | JSON documents, Mango and map/reduce views | SQLite, full SQL |
 | Writes when a node is cut off | refused by default; accepted with `"ack": "local"` | refused on the minority side | accepted | accepted (it is local) |
 | Concurrent writes to one row | newer is the value; both listed by `SHOW CONFLICTS` | serialised through the Raft leader | deterministic winner; the others kept as conflicts | merged per column (last-writer-wins, counters) |
 | Replication | built in, 1 to 7 nodes | built in (Raft) | built in | you move the changes yourself |
@@ -172,16 +172,23 @@ Serengeti is smaller than both, and young: 2.0 was its first usable release.
 
 GitHub Actions runs these on every change:
 
-- 255 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
+- 329 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
   syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
-  the writes no other write had seen;
-- 58 checks against the built image on amd64 and arm64, including `kill -9` during writes;
+  the writes no other write had seen, and others that compare index lookups and GROUP BY with scans;
+- 87 checks against the built image on amd64 and arm64, including `kill -9` during writes, account roles,
+  a second node refused on a data directory in use, and the shell and backup commands;
 - 37 checks on a 3-node TLS cluster in Docker: nodes killed and restarted, one partitioned with iptables,
   one with fsync slowed by a second, local writes on both sides of a partition. Every write that was
   acknowledged must be on every node at the end;
-- 44 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster, one node at a time under writes, and
-  roll a node back to 2.0.0 after it has created an index;
-- the quick start above, the examples and the recorded demo, run as written.
+- 54 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster, one node at a time under writes, and
+  roll a node back to 2.0.0 after it has made an index and accounts;
+- a conformance suite of about 970 checks on the HTTP API and the query language, with 5,000 generated
+  statements per run, concurrent schema changes, `kill -9` rounds and a backup across three nodes;
+- a node filled to its memory limit in a 512 MiB container, with large rows and with small rows under two
+  indexes, that must refuse writes, back up, restart, delete every row and restart again;
+- the Python and JavaScript clients against a node, a TLS node and nodes that stall or cut answers short;
+- the quick start above, the examples, the recorded demo, the Compose cluster and the Kubernetes example
+  (on kind), run as written.
 
 ## Measured
 
@@ -242,9 +249,9 @@ kept-alive connection, and 2.1 sets it itself.
 - [CHANGELOG.md](CHANGELOG.md), [ROADMAP.md](ROADMAP.md), [VERSIONING.md](VERSIONING.md) and
   [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Upgrading from 2.0: 2.1 reads 2.0's data directory and syncs with 2.0 nodes, so a cluster can be upgraded
-one node at a time. 1.x (up to v1.3.4) is not compatible: its HTTP routes, on-disk files and
-`admin`/`admin` login are gone.
+Upgrading from 2.0 or 2.1: 2.2 reads their data directories and syncs with their nodes, so a cluster can be
+upgraded one node at a time, and a node can be rolled back. 1.x (up to v1.3.4) is not compatible: its HTTP
+routes, on-disk files and `admin`/`admin` login are gone.
 
 ## Licence
 
