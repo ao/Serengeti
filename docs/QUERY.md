@@ -1,6 +1,6 @@
 # Query language
 
-Serengeti 2.0 accepts one statement per query. The code is in
+Serengeti accepts one statement per query. The code is in
 `src/main/java/com/ataiva/serengeti/core/query`: `Parser` turns text into a `Statement`,
 `Executor` runs it against the storage engine, and `Query.run(text)` does both.
 
@@ -47,7 +47,7 @@ primary     = "(" expr ")"
 cmp         = "=" | "!=" | "<>" | "<" | "<=" | ">" | ">=" ;
 
 table       = name "." name ;
-name        = ( letter | "_" ) { letter | digit | "_" } ;   (at most 63 characters, not a keyword)
+name        = ( letter | "_" ) { letter | digit | "_" } ;   (ASCII, at most 63 characters, not a keyword)
 value       = string | number | "TRUE" | "FALSE" | "NULL" ;
 string      = "'" { any character, with ' written as '' } "'" ;
 number      = [ "-" ] digits [ "." digits ] [ ( "e" | "E" ) [ "+" | "-" ] digits ] ;
@@ -100,7 +100,8 @@ A value is a string, a number, a boolean or null.
   numbers are 64-bit doubles. A number too large for a double is a parse error.
 - Each row has a string key in the column `_id`. INSERT may set it (it must be a non-empty
   string); otherwise a random UUID is used. Inserting an `_id` that already exists in the table is
-  an error, and so is changing `_id` with UPDATE. A deleted row's `_id` can be used again.
+  an error, and so is setting `_id` in an UPDATE, even to the value it has. A deleted row's `_id` can
+  be used again.
 - A column a row does not have reads as null. `INSERT ... VALUES (NULL)` and `SET c = NULL` store
   an explicit null, which reads the same.
 - Tables have no schema: any row can have any columns.
@@ -155,8 +156,8 @@ table.
 
 An index holds the booleans, numbers and strings of its column, compared as above (`qty = 10` also
 finds 10.0). Rows where the column is missing, null, an object or an array are not in it, which is right:
-no comparison of those with a value is true. `_id` needs no index: `WHERE _id = 'x'`, ranges, IN lists
-and LIKE prefixes of `_id` never scan.
+no comparison of those with a value is true. `_id` needs no index, and `CREATE INDEX` on it is refused:
+`WHERE _id = 'x'`, ranges, IN lists and LIKE prefixes of `_id` never scan.
 
 An index is built from the rows when it is created and kept up to date by every write. In a cluster the
 definition replicates like a table's, and each node builds its own. Dropping the table drops its indexes.
@@ -185,7 +186,8 @@ SELECT kind, COUNT(*), MAX(price) FROM shop.items GROUP BY kind ORDER BY count(*
   total divided by how many numbers there are, always a double. A double total beyond the range of a
   double fails the statement (`SUM overflows a double`, `AVG overflows a double`).
 - `MIN(c)` and `MAX(c)` are the least and greatest value of c that is not null, in the ORDER BY order
-  above, so numbers come below strings, and an object or array above both. Of equal values (1 and 1.0)
+  above: booleans come below numbers, numbers below strings, and an object or array above all of them.
+  So the MIN of a column holding `TRUE`, 1 and `'a'` is `TRUE`. Of equal values (1 and 1.0)
   they give the one from the row with the lowest `_id`.
 - Over no rows, or for SUM and AVG no numbers, COUNT is 0 and the others are null.
 
@@ -247,6 +249,8 @@ row, in insert order:
   a constructor argument). A statement that would make more fails with `GROUP BY would make more than
   100,000 groups` as soon as it gets there, LIMIT or not.
 - An IN list has at most 1,000 values.
+- A select list has at most 256 items, a GROUP BY at most 32 columns, and a LIKE pattern at most
+  1,000 characters.
 - Parentheses and NOT may nest at most 64 levels deep in one condition (`Parser.MAX_DEPTH`). Long
   chains of AND or OR do not count towards this.
 - Names are at most 63 characters.
