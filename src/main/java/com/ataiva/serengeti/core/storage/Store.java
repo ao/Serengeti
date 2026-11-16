@@ -251,21 +251,53 @@ public final class Store {
             };
         }
 
+        java.util.Collection<java.util.TreeSet<String>> sets(Lookup l) {
+            if (l instanceof Lookup.Compare c) {
+                return sets(c.op(), c.value());
+            }
+            if (l instanceof Lookup.AnyOf a) {
+                // Equal values (1 and 1.0) share a key, so the same set may come up twice: keep it once.
+                java.util.Set<java.util.TreeSet<String>> out =
+                        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+                for (Object v : a.values()) {
+                    out.addAll(sets("=", v));
+                }
+                return out;
+            }
+            String p = ((Lookup.Prefix) l).prefix();
+            String end = prefixEnd(p);
+            return end == null ? strings.tailMap(p, true).values() : strings.subMap(p, true, end, false).values();
+        }
+
         long estimate(String op, Object v) {
+            return estimate(new Lookup.Compare(op, v));
+        }
+
+        long estimate(Lookup l) {
             long n = 0;
-            for (java.util.TreeSet<String> s : sets(op, v)) {
+            for (java.util.TreeSet<String> s : sets(l)) {
                 n += s.size();
             }
             return n;
         }
 
-        /** The ids in id order: equality as the live set, a range gathered if small enough, else null. */
         Iterable<String> ids(String op, Object v) {
-            java.util.Collection<java.util.TreeSet<String>> sets = sets(op, v);
+            return ids(new Lookup.Compare(op, v));
+        }
+
+        /**
+         * The ids in id order: one key's live set; the sets of several equal-value keys merged as they are
+         * read; a range gathered if small enough, else null.
+         */
+        Iterable<String> ids(Lookup l) {
+            java.util.Collection<java.util.TreeSet<String>> sets = sets(l);
             if (sets.size() <= 1) {
                 return sets.isEmpty() ? List.of() : sets.iterator().next();
             }
-            if (estimate(op, v) > MATERIALIZE_LIMIT) {
+            if (l instanceof Lookup.AnyOf) {
+                return merged(sets);
+            }
+            if (estimate(l) > MATERIALIZE_LIMIT) {
                 return null;
             }
             java.util.TreeSet<String> out = new java.util.TreeSet<>();
@@ -297,6 +329,110 @@ public final class Store {
                 out.addAll(s);
             }
             return out;
+        }
+
+        java.util.SortedSet<String> lookup(Lookup l) {
+            if (l instanceof Lookup.Compare c) {
+                return lookup(c.op(), c.value());
+            }
+            java.util.TreeSet<String> out = new java.util.TreeSet<>();
+            for (java.util.TreeSet<String> s : sets(l)) {
+                out.addAll(s);
+            }
+            return out;
+        }
+    }
+
+    /**
+     * What an index lookup finds in one column: the values that compare to {@code value} by {@code op} ("=",
+     * "<", "<=", ">", ">="), the values equal to any of {@code values}, or the strings that start with
+     * {@code prefix}. Each is exact by the rules of docs/QUERY.md: null, and values of no indexed type, match
+     * nothing.
+     */
+    public sealed interface Lookup {
+        record Compare(String op, Object value) implements Lookup {
+            public Compare {
+                java.util.Objects.requireNonNull(op, "op");
+            }
+        }
+
+        record AnyOf(List<Object> values) implements Lookup {
+            public AnyOf {
+                values = java.util.Collections.unmodifiableList(new ArrayList<>(values));
+            }
+        }
+
+        record Prefix(String prefix) implements Lookup {
+            public Prefix {
+                java.util.Objects.requireNonNull(prefix, "prefix");
+            }
+        }
+    }
+
+    /**
+     * The least string above every string that starts with {@code p} (UTF-16 code unit order), or null when
+     * there is none ({@code p} is empty or all U+FFFF): the strings with that prefix are those in
+     * [{@code p}, the result).
+     */
+    static String prefixEnd(String p) {
+        int i = p.length() - 1;
+        while (i >= 0 && p.charAt(i) == Character.MAX_VALUE) {
+            i--;
+        }
+        return i < 0 ? null : p.substring(0, i) + (char) (p.charAt(i) + 1);
+    }
+
+    /** The union of sorted sets, in order and without repeats, read as it is iterated (nothing is copied). */
+    static Iterable<String> merged(java.util.Collection<? extends java.util.SortedSet<String>> sets) {
+        return () -> new java.util.Iterator<>() {
+            private final java.util.PriorityQueue<Head> heads = new java.util.PriorityQueue<>();
+            private String last;
+
+            {
+                for (java.util.SortedSet<String> s : sets) {
+                    java.util.Iterator<String> it = s.iterator();
+                    if (it.hasNext()) {
+                        heads.add(new Head(it.next(), it));
+                    }
+                }
+                skipRepeats();
+            }
+
+            private void skipRepeats() {
+                while (!heads.isEmpty() && last != null && heads.peek().id.equals(last)) {
+                    advance(heads.poll());
+                }
+            }
+
+            private void advance(Head h) {
+                if (h.rest.hasNext()) {
+                    heads.add(new Head(h.rest.next(), h.rest));
+                }
+            }
+
+            @Override
+            public boolean hasNext() {
+                return !heads.isEmpty();
+            }
+
+            @Override
+            public String next() {
+                if (heads.isEmpty()) {
+                    throw new java.util.NoSuchElementException();
+                }
+                Head h = heads.poll();
+                last = h.id;
+                advance(h);
+                skipRepeats();
+                return last;
+            }
+        };
+    }
+
+    private record Head(String id, java.util.Iterator<String> rest) implements Comparable<Head> {
+        @Override
+        public int compareTo(Head o) {
+            return id.compareTo(o.id);
         }
     }
 
@@ -885,6 +1021,19 @@ public final class Store {
         });
     }
 
+    /** As {@link #forEachRow}, stopping at the first row for which {@code visitor} returns false. */
+    public void forEachRowWhile(String db, String table, java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        if (!tableExists(db, table)) {
+            return;
+        }
+        for (Map.Entry<String, RowState> e : dbs.get(db).tables.get(table).rows.entrySet()) {
+            Map<String, Object> v = e.getValue().value();
+            if (v != null && !visitor.test(e.getKey(), v)) {
+                return;
+            }
+        }
+    }
+
     /**
      * Visits, in id order, the rows of a table that hold more than one version: writes made on nodes that
      * had not seen each other's. The versions come newest first; the first is the row's value. Rows whose
@@ -925,32 +1074,60 @@ public final class Store {
      * for the one comparison, by the rules of docs/QUERY.md.
      */
     public java.util.SortedSet<String> indexLookup(String db, String table, String column, String op, Object value) {
+        return indexLookup(db, table, column, new Lookup.Compare(op, value));
+    }
+
+    /** As above, for any {@link Lookup}. */
+    public java.util.SortedSet<String> indexLookup(String db, String table, String column, Lookup l) {
         if (!tableExists(db, table)) {
             return null;
         }
         TableState t = dbs.get(db).tables.get(table);
         if (column.equals("_id")) {
             java.util.TreeSet<String> out = new java.util.TreeSet<>();
-            if (!(value instanceof String v)) {
-                return out; // _id is a string; other types never compare equal or ordered with it
+            for (String id : idKeys(t, l)) {
+                RowState r = t.rows.get(id);
+                if (r != null && r.value() != null) {
+                    out.add(id);
+                }
             }
-            java.util.NavigableMap<String, RowState> range = switch (op) {
+            return out;
+        }
+        IndexState ix = t.indexes.get(column);
+        return ix == null || !ix.exists() ? null : ix.lookup(l);
+    }
+
+    /**
+     * The keys of a table's rows (deleted ones included, so a caller checks each) that may match {@code l} on
+     * {@code _id}, in id order. {@code _id} is a string: other values never compare equal or ordered with it.
+     */
+    private static Iterable<String> idKeys(TableState t, Lookup l) {
+        if (l instanceof Lookup.Compare c) {
+            if (!(c.value() instanceof String v)) {
+                return List.of();
+            }
+            java.util.NavigableMap<String, RowState> range = switch (c.op()) {
                 case "=" -> t.rows.subMap(v, true, v, true);
                 case "<" -> t.rows.headMap(v, false);
                 case "<=" -> t.rows.headMap(v, true);
                 case ">" -> t.rows.tailMap(v, false);
                 case ">=" -> t.rows.tailMap(v, true);
-                default -> throw new IllegalArgumentException("no index lookup for " + op);
+                default -> throw new IllegalArgumentException("no index lookup for " + c.op());
             };
-            range.forEach((id, r) -> {
-                if (r.value() != null) {
-                    out.add(id);
+            return range.keySet();
+        }
+        if (l instanceof Lookup.AnyOf a) {
+            java.util.TreeSet<String> out = new java.util.TreeSet<>();
+            for (Object v : a.values()) {
+                if (v instanceof String s) {
+                    out.add(s);
                 }
-            });
+            }
             return out;
         }
-        IndexState ix = t.indexes.get(column);
-        return ix == null || !ix.exists() ? null : ix.lookup(op, value);
+        String p = ((Lookup.Prefix) l).prefix();
+        String end = prefixEnd(p);
+        return (end == null ? t.rows.tailMap(p, true) : t.rows.subMap(p, true, end, false)).keySet();
     }
 
     /** A range lookup on a column index that would match more ids than this is not used: the caller scans. */
@@ -961,15 +1138,26 @@ public final class Store {
      * Exact for column indexes (summing the matching keys, no copying), an upper bound for {@code _id} ranges.
      */
     public long indexEstimate(String db, String table, String column, String op, Object value) {
+        return indexEstimate(db, table, column, new Lookup.Compare(op, value));
+    }
+
+    /** As above, for any {@link Lookup}; for {@code _id}, exact for equality and an upper bound otherwise. */
+    public long indexEstimate(String db, String table, String column, Lookup l) {
         if (!tableExists(db, table)) {
             return -1;
         }
         TableState t = dbs.get(db).tables.get(table);
         if (column.equals("_id")) {
-            return op.equals("=") ? 1 : t.rows.size();
+            if (l instanceof Lookup.Compare c) {
+                return c.op().equals("=") ? 1 : t.rows.size();
+            }
+            if (l instanceof Lookup.AnyOf a) {
+                return a.values().stream().filter(v -> v instanceof String).distinct().count();
+            }
+            return t.rows.size();
         }
         IndexState ix = t.indexes.get(column);
-        return ix == null || !ix.exists() ? -1 : ix.estimate(op, value);
+        return ix == null || !ix.exists() ? -1 : ix.estimate(l);
     }
 
     /**
@@ -980,34 +1168,20 @@ public final class Store {
      */
     public boolean forEachIndexed(String db, String table, String column, String op, Object value,
             BiConsumer<String, Map<String, Object>> visitor) {
-        if (!tableExists(db, table)) {
+        return forEachIndexed(db, table, column, new Lookup.Compare(op, value), visitor);
+    }
+
+    /**
+     * As above, for any {@link Lookup}. The equal-value sets of {@link Lookup.AnyOf} are merged as they are
+     * read; a {@link Lookup.Prefix} on a column is a range, gathered under the same limit.
+     */
+    public boolean forEachIndexed(String db, String table, String column, Lookup l,
+            BiConsumer<String, Map<String, Object>> visitor) {
+        Iterable<String> ids = indexedIds(db, table, column, l);
+        if (ids == null) {
             return false;
         }
         TableState t = dbs.get(db).tables.get(table);
-        Iterable<String> ids;
-        if (column.equals("_id")) {
-            if (!(value instanceof String v)) {
-                return true; // nothing compares with _id but a string
-            }
-            java.util.NavigableMap<String, RowState> range = switch (op) {
-                case "=" -> t.rows.subMap(v, true, v, true);
-                case "<" -> t.rows.headMap(v, false);
-                case "<=" -> t.rows.headMap(v, true);
-                case ">" -> t.rows.tailMap(v, false);
-                case ">=" -> t.rows.tailMap(v, true);
-                default -> throw new IllegalArgumentException("no index lookup for " + op);
-            };
-            ids = range.keySet();
-        } else {
-            IndexState ix = t.indexes.get(column);
-            if (ix == null || !ix.exists()) {
-                return false;
-            }
-            ids = ix.ids(op, value);
-            if (ids == null) {
-                return false;
-            }
-        }
         for (String id : ids) {
             RowState r = t.rows.get(id);
             if (r != null && r.value() != null) {
@@ -1015,6 +1189,36 @@ public final class Store {
             }
         }
         return true;
+    }
+
+    /** As {@link #forEachIndexed(String, String, String, Lookup, BiConsumer)}, stopping when {@code visitor} returns false. */
+    public boolean forEachIndexedWhile(String db, String table, String column, Lookup l,
+            java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        Iterable<String> ids = indexedIds(db, table, column, l);
+        if (ids == null) {
+            return false;
+        }
+        TableState t = dbs.get(db).tables.get(table);
+        for (String id : ids) {
+            RowState r = t.rows.get(id);
+            if (r != null && r.value() != null && !visitor.test(id, r.value())) {
+                break;
+            }
+        }
+        return true;
+    }
+
+    /** The keys to visit for {@code l} on {@code column}, in id order; null when the caller should scan. */
+    private Iterable<String> indexedIds(String db, String table, String column, Lookup l) {
+        if (!tableExists(db, table)) {
+            return null;
+        }
+        TableState t = dbs.get(db).tables.get(table);
+        if (column.equals("_id")) {
+            return idKeys(t, l);
+        }
+        IndexState ix = t.indexes.get(column);
+        return ix == null || !ix.exists() ? null : ix.ids(l);
     }
 
     /** Number of rows, over every table, that hold more than one version; for metrics. */

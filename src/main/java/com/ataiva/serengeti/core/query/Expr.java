@@ -29,6 +29,92 @@ public sealed interface Expr {
         }
     }
 
+    /**
+     * {@code column IN (v1, v2, ...)}: exactly {@code column = v1 OR column = v2 ...}; with {@code negated},
+     * {@code NOT (column = v1 OR ...)}. Holds 1 to {@link #MAX_VALUES} literals.
+     */
+    record In(String column, List<Object> values, boolean negated) implements Expr {
+        public static final int MAX_VALUES = 1000;
+
+        public In {
+            Objects.requireNonNull(column, "column");
+            values = new Members(values);
+        }
+
+        /** {@code column IN (...)} before {@code negated} is applied: three-valued. */
+        Boolean holds(Object v) {
+            return ((Members) values).holds(v);
+        }
+    }
+
+    /**
+     * The values of an IN list, unchangeable, with the keys of its scalars ({@link Values#key}) in a hash
+     * set so that a row is tested in one lookup, which gives what comparing with each value would.
+     */
+    final class Members extends java.util.AbstractList<Object> implements java.util.RandomAccess {
+        private final Object[] values;
+        private final java.util.Set<Object> keys = new java.util.HashSet<>();
+        private final boolean hasNull;
+
+        Members(List<Object> values) {
+            this.values = values.toArray();
+            if (this.values.length == 0 || this.values.length > In.MAX_VALUES) {
+                throw new IllegalArgumentException("IN takes 1 to " + In.MAX_VALUES + " values");
+            }
+            boolean nulls = false;
+            for (Object v : this.values) {
+                Values.requireLiteral(v);
+                if (v == null) {
+                    nulls = true;
+                } else {
+                    keys.add(Values.key(v));
+                }
+            }
+            this.hasNull = nulls;
+        }
+
+        @Override
+        public Object get(int i) {
+            return values[i];
+        }
+
+        @Override
+        public int size() {
+            return values.length;
+        }
+
+        /** Null (unknown) for a null value; true if some list value equals it; else unknown if the list has a null. */
+        Boolean holds(Object v) {
+            if (v == null) {
+                return null;
+            }
+            if ((v instanceof String || v instanceof Number || v instanceof Boolean) && keys.contains(Values.key(v))) {
+                return Boolean.TRUE;
+            }
+            return hasNull ? null : Boolean.FALSE;
+        }
+    }
+
+    /** {@code column LIKE pattern}, or {@code column NOT LIKE pattern} when {@code negated}. */
+    record Like(String column, LikePattern pattern, boolean negated) implements Expr {
+        public Like {
+            Objects.requireNonNull(column, "column");
+            Objects.requireNonNull(pattern, "pattern");
+        }
+
+        public Like(String column, String pattern, boolean negated) {
+            this(column, new LikePattern(pattern), negated);
+        }
+
+        /** Before {@code negated}: unknown for null, false for a value that is not a string. */
+        Boolean holds(Object v) {
+            if (v == null) {
+                return null;
+            }
+            return v instanceof String s && pattern.matches(s);
+        }
+    }
+
     /** {@code column IS NULL}, or {@code column IS NOT NULL} when {@code negated}. */
     record IsNull(String column, boolean negated) implements Expr {
         public IsNull {

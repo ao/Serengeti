@@ -58,15 +58,17 @@ public final class Printer {
             StringBuilder b = new StringBuilder("SELECT ");
             if (q.projection() instanceof Statement.Projection.All) {
                 b.append('*');
-            } else if (q.projection() instanceof Statement.Projection.Count) {
-                b.append("COUNT(*)");
             } else {
-                b.append(String.join(", ", ((Statement.Projection.Columns) q.projection()).names()));
+                b.append(Statement.Projection.itemsOf(q.projection()).stream().map(Printer::item)
+                        .collect(Collectors.joining(", ")));
             }
             b.append(" FROM ").append(q.db()).append('.').append(q.table());
             where(b, q.where());
+            if (!q.groupBy().isEmpty()) {
+                b.append(" GROUP BY ").append(String.join(", ", q.groupBy()));
+            }
             if (q.orderBy() != null) {
-                b.append(" ORDER BY ").append(q.orderBy().column());
+                b.append(" ORDER BY ").append(item(q.orderBy().key()));
                 if (q.orderBy().descending()) {
                     b.append(" DESC");
                 }
@@ -110,6 +112,10 @@ public final class Printer {
             b.append(c.column()).append(' ').append(c.op().symbol()).append(' ').append(Values.format(c.value()));
         } else if (e instanceof Expr.IsNull n) {
             b.append(n.column()).append(n.negated() ? " IS NOT NULL" : " IS NULL");
+        } else if (e instanceof Expr.In in) {
+            b.append(in.column()).append(in.negated() ? " NOT IN (" : " IN (").append(values(in.values())).append(')');
+        } else if (e instanceof Expr.Like l) {
+            b.append(l.column()).append(l.negated() ? " NOT LIKE " : " LIKE ").append(Values.format(l.pattern().text()));
         } else if (e instanceof Expr.Not n) {
             b.append("NOT ");
             expr(b, n.inner());
@@ -131,6 +137,13 @@ public final class Printer {
             expr(b, terms.get(i));
         }
         b.append(')');
+    }
+
+    private static String item(Statement.Item i) {
+        if (i instanceof Statement.Item.Aggregate a) {
+            return a.fn() + "(" + (a.column() == null ? "*" : a.column()) + ")";
+        }
+        return ((Statement.Item.Column) i).name();
     }
 
     private static String values(List<Object> row) {

@@ -99,12 +99,51 @@ public sealed interface Statement {
         }
     }
 
+    /** One entry of a select list, and what ORDER BY sorts on: a column or an aggregate. */
+    sealed interface Item {
+        /** The column of the result. */
+        String label();
+
+        record Column(String name) implements Item {
+            public Column {
+                Objects.requireNonNull(name, "name");
+            }
+
+            @Override
+            public String label() {
+                return name;
+            }
+        }
+
+        /** {@code COUNT(*)} when {@code column} is null (only COUNT may have that), else {@code FN(column)}. */
+        record Aggregate(Fn fn, String column) implements Item {
+            public static final Aggregate COUNT_ALL = new Aggregate(Fn.COUNT, null);
+
+            public Aggregate {
+                Objects.requireNonNull(fn, "fn");
+                if (column == null && fn != Fn.COUNT) {
+                    throw new IllegalArgumentException(fn + "(*)");
+                }
+            }
+
+            /** {@code count} for COUNT(*), as in 2.1; else lowercase, as {@code sum(qty)}. */
+            @Override
+            public String label() {
+                return column == null ? "count" : fn.name().toLowerCase(java.util.Locale.ROOT) + "(" + column + ")";
+            }
+        }
+    }
+
+    enum Fn { COUNT, SUM, MIN, MAX, AVG }
+
     /** What a SELECT returns. */
     sealed interface Projection {
         record All() implements Projection {}
 
+        /** {@code COUNT(*)} alone. */
         record Count() implements Projection {}
 
+        /** Columns only. */
         record Columns(List<String> names) implements Projection {
             public Columns {
                 names = List.copyOf(names);
@@ -113,30 +152,104 @@ public sealed interface Statement {
                 }
             }
         }
+
+        /** A list with at least one aggregate, other than {@code COUNT(*)} alone (which is {@link Count}). */
+        record Items(List<Item> items) implements Projection {
+            public Items {
+                items = List.copyOf(items);
+                if (items.stream().noneMatch(i -> i instanceof Item.Aggregate)) {
+                    throw new IllegalArgumentException("no aggregate: use Columns");
+                }
+                if (items.equals(List.of(Item.Aggregate.COUNT_ALL))) {
+                    throw new IllegalArgumentException("COUNT(*) alone: use Count");
+                }
+            }
+        }
+
+        /** The select list as items; null for {@code *}. */
+        static List<Item> itemsOf(Projection p) {
+            if (p instanceof Count) {
+                return List.of(Item.Aggregate.COUNT_ALL);
+            }
+            if (p instanceof Columns c) {
+                return c.names().stream().<Item>map(Item.Column::new).toList();
+            }
+            if (p instanceof Items i) {
+                return i.items();
+            }
+            return null;
+        }
+
+        /** True when the list has an aggregate. */
+        static boolean aggregates(Projection p) {
+            return p instanceof Count || p instanceof Items;
+        }
     }
 
-    record OrderBy(String column, boolean descending) {
+    record OrderBy(Item key, boolean descending) {
         public OrderBy {
-            Objects.requireNonNull(column, "column");
+            Objects.requireNonNull(key, "key");
+        }
+
+        public OrderBy(String column, boolean descending) {
+            this(new Item.Column(column), descending);
+        }
+
+        /** The column sorted on, or null when the key is an aggregate. */
+        public String column() {
+            return key instanceof Item.Column c ? c.name() : null;
         }
     }
 
     /**
-     * {@code where}, {@code orderBy} and {@code limit} may be null. A COUNT(*) select has no order or
-     * limit.
+     * {@code where}, {@code orderBy} and {@code limit} may be null; {@code groupBy} is empty without GROUP BY.
+     * The rules are those of docs/QUERY.md: with an aggregate and no GROUP BY, the list has only aggregates
+     * and there is no ORDER BY or LIMIT; with GROUP BY, each column of the list is a GROUP BY column, and
+     * ORDER BY names one, or an aggregate of the list.
      */
-    record Select(String db, String table, Projection projection, Expr where, OrderBy orderBy, Long limit)
-            implements Statement {
+    record Select(String db, String table, Projection projection, Expr where, List<String> groupBy, OrderBy orderBy,
+            Long limit) implements Statement {
         public Select {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
             Objects.requireNonNull(projection, "projection");
+            groupBy = List.copyOf(groupBy);
             if (limit != null && limit < 0) {
                 throw new IllegalArgumentException("negative LIMIT");
             }
-            if (projection instanceof Projection.Count && (orderBy != null || limit != null)) {
-                throw new IllegalArgumentException("COUNT(*) takes no ORDER BY or LIMIT");
+            if (groupBy.stream().distinct().count() != groupBy.size()) {
+                throw new IllegalArgumentException("GROUP BY columns must be distinct");
             }
+            List<Item> items = Projection.itemsOf(projection);
+            if (groupBy.isEmpty()) {
+                if (Projection.aggregates(projection)) {
+                    if (items.stream().anyMatch(i -> i instanceof Item.Column)) {
+                        throw new IllegalArgumentException("a column with an aggregate needs GROUP BY");
+                    }
+                    if (orderBy != null || limit != null) {
+                        throw new IllegalArgumentException("aggregates without GROUP BY take no ORDER BY or LIMIT");
+                    }
+                } else if (orderBy != null && orderBy.column() == null) {
+                    throw new IllegalArgumentException("ORDER BY an aggregate needs GROUP BY");
+                }
+            } else {
+                if (items == null) {
+                    throw new IllegalArgumentException("SELECT * takes no GROUP BY");
+                }
+                for (Item i : items) {
+                    if (i instanceof Item.Column c && !groupBy.contains(c.name())) {
+                        throw new IllegalArgumentException("column " + c.name() + " is not in GROUP BY");
+                    }
+                }
+                if (orderBy != null && (orderBy.column() != null ? !groupBy.contains(orderBy.column())
+                        : !items.contains(orderBy.key()))) {
+                    throw new IllegalArgumentException("ORDER BY takes a GROUP BY column or an aggregate of the list");
+                }
+            }
+        }
+
+        public Select(String db, String table, Projection projection, Expr where, OrderBy orderBy, Long limit) {
+            this(db, table, projection, where, List.of(), orderBy, limit);
         }
     }
 

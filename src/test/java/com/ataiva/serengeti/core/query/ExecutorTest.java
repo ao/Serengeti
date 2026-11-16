@@ -416,6 +416,312 @@ class ExecutorTest {
         assertEquals(List.of(), rows("SHOW INDEXES IN shop.items").rows());
     }
 
+    private List<String> ids(String where) throws IOException {
+        List<String> out = new ArrayList<>();
+        for (Object id : column("SELECT _id FROM shop.items WHERE " + where, "_id")) {
+            out.add((String) id);
+        }
+        return out;
+    }
+
+    @Test
+    void inIsAnOrOfEqualities() throws IOException {
+        seed();
+        run("INSERT INTO shop.items (_id, price, stock) VALUES ('e', 3.0, true), ('f', 'Tea', false)");
+        assertEquals(List.of("a", "d", "e"), ids("price IN (3, '2')"));
+        assertEquals(List.of("a", "e"), ids("price IN (3.0)"), "3 and 3.0 are equal, as with =");
+        assertEquals(List.of("b", "c", "f"), ids("price NOT IN (3, '2')"), "a string is not a number");
+        assertEquals(List.of("a", "b"), ids("_id IN ('b', 'a', 'zz', 1, 'a')"));
+        assertEquals(List.of("e", "f"), ids("stock IN (TRUE, FALSE)"));
+        // A row with no value, or a null in the list, makes the comparisons unknown.
+        assertEquals(List.of("a", "b", "d", "e", "f"), ids("stock NOT IN (7)"), "c has a null stock");
+        assertEquals(List.of("a"), ids("stock IN (10, NULL)"));
+        assertEquals(List.of(), ids("stock NOT IN (10, NULL)"), "NOT IN with a null is never true");
+        assertEquals(List.of("a", "c"), ids("stock IN (10, NULL) OR stock IS NULL"));
+        assertEquals(List.of("b", "c", "d", "f"), ids("NOT (stock IN (10, NULL) AND price = 3)"),
+                "unknown AND false is false; e is unknown AND true");
+        // Each is exactly the OR it stands for.
+        for (String[] pair : new String[][] {
+                {"price IN (3, '2', NULL)", "price = 3 OR price = '2' OR price = NULL"},
+                {"price NOT IN (3, '2', NULL)", "NOT (price = 3 OR price = '2' OR price = NULL)"},
+                {"stock NOT IN (0, 10)", "NOT (stock = 0 OR stock = 10)"},
+                {"name IN ('Tea', 'Milk') AND stock IN (10)", "(name = 'Tea' OR name = 'Milk') AND stock = 10"}}) {
+            assertEquals(ids(pair[1]), ids(pair[0]), pair[0]);
+        }
+    }
+
+    @Test
+    void likeMatchesPatterns() throws IOException {
+        seed();
+        String emoji = new String(Character.toChars(0x1F600));
+        run("INSERT INTO shop.items (_id, name) VALUES ('e', '100%'), ('f', '100x'), ('g', 'a_b'), ('h', 'axb'), "
+                + "('i', 'back\\slash'), ('j', '" + emoji + "x'), ('k', ''), ('l', 'C')");
+        assertEquals(List.of("b", "d", "l"), ids("name LIKE 'C%'"));
+        assertEquals(List.of(), ids("name LIKE 'c%'"), "case-sensitive");
+        assertEquals(List.of("b", "d"), ids("name LIKE '%e'"));
+        assertEquals(List.of("a"), ids("name LIKE '_ea'"));
+        assertEquals(List.of("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"), ids("name LIKE '%'"));
+        assertEquals(List.of("k"), ids("name LIKE ''"));
+        assertEquals(List.of("e"), ids("name LIKE '100\\%'"));
+        assertEquals(List.of("e", "f"), ids("name LIKE '100_'"));
+        assertEquals(List.of("g"), ids("name LIKE 'a\\_b'"));
+        assertEquals(List.of("g", "h"), ids("name LIKE 'a_b'"));
+        assertEquals(List.of("i"), ids("name LIKE '%\\\\%'"));
+        assertEquals(List.of("j"), ids("name LIKE '__x'"), "an emoji is two UTF-16 code units");
+        assertEquals(List.of(), ids("name LIKE '_x'"));
+        assertEquals(List.of("a", "b", "c", "d", "l"), ids("name LIKE '%_%' AND name NOT LIKE '%\\_%'"
+                + " AND name NOT LIKE '%x%' AND name NOT LIKE '%h%' AND name NOT LIKE '%0%'"));
+        // A value that is not a string: LIKE is false, NOT LIKE true; null or missing: unknown.
+        assertEquals(List.of("d"), ids("price LIKE '%'"));
+        assertEquals(List.of("a", "b", "c"), ids("price NOT LIKE '%'"));
+        assertEquals(List.of(), ids("stock LIKE '%' OR stock NOT LIKE '%' AND _id = 'c'"));
+        // Without wildcards, LIKE is =.
+        for (String[] pair : new String[][] {{"price LIKE '2'", "price = '2'"}, {"price NOT LIKE '2'", "price != '2'"},
+                {"name LIKE '100%%'", "name LIKE '100%'"}}) {
+            assertEquals(ids(pair[1]), ids(pair[0]), pair[0]);
+        }
+    }
+
+    @Test
+    void inAndLikeThroughAnIndexGiveTheRowsAScanDoes() throws IOException {
+        run("CREATE DATABASE shop");
+        run("CREATE TABLE shop.items");
+        StringBuilder values = new StringBuilder();
+        String top = String.valueOf(Character.MAX_VALUE); // the last UTF-16 code unit, where a prefix range ends
+        String[] words = {"apple", "apricot", "banana", "b%nd", "b_x", "", "Apple", top, top + "a", "a" + top};
+        for (int i = 0; i < 300; i++) {
+            String v = i % 9 == 0 ? "null" : i % 4 == 0 ? Integer.toString(i % 13) : i % 7 == 0 ? (i % 13) + ".0"
+                    : i % 11 == 0 ? "true" : "'" + words[i % words.length] + (i % 3 == 0 ? "" : i % 5) + "'";
+            values.append(i == 0 ? "" : ", ").append("('r").append(1000 + i).append("', ").append(v)
+                    .append(", ").append(i % 3).append(")");
+        }
+        run("INSERT INTO shop.items (_id, v, kind) VALUES " + values);
+        List<String> queries = List.of(
+                "v IN (1, 2.0, 'apple1', TRUE, NULL)", "v IN ('nothing')", "v NOT IN (1, 2, 'apple1')",
+                "v IN (3) AND kind = 1", "kind = 2 AND v IN (1, 'banana2', 'b%nd4')", "v IN (1) OR v IN (2)",
+                "v LIKE 'ap%'", "v LIKE 'ap%' AND kind = 0", "v LIKE 'b\\%%'", "v LIKE 'b\\_%'", "v LIKE 'b_%'",
+                "v LIKE '%1'", "v LIKE '_pple%'", "v LIKE 'apple'", "v LIKE 'apple1'", "v NOT LIKE 'ap%'",
+                "v LIKE ''", "v LIKE '" + top + "%'", "v LIKE 'a" + top + "%'", "v LIKE 'A%' OR v LIKE 'a%'",
+                "_id IN ('r1001', 'r1299', 'r0', 'r1001')", "_id LIKE 'r12%'", "_id LIKE 'r12_'", "_id LIKE 'r1000'",
+                "_id LIKE 'r12%' AND v LIKE 'b%'", "_id NOT IN ('r1001')");
+        List<Object> before = new ArrayList<>();
+        for (String w : queries) {
+            before.add(List.of(rows("SELECT _id, v FROM shop.items WHERE " + w).rows(),
+                    rows("SELECT COUNT(*) FROM shop.items WHERE " + w).rows()));
+        }
+        run("CREATE INDEX ON shop.items (v)");
+        run("CREATE INDEX ON shop.items (kind)");
+        for (int i = 0; i < queries.size(); i++) {
+            String w = queries.get(i);
+            assertEquals(before.get(i), List.of(rows("SELECT _id, v FROM shop.items WHERE " + w).rows(),
+                    rows("SELECT COUNT(*) FROM shop.items WHERE " + w).rows()), w);
+            assertEquals(rows("SELECT _id FROM shop.items WHERE (" + w + ") OR (" + w + ")").rows(),
+                    rows("SELECT _id FROM shop.items WHERE " + w).rows(), w);
+        }
+        // The index is the one the term finds, and a write moves rows in and out of it.
+        Statement.Select s = (Statement.Select) Parser.parse("SELECT * FROM shop.items WHERE v LIKE 'ap%' AND kind = 0");
+        assertEquals(new Executor.Plan("v", new com.ataiva.serengeti.core.storage.Store.Lookup.Prefix("ap")),
+                engine.read(st -> Executor.cheapestIndexedTerm(st, "shop", "items", s.where())));
+        assertEquals(1, affected("UPDATE shop.items SET v = 'apex' WHERE _id = 'r1002'"));
+        assertEquals(1, affected("DELETE FROM shop.items WHERE v IN ('apex') AND kind = 2"));
+        assertEquals(List.of(), rows("SELECT _id FROM shop.items WHERE v LIKE 'apex%'").rows());
+    }
+
+    @Test
+    void aggregatesWithoutGroupByMakeOneRow() throws IOException {
+        seed();
+        Result.Rows r = rows("SELECT COUNT(*), COUNT(stock), SUM(price), MIN(price), MAX(price), AVG(stock), SUM(stock) "
+                + "FROM shop.items");
+        assertEquals(List.of("count", "count(stock)", "sum(price)", "min(price)", "max(price)", "avg(stock)", "sum(stock)"),
+                r.columns());
+        // The string '2' is not added; MIN and MAX use the ORDER BY order, where numbers come before strings.
+        assertEquals(List.of(Arrays.asList(4L, 3L, 8.5, 1L, "2", 5.0, 15L)), r.rows());
+        assertFalse(r.truncated());
+        assertEquals(List.of(Arrays.asList(0L, 0L, null, null, null, null)),
+                rows("SELECT COUNT(*), COUNT(name), SUM(price), MIN(name), MAX(name), AVG(price) FROM shop.items "
+                        + "WHERE price > 100").rows(), "over no rows");
+        assertEquals(List.of(Arrays.asList(4L, null, null, "Cake", "Tea")),
+                rows("SELECT COUNT(name), SUM(name), AVG(name), MIN(name), MAX(name) FROM shop.items").rows(),
+                "no numbers: SUM and AVG are null");
+        assertEquals(List.of(Arrays.asList(4L, 4L, "a", "d")),
+                rows("SELECT COUNT(*), COUNT(_id), MIN(_id), MAX(_id) FROM shop.items").rows());
+        assertEquals(List.of(List.of(2L, 2L)), rows("SELECT COUNT(*), COUNT(*) FROM shop.items WHERE stock > 0").rows());
+        assertEquals(List.of("Tea"), column("SELECT MAX(name) FROM shop.items WHERE _id IN ('a', 'c')", "max(name)"));
+        query.run("SELECT SUM(price) FROM shop.items", false); // the read role may run it
+    }
+
+    @Test
+    void sumAndAvgFollowTheNumberRules() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        run("INSERT INTO d.t (_id, g, n) VALUES ('1', 'max', 9223372036854775807), ('2', 'max', 1), ('3', 'max', -1), "
+                + "('4', 'over', 9223372036854775807), ('5', 'over', 1), ('6', 'dbl', 9223372036854775807), "
+                + "('7', 'dbl', 9223372036854775807), ('8', 'dbl', 0.5), ('9', 'neg', -0.0), ('a', 'neg', -0.0), "
+                + "('b', 'big', 1e308), ('c', 'big', 1e308), ('d', 'mix', 1), ('e', 'mix', 2.5), ('f', 'mix', 'x'), "
+                + "('g', 'mix', TRUE), ('h', 'mix', NULL), ('i', 'min', -9223372036854775808), ('j', 'min', -1), "
+                + "('k', 'min', 1)");
+        String sum = "SELECT SUM(n), AVG(n) FROM d.t WHERE g = ";
+        // Integers are added exactly: an overflow on the way that comes back is not an error.
+        assertEquals(List.of(List.of(Long.MAX_VALUE, (double) Long.MAX_VALUE / 3)), rows(sum + "'max'").rows());
+        assertEquals("SUM overflows a 64-bit integer", fails(sum.replace(", AVG(n)", "") + "'over'").getMessage());
+        assertEquals(List.of(List.of(4.611686018427388E18)), rows("SELECT AVG(n) FROM d.t WHERE g = 'over'").rows(),
+                "AVG is a double, so it does not overflow there");
+        assertEquals(List.of(List.of(1.8446744073709552E19)), rows("SELECT SUM(n) FROM d.t WHERE g = 'dbl'").rows(),
+                "once a double is added the sum is a double");
+        Result.Rows neg = rows(sum + "'neg'");
+        assertEquals("-0.0", neg.rows().get(0).get(0).toString());
+        assertEquals("SUM overflows a double", fails(sum.replace(", AVG(n)", "") + "'big'").getMessage());
+        assertEquals("AVG overflows a double", fails("SELECT AVG(n) FROM d.t WHERE g = 'big'").getMessage());
+        // Only numbers are added: 'x', TRUE and NULL are skipped, though COUNT(n) counts all but the null.
+        assertEquals(List.of(List.of(3.5, 1.75, 4L, 5L)),
+                rows("SELECT SUM(n), AVG(n), COUNT(n), COUNT(*) FROM d.t WHERE g = 'mix'").rows());
+        assertEquals(List.of(List.of(Long.MIN_VALUE)), rows("SELECT SUM(n) FROM d.t WHERE g = 'min'").rows());
+        assertEquals(List.of(List.of(Long.MAX_VALUE)),
+                rows("SELECT SUM(n) FROM d.t WHERE g IN ('min', 'over') OR _id = '1'").rows(),
+                "MAX + MAX + 1 + MIN - 1 + 1 fits, so it is not an error");
+        // A group that overflows fails the statement; groups are summed in GROUP BY order, so 'big' comes first.
+        assertEquals("SUM overflows a 64-bit integer",
+                fails("SELECT g, SUM(n) FROM d.t WHERE g != 'big' GROUP BY g").getMessage());
+        assertEquals("SUM overflows a double", fails("SELECT g, SUM(n) FROM d.t GROUP BY g ORDER BY g DESC").getMessage());
+    }
+
+    @Test
+    void groupByMakesOneRowPerValue() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        run("INSERT INTO d.t (_id, k, n, s) VALUES ('01', 'b', 1, 'x'), ('02', 'a', 2, 'y'), ('03', 'b', 3, NULL), "
+                + "('04', 1, 4, 'x'), ('05', 1.0, 5.5, 'x'), ('06', NULL, 6, 'z'), ('07', TRUE, 7, 'x'), "
+                + "('08', 'a', NULL, 'y'), ('09', FALSE, 'nine', 'x')");
+        run("INSERT INTO d.t (_id, n) VALUES ('10', 10)");
+        Result.Rows r = rows("SELECT k, COUNT(*), COUNT(n), SUM(n), MIN(n), MAX(s) FROM d.t GROUP BY k");
+        assertEquals(List.of("k", "count", "count(n)", "sum(n)", "min(n)", "max(s)"), r.columns());
+        // null (with missing) first, then false, true, numbers (1 and 1.0 are one group, shown as first seen), strings.
+        assertEquals(List.of(
+                Arrays.asList(null, 2L, 2L, 16L, 6L, "z"),
+                Arrays.asList(false, 1L, 1L, null, "nine", "x"),
+                Arrays.asList(true, 1L, 1L, 7L, 7L, "x"),
+                Arrays.asList(1L, 2L, 2L, 9.5, 4L, "x"),
+                Arrays.asList("a", 2L, 1L, 2L, 2L, "y"),
+                Arrays.asList("b", 2L, 2L, 4L, 1L, "x")), r.rows());
+        assertEquals(List.of("s", "count"), rows("SELECT s, COUNT(*) FROM d.t GROUP BY s").columns());
+        assertEquals(List.of(Arrays.asList(null, 2L), List.of("x", 5L), List.of("y", 2L), List.of("z", 1L)),
+                rows("SELECT s, COUNT(*) FROM d.t GROUP BY s").rows());
+        // ORDER BY an aggregate of the list, ties by the GROUP BY values; LIMIT counts groups.
+        assertEquals(List.of(List.of("x", 5L), Arrays.asList(null, 2L)),
+                rows("SELECT s, COUNT(*) FROM d.t GROUP BY s ORDER BY count(*) DESC LIMIT 2").rows());
+        assertEquals(List.of(List.of("z", 1L), Arrays.asList(null, 2L), List.of("y", 2L), List.of("x", 5L)),
+                rows("SELECT s, COUNT(*) FROM d.t GROUP BY s ORDER BY COUNT(*)").rows());
+        assertEquals(List.of(List.of("z"), List.of("y"), List.of("x"), Arrays.asList((Object) null)),
+                rows("SELECT s FROM d.t GROUP BY s ORDER BY s DESC").rows(), "GROUP BY alone lists the distinct values");
+        // Two columns; a GROUP BY column need not be listed, and ORDER BY may name it.
+        assertEquals(List.of(List.of(1L), List.of(1L), List.of(2L)),
+                rows("SELECT COUNT(*) FROM d.t WHERE k IN ('a', 'b') GROUP BY k, s ORDER BY k DESC").rows());
+        assertEquals(List.of(Arrays.asList("a", "y", 2L), Arrays.asList("b", null, 1L), Arrays.asList("b", "x", 1L)),
+                rows("SELECT k, s, COUNT(*) FROM d.t WHERE k IN ('a', 'b') GROUP BY k, s").rows());
+        assertEquals(List.of(Arrays.asList("b", null, 1L), Arrays.asList("b", "x", 1L), Arrays.asList("a", "y", 2L)),
+                rows("SELECT k, s, COUNT(*) FROM d.t WHERE k IN ('a', 'b') GROUP BY s, k ORDER BY k DESC").rows());
+        assertEquals(List.of(), rows("SELECT k, COUNT(*) FROM d.t WHERE n > 100 GROUP BY k").rows(), "no rows, no groups");
+        assertEquals(List.of(List.of(2L, 4L)), rows("SELECT COUNT(*), SUM(n) FROM d.t WHERE k = 'b' GROUP BY k").rows());
+    }
+
+    @Test
+    void groupsOfObjectsAndArrays() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        Map<String, Object> ab = new java.util.LinkedHashMap<>();
+        ab.put("a", 1L);
+        ab.put("b", 2L);
+        Map<String, Object> ba = new java.util.LinkedHashMap<>();
+        ba.put("b", 2L);
+        ba.put("a", 1L);
+        var at = new com.ataiva.serengeti.core.storage.Stamp(System.currentTimeMillis() + 1000, 0, "n1");
+        engine.apply(List.of(
+                new com.ataiva.serengeti.core.storage.Op.Put("d", "t", "1", Map.of("v", ab, "n", 1L), at),
+                new com.ataiva.serengeti.core.storage.Op.Put("d", "t", "2", Map.of("v", ba, "n", 2L), at),
+                new com.ataiva.serengeti.core.storage.Op.Put("d", "t", "3", Map.of("v", List.of(1L, 2L), "n", 3L), at),
+                new com.ataiva.serengeti.core.storage.Op.Put("d", "t", "4", Map.of("v", 5L, "n", 4L), at)));
+        Result.Rows r = rows("SELECT v, COUNT(*), SUM(n) FROM d.t GROUP BY v");
+        // Objects and arrays come after numbers (the ORDER BY order), by their JSON text with keys sorted, so
+        // [1,2] before {"a":1,"b":2}; the two objects are one group, shown as the first one seen.
+        assertEquals(List.of(List.of(5L, 1L, 4L), List.of(List.of(1L, 2L), 1L, 3L), List.of(ab, 2L, 3L)), r.rows());
+        assertEquals("{\"a\":1,\"b\":2}", com.ataiva.serengeti.core.json.Json.write(r.rows().get(2).get(0)));
+        assertEquals(List.of(List.of(5L, ab)), rows("SELECT MIN(v), MAX(v) FROM d.t").rows(),
+                "MAX is an object, the first of the equal ones in _id order");
+        assertEquals(List.of(List.of(4L)), rows("SELECT COUNT(v) FROM d.t").rows());
+    }
+
+    @Test
+    void groupCaps() throws IOException {
+        query = new Query(new Executor(engine, new Hlc("n1"), 3, 5));
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        run("INSERT INTO d.t (_id, g) VALUES ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('5', 5), ('6', 5)");
+        Result.Rows r = rows("SELECT g, COUNT(*) FROM d.t GROUP BY g");
+        assertEquals(List.of(List.of(1L, 1L), List.of(2L, 1L), List.of(3L, 1L)), r.rows());
+        assertTrue(r.truncated(), "5 groups, 3 returned");
+        r = rows("SELECT g, COUNT(*) FROM d.t GROUP BY g ORDER BY count(*) DESC LIMIT 3");
+        assertEquals(List.of(List.of(5L, 2L), List.of(1L, 1L), List.of(2L, 1L)), r.rows());
+        assertFalse(r.truncated());
+        assertEquals("LIMIT 4 is over the maximum of 3",
+                fails("SELECT g, COUNT(*) FROM d.t GROUP BY g LIMIT 4").getMessage());
+        run("INSERT INTO d.t (_id, g) VALUES ('7', 7)");
+        assertEquals("GROUP BY would make more than 5 groups", fails("SELECT g FROM d.t GROUP BY g").getMessage());
+        assertEquals("GROUP BY would make more than 5 groups",
+                fails("SELECT COUNT(*) FROM d.t GROUP BY g LIMIT 1").getMessage(), "LIMIT does not change it");
+        assertEquals(List.of(List.of(1L)), rows("SELECT COUNT(*) FROM d.t WHERE g = 7 GROUP BY g").rows());
+        assertEquals(List.of(List.of(7L)), rows("SELECT COUNT(*) FROM d.t").rows());
+    }
+
+    @Test
+    void theDefaultGroupCapIs100000() throws IOException {
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        StringBuilder b = new StringBuilder("INSERT INTO d.t (_id, g) VALUES ");
+        for (int i = 0; i <= Executor.DEFAULT_MAX_GROUPS; i++) {
+            b.append(i == 0 ? "" : ", ").append("('r").append(i).append("', ").append(i % 10_001).append(')');
+        }
+        run(b.toString());
+        assertEquals("GROUP BY would make more than 100,000 groups",
+                fails("SELECT _id, COUNT(*) FROM d.t GROUP BY _id").getMessage());
+        Result.Rows r = rows("SELECT g, COUNT(*) FROM d.t GROUP BY g");
+        assertEquals(10_000, r.rows().size());
+        assertTrue(r.truncated(), "10,001 groups, capped at 10,000 rows");
+        assertEquals(List.of(0L, 10L), r.rows().get(0));
+        assertEquals(List.of(List.of(10_000L, 9L)), rows("SELECT g, COUNT(*) FROM d.t GROUP BY g ORDER BY g DESC LIMIT 1").rows());
+    }
+
+    @Test
+    void orderByIdReadsInIdOrderAndKeysetPagesCoverTheTable() throws IOException {
+        query = new Query(new Executor(engine, new Hlc("n1"), 4));
+        run("CREATE DATABASE d");
+        run("CREATE TABLE d.t");
+        StringBuilder b = new StringBuilder("INSERT INTO d.t (_id, n) VALUES ");
+        for (int i = 0; i < 25; i++) {
+            b.append(i == 0 ? "" : ", ").append("('k").append((char) ('a' + (i * 7) % 25)).append("', ").append(i).append(')');
+        }
+        run(b.toString());
+        Result.Rows r = rows("SELECT _id FROM d.t ORDER BY _id");
+        assertEquals(List.of(List.of("ka"), List.of("kb"), List.of("kc"), List.of("kd")), r.rows());
+        assertTrue(r.truncated());
+        assertEquals(rows("SELECT _id FROM d.t WHERE n >= 3").rows(), rows("SELECT _id FROM d.t WHERE n >= 3 ORDER BY _id ASC").rows());
+        assertEquals(List.of(List.of("ky"), List.of("kx")), rows("SELECT _id FROM d.t ORDER BY _id DESC LIMIT 2").rows());
+        List<String> seen = new ArrayList<>();
+        String last = "";
+        while (true) {
+            List<List<Object>> page = rows("SELECT _id, n FROM d.t WHERE _id > '" + last + "' ORDER BY _id LIMIT 4").rows();
+            page.forEach(row -> seen.add((String) row.get(0)));
+            if (page.size() < 4) {
+                break;
+            }
+            last = (String) page.get(page.size() - 1).get(0);
+        }
+        List<String> all = new ArrayList<>();
+        for (int i = 0; i < 25; i++) {
+            all.add("k" + (char) ('a' + i));
+        }
+        assertEquals(all, seen);
+    }
+
     @Test
     void aReadOnlyCallerRunsSelectAndShowOnly() throws IOException {
         run("CREATE DATABASE shop");

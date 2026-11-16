@@ -47,6 +47,69 @@ final class Values {
         return ScalarOrder.order(a, b);
     }
 
+    /**
+     * A value that equals and hashes like another value's key exactly when {@code a = b} is true for two
+     * booleans, numbers or strings: a number that is a whole value in the range of a long becomes that
+     * {@link Long} (so 1, 1.0 and -0.0 / 0 share a key), any other number a {@link Double}. Null stays
+     * null; an object or array becomes its JSON text with keys sorted, wrapped so it equals no scalar.
+     */
+    static Object key(Object v) {
+        if (v == null || v instanceof String || v instanceof Boolean || v instanceof Long) {
+            return v;
+        }
+        if (v instanceof Integer || v instanceof Short || v instanceof Byte) {
+            return ((Number) v).longValue();
+        }
+        if (v instanceof Double || v instanceof Float) {
+            double d = ((Number) v).doubleValue();
+            if (d == Math.rint(d) && d >= -0x1p63 && d < 0x1p63) {
+                return (long) d;
+            }
+            return d;
+        }
+        return new Other(canonical(v));
+    }
+
+    /** An object or array as a group key: compared by its canonical JSON text. */
+    record Other(String json) implements Comparable<Other> {
+        @Override
+        public int compareTo(Other o) {
+            return json.compareTo(o.json);
+        }
+    }
+
+    private static String canonical(Object v) {
+        return com.ataiva.serengeti.core.json.Json.write(sortedKeys(v));
+    }
+
+    private static Object sortedKeys(Object v) {
+        if (v instanceof java.util.Map<?, ?> m) {
+            java.util.TreeMap<String, Object> out = new java.util.TreeMap<>();
+            m.forEach((k, x) -> out.put(String.valueOf(k), sortedKeys(x)));
+            return out;
+        }
+        if (v instanceof java.util.Collection<?> c) {
+            java.util.List<Object> out = new java.util.ArrayList<>(c.size());
+            for (Object x : c) {
+                out.add(sortedKeys(x));
+            }
+            return out;
+        }
+        return v;
+    }
+
+    /**
+     * The order of two group keys made by {@link #key}: the ORDER BY order, with objects and arrays (equal
+     * there) ordered by their JSON text. Two keys compare 0 only when they are equal.
+     */
+    static int keyOrder(Object a, Object b) {
+        int c = sortOrder(a, b);
+        if (c == 0 && a instanceof Other x && b instanceof Other y) {
+            return x.compareTo(y);
+        }
+        return c;
+    }
+
     private static int rank(Object v) {
         if (v == null) {
             return 0;

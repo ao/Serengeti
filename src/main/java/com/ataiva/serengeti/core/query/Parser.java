@@ -190,44 +190,88 @@ public final class Parser {
 
     private Statement select() {
         Statement.Projection projection;
+        List<Statement.Item> items = new ArrayList<>();
+        List<Integer> itemAt = new ArrayList<>();
         if (acceptSymbol("*")) {
             projection = new Statement.Projection.All();
-        } else if (acceptKeyword("count")) {
-            expectSymbol("(");
-            expectSymbol("*");
-            expectSymbol(")");
-            projection = new Statement.Projection.Count();
         } else {
-            List<String> names = new ArrayList<>();
             do {
-                names.add(name());
+                itemAt.add(tok.start());
+                items.add(item());
             } while (acceptSymbol(","));
-            projection = new Statement.Projection.Columns(names);
+            if (items.equals(List.of(Statement.Item.Aggregate.COUNT_ALL))) {
+                projection = new Statement.Projection.Count();
+            } else if (items.stream().allMatch(i -> i instanceof Statement.Item.Column)) {
+                projection = new Statement.Projection.Columns(
+                        items.stream().map(i -> ((Statement.Item.Column) i).name()).toList());
+            } else {
+                projection = new Statement.Projection.Items(items);
+            }
         }
+        boolean aggregates = Statement.Projection.aggregates(projection);
         expectKeyword("from");
         String[] q = qualifiedName();
         Expr where = acceptKeyword("where") ? expr() : null;
+
+        List<String> groupBy = new ArrayList<>();
+        int groupAt = tok.start();
+        if (acceptWord("group")) {
+            if (projection instanceof Statement.Projection.All) {
+                throw new ParseException("SELECT * cannot have GROUP BY", groupAt);
+            }
+            expectKeyword("by");
+            do {
+                int at = tok.start();
+                String c = name();
+                if (groupBy.contains(c)) {
+                    throw new ParseException("column '" + c + "' is listed twice in GROUP BY", at);
+                }
+                groupBy.add(c);
+            } while (acceptSymbol(","));
+        }
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i) instanceof Statement.Item.Column c && (aggregates || !groupBy.isEmpty())
+                    && !groupBy.contains(c.name())) {
+                throw new ParseException(groupBy.isEmpty()
+                        ? "column '" + c.name() + "' is listed with an aggregate, so it must be in a GROUP BY"
+                        : "column '" + c.name() + "' is listed but is not in GROUP BY", itemAt.get(i));
+            }
+        }
+        // Aggregates without GROUP BY make one row, which has nothing to sort or cut: as COUNT(*) in 2.1.
+        String single = aggregates && groupBy.isEmpty()
+                ? projection instanceof Statement.Projection.Count ? "COUNT(*)" : "aggregates without GROUP BY"
+                : null;
+
         Statement.OrderBy orderBy = null;
         Long limit = null;
-        boolean count = projection instanceof Statement.Projection.Count;
         if (isKeyword("order")) {
-            if (count) {
-                throw new ParseException("COUNT(*) cannot have ORDER BY", tok.start());
+            if (single != null) {
+                throw new ParseException(single + " cannot have ORDER BY", tok.start());
             }
             advance();
             expectKeyword("by");
-            String column = name();
+            int at = tok.start();
+            Statement.Item key = item();
+            if (key instanceof Statement.Item.Column c) {
+                if (!groupBy.isEmpty() && !groupBy.contains(c.name())) {
+                    throw new ParseException("ORDER BY '" + c.name() + "' must name a GROUP BY column or an aggregate"
+                            + " of the select list", at);
+                }
+            } else if (groupBy.isEmpty() || !items.contains(key)) {
+                throw new ParseException("ORDER BY " + print(key) + (groupBy.isEmpty() ? " needs GROUP BY"
+                        : " must be in the select list"), at);
+            }
             boolean desc = false;
             if (acceptKeyword("desc")) {
                 desc = true;
             } else {
                 acceptKeyword("asc");
             }
-            orderBy = new Statement.OrderBy(column, desc);
+            orderBy = new Statement.OrderBy(key, desc);
         }
         if (isKeyword("limit")) {
-            if (count) {
-                throw new ParseException("COUNT(*) cannot have LIMIT", tok.start());
+            if (single != null) {
+                throw new ParseException(single + " cannot have LIMIT", tok.start());
             }
             advance();
             if (tok.kind() != Token.Kind.NUMBER || !(tok.value() instanceof Long n) || n < 0) {
@@ -236,7 +280,53 @@ public final class Parser {
             limit = n;
             advance();
         }
-        return new Statement.Select(q[0], q[1], projection, where, orderBy, limit);
+        return new Statement.Select(q[0], q[1], projection, where, groupBy, orderBy, limit);
+    }
+
+    private static String print(Statement.Item i) {
+        return i instanceof Statement.Item.Aggregate a
+                ? a.fn() + "(" + (a.column() == null ? "*" : a.column()) + ")"
+                : ((Statement.Item.Column) i).name();
+    }
+
+    /**
+     * A column, or an aggregate: {@code COUNT(*)}, or COUNT, SUM, MIN, MAX or AVG of a column. Only COUNT is
+     * reserved; {@code sum} and the others are aggregates only when a {@code (} follows, so columns may still
+     * have those names.
+     */
+    private Statement.Item item() {
+        Statement.Fn fn;
+        if (isKeyword("count")) {
+            int at = tok.start();
+            advance();
+            if (!isSymbol("(")) {
+                throw new ParseException("expected a name but found the keyword COUNT, which cannot be used as a name", at);
+            }
+            advance();
+            fn = Statement.Fn.COUNT;
+            if (acceptSymbol("*")) {
+                expectSymbol(")");
+                return Statement.Item.Aggregate.COUNT_ALL;
+            }
+        } else {
+            String n = name();
+            fn = switch (n) {
+                case "sum" -> Statement.Fn.SUM;
+                case "min" -> Statement.Fn.MIN;
+                case "max" -> Statement.Fn.MAX;
+                case "avg" -> Statement.Fn.AVG;
+                default -> null;
+            };
+            if (fn == null || !acceptSymbol("(")) {
+                return new Statement.Item.Column(n);
+            }
+        }
+        if (isSymbol("*")) {
+            throw new ParseException(fn + "(*) is not an aggregate: only COUNT takes *", tok.start());
+        }
+        String column = name();
+        expectSymbol(")");
+        return new Statement.Item.Aggregate(fn, column);
     }
 
     private Statement update() {
@@ -304,7 +394,7 @@ public final class Parser {
         return primary();
     }
 
-    // primary := '(' expr ')' | name (cmp value | IS [NOT] NULL)
+    // primary := '(' expr ')' | name (cmp value | IS [NOT] NULL | [NOT] IN '(' value {',' value} ')' | [NOT] LIKE string)
     private Expr primary() {
         if (isSymbol("(")) {
             enter();
@@ -320,8 +410,55 @@ public final class Parser {
             expectKeyword("null");
             return new Expr.IsNull(column, negated);
         }
+        boolean negated = acceptKeyword("not");
+        if (acceptKeyword("in")) {
+            return new Expr.In(column, inList(), negated);
+        }
+        // LIKE is not a reserved word: a column may be called like, and "like LIKE 'x%'" reads as it should.
+        if (tok.kind() == Token.Kind.NAME && tok.text().equals("like")) {
+            advance();
+            return new Expr.Like(column, likePattern(), negated);
+        }
+        if (negated) {
+            throw expected("IN or LIKE after NOT");
+        }
         Expr.Cmp op = comparison();
         return new Expr.Compare(column, op, value());
+    }
+
+    private List<Object> inList() {
+        expectSymbol("(");
+        List<Object> values = new ArrayList<>();
+        do {
+            if (values.size() == Expr.In.MAX_VALUES) {
+                throw new ParseException("IN takes at most " + Expr.In.MAX_VALUES + " values", tok.start());
+            }
+            values.add(value());
+        } while (acceptSymbol(","));
+        expectSymbol(")");
+        return values;
+    }
+
+    private LikePattern likePattern() {
+        if (tok.kind() != Token.Kind.STRING) {
+            throw expected("a string (the LIKE pattern)");
+        }
+        String p = (String) tok.value();
+        int bad = LikePattern.badEscape(p);
+        if (bad >= 0) {
+            // The position in the query text: past the opening quote, and past the second ' of each '' before it.
+            int quotes = 0;
+            for (int i = 0; i < bad; i++) {
+                if (p.charAt(i) == '\'') {
+                    quotes++;
+                }
+            }
+            String found = bad + 1 < p.length() ? "'\\" + p.charAt(bad + 1) + "'" : "a \\ at the end";
+            throw new ParseException("expected \\%, \\_ or \\\\ in a LIKE pattern but found " + found,
+                    tok.start() + 1 + bad + quotes);
+        }
+        advance();
+        return new LikePattern(p);
     }
 
     private void enter() {
@@ -346,7 +483,7 @@ public final class Parser {
                 return op;
             }
         }
-        throw expected("a comparison (=, !=, <>, <, <=, >, >=) or IS");
+        throw expected("a comparison (=, !=, <>, <, <=, >, >=), IS, IN or LIKE");
     }
 
     private Object value() {

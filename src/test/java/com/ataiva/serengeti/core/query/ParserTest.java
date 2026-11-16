@@ -200,4 +200,137 @@ class ParserTest {
         Expr e = where(cond);
         assertEquals(20_000, ((Expr.And) e).terms().size());
     }
+
+    @Test
+    void inLists() {
+        assertEquals(new Expr.In("a", Arrays.asList(1L, "x", null, true, 2.5), false), where("a IN (1, 'x', NULL, TRUE, 2.5)"));
+        assertEquals(new Expr.In("a", List.of(1L), true), where("A not in (1)"));
+        assertEquals(new Expr.Not(new Expr.In("a", List.of(1L), false)), where("NOT a IN (1)"));
+        assertEquals(new Expr.And(List.of(new Expr.In("a", List.of(1L, 2L), false), new Expr.Compare("b", Cmp.EQ, 3L))),
+                where("a IN (1,2) AND b = 3"));
+        roundTrips("SELECT * FROM d.t WHERE a IN (1, 'x', NULL) OR b NOT IN (-0.0, FALSE)");
+        String thousand = String.join(", ", java.util.Collections.nCopies(Expr.In.MAX_VALUES, "7"));
+        assertEquals(1000, ((Expr.In) where("a IN (" + thousand + ")")).values().size());
+        String text = "SELECT * FROM d.t WHERE a IN (" + thousand + ", 8)";
+        ParseException e = fails(text);
+        assertEquals("IN takes at most 1000 values at position " + text.lastIndexOf('8'), e.getMessage());
+        fails("SELECT * FROM d.t WHERE a IN ()");
+        fails("SELECT * FROM d.t WHERE a IN 1");
+        fails("SELECT * FROM d.t WHERE a IN (b)");
+        fails("SELECT * FROM d.t WHERE a IN (1,)");
+        fails("SELECT * FROM d.t WHERE a IN (1");
+        fails("SELECT * FROM d.t WHERE a NOT = 1");
+        assertTrue(fails("SELECT * FROM d.t WHERE a NOT 1").getMessage().startsWith("expected IN or LIKE after NOT"));
+        assertTrue(fails("SELECT * FROM d.t WHERE a ~ 1").getMessage().contains("unexpected character"));
+        assertTrue(fails("SELECT * FROM d.t WHERE a b").getMessage().contains("IS, IN or LIKE"));
+    }
+
+    @Test
+    void likePatterns() {
+        Expr.Like l = (Expr.Like) where("a LIKE 'ab%'");
+        assertEquals(new Expr.Like("a", "ab%", false), l);
+        assertEquals("ab", l.pattern().prefix());
+        assertEquals(new Expr.Like("a", "_", true), where("a NOT LIKE '_'"));
+        assertEquals(new Expr.Like("like", "like", false), where("like LIKE 'like'"));
+        assertEquals(new Expr.Compare("like", Cmp.EQ, 1L), where("LIKE = 1"));
+        LikePattern p = ((Expr.Like) where("a LIKE '50\\%\\_\\\\'")).pattern();
+        assertEquals("50%_\\", p.prefix());
+        assertTrue(p.exact());
+        roundTrips("SELECT * FROM d.t WHERE a LIKE 'it''s\\%%' AND b NOT LIKE ''");
+
+        String head = "SELECT * FROM d.t WHERE a LIKE '";
+        ParseException e = fails(head + "a\\b'");
+        assertEquals("expected \\%, \\_ or \\\\ in a LIKE pattern but found '\\b' at position " + (head.length() + 1),
+                e.getMessage());
+        e = fails(head + "it''s\\x'");
+        assertEquals(head.length() + 5, e.position(), "counts the doubled quote as two characters of the text");
+        e = fails(head + "ab\\'");
+        assertTrue(e.getMessage().contains("a \\ at the end"), e.getMessage());
+        assertEquals(head.length() + 2, e.position());
+        fails(head + "\\'' AND b = 1");
+        fails("SELECT * FROM d.t WHERE a LIKE 5");
+        fails("SELECT * FROM d.t WHERE a LIKE NULL");
+        fails("SELECT * FROM d.t WHERE a LIKE b");
+        fails("SELECT * FROM d.t WHERE a LIKE");
+    }
+
+    @Test
+    void newWordsAreStillNames() {
+        assertEquals(new Statement.Select("d", "t", new Projection.Columns(List.of("sum", "min", "max", "avg", "group", "like")),
+                new Expr.Compare("group", Cmp.EQ, 1L), new Statement.OrderBy("sum", false), null),
+                parse("SELECT sum, min, max, avg, group, like FROM d.t WHERE group = 1 ORDER BY sum"));
+        assertEquals(new Statement.CreateTable("group", "like", false), parse("CREATE TABLE group.like"));
+        assertEquals(new Statement.CreateIndex("sum", "avg", "group", false), parse("CREATE INDEX ON sum.avg (group)"));
+        roundTrips("INSERT INTO d.t (sum, min, group, like) VALUES (1, 2, 3, 4)");
+        roundTrips("UPDATE d.t SET like = 1, max = 2 WHERE avg IS NULL AND group LIKE 'x%'");
+        assertEquals(new Projection.Items(List.of(new Statement.Item.Aggregate(Statement.Fn.SUM, "sum"),
+                new Statement.Item.Aggregate(Statement.Fn.MAX, "group"))),
+                ((Statement.Select) parse("SELECT sum(sum), MAX(group) FROM d.t")).projection());
+        assertEquals(List.of("group"), ((Statement.Select) parse("SELECT group FROM d.t GROUP BY group")).groupBy());
+        // COUNT stays reserved, as in 2.1.
+        assertTrue(fails("SELECT count FROM d.t").getMessage().contains("keyword COUNT"));
+        assertEquals(7, fails("SELECT count FROM d.t").position());
+        fails("CREATE TABLE d.count");
+    }
+
+    @Test
+    void aggregates() {
+        Statement.Item.Aggregate countAll = Statement.Item.Aggregate.COUNT_ALL;
+        List<Statement.Item> all = List.of(countAll, new Statement.Item.Aggregate(Statement.Fn.COUNT, "a"),
+                new Statement.Item.Aggregate(Statement.Fn.SUM, "a"), new Statement.Item.Aggregate(Statement.Fn.MIN, "b"),
+                new Statement.Item.Aggregate(Statement.Fn.MAX, "_id"), new Statement.Item.Aggregate(Statement.Fn.AVG, "c"));
+        assertEquals(new Statement.Select("d", "t", new Projection.Items(all), new Expr.IsNull("a", true), null, null),
+                parse("SELECT count(*), COUNT(a), sum(A), Min(b), MAX(_id), avg(c) FROM d.t WHERE a IS NOT NULL"));
+        assertEquals(List.of("count", "count(a)", "sum(a)", "min(b)", "max(_id)", "avg(c)"),
+                all.stream().map(Statement.Item::label).toList());
+        // COUNT(*) alone keeps its 2.1 form, with or without GROUP BY.
+        assertEquals(new Statement.Select("d", "t", new Projection.Count(), null, List.of("a"), null, null),
+                parse("SELECT COUNT(*) FROM d.t GROUP BY a"));
+        assertEquals(new Statement.Select("d", "t", new Projection.Columns(List.of("a")), null, List.of("a", "b"),
+                new Statement.OrderBy("b", true), 3L), parse("SELECT a FROM d.t GROUP BY a, b ORDER BY b DESC LIMIT 3"));
+        Statement.Select s = (Statement.Select) parse(
+                "SELECT a, COUNT(*), SUM(n) FROM d.t WHERE n > 0 GROUP BY a, b ORDER BY sum(N) DESC LIMIT 5");
+        assertEquals(new Statement.OrderBy(new Statement.Item.Aggregate(Statement.Fn.SUM, "n"), true), s.orderBy());
+        assertEquals(List.of("a", "b"), s.groupBy());
+        assertEquals(new Statement.OrderBy(countAll, false),
+                ((Statement.Select) parse("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY count(*) ASC")).orderBy());
+        roundTrips("SELECT a, COUNT(*), AVG(n), MIN(_id) FROM d.t WHERE n IN (1, 2) GROUP BY a ORDER BY AVG(n) LIMIT 0");
+        roundTrips("SELECT COUNT(*), COUNT(*) FROM d.t");
+        roundTrips("SELECT COUNT(a) FROM d.t GROUP BY a ORDER BY a DESC");
+    }
+
+    @Test
+    void aggregateErrors() {
+        ParseException e = fails("SELECT a, COUNT(*) FROM d.t");
+        assertEquals("column 'a' is listed with an aggregate, so it must be in a GROUP BY at position 7", e.getMessage());
+        e = fails("SELECT b, a, SUM(n) FROM d.t GROUP BY b");
+        assertEquals("column 'a' is listed but is not in GROUP BY at position 10", e.getMessage());
+        assertEquals(7, fails("SELECT a FROM d.t GROUP BY b").position());
+        assertEquals("SELECT * cannot have GROUP BY at position 18", fails("SELECT * FROM d.t GROUP BY a").getMessage());
+        assertTrue(fails("SELECT a FROM d.t GROUP BY a, A").getMessage().contains("listed twice in GROUP BY"));
+        assertEquals("SUM(*) is not an aggregate: only COUNT takes * at position 11", fails("SELECT SUM(*) FROM d.t").getMessage());
+        assertTrue(fails("SELECT SUM(a) FROM d.t ORDER BY a").getMessage()
+                .startsWith("aggregates without GROUP BY cannot have ORDER BY"));
+        assertTrue(fails("SELECT MIN(a), MAX(a) FROM d.t LIMIT 1").getMessage()
+                .startsWith("aggregates without GROUP BY cannot have LIMIT"));
+        assertTrue(fails("SELECT COUNT(*) FROM d.t ORDER BY a").getMessage().startsWith("COUNT(*) cannot have ORDER BY"));
+        e = fails("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY b");
+        assertEquals("ORDER BY 'b' must name a GROUP BY column or an aggregate of the select list at position 48",
+                e.getMessage());
+        assertEquals("ORDER BY SUM(n) must be in the select list at position 48",
+                fails("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY sum(n)").getMessage());
+        assertEquals("ORDER BY COUNT(*) needs GROUP BY at position 27",
+                fails("SELECT a FROM d.t ORDER BY COUNT(*)").getMessage());
+        fails("SELECT a FROM d.t GROUP a");
+        fails("SELECT a FROM d.t GROUP BY");
+        fails("SELECT a FROM d.t GROUP BY a,");
+        fails("SELECT a FROM d.t GROUP BY SUM(a)");
+        fails("SELECT a FROM d.t ORDER BY a GROUP BY a");
+        fails("SELECT COUNT(a FROM d.t");
+        fails("SELECT COUNT() FROM d.t");
+        fails("SELECT SUM(a, b) FROM d.t");
+        fails("SELECT SUM(a) b FROM d.t");
+        fails("SELECT *, COUNT(*) FROM d.t");
+        fails("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY count");
+    }
 }

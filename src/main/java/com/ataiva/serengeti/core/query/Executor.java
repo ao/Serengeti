@@ -26,24 +26,32 @@ import java.util.UUID;
 public final class Executor {
     /** The most rows one SELECT returns, unless the executor is built with another cap. */
     public static final int DEFAULT_MAX_ROWS = 10_000;
+    /** The most groups a GROUP BY may hold while it runs, unless the executor is built with another cap. */
+    public static final int DEFAULT_MAX_GROUPS = 100_000;
     /** The column that holds each row's key. */
     public static final String ID = "_id";
 
     private final StorageEngine engine;
     private final Hlc clock;
     private final int maxRows;
+    private final int maxGroups;
 
     public Executor(StorageEngine engine, Hlc clock) {
         this(engine, clock, DEFAULT_MAX_ROWS);
     }
 
     public Executor(StorageEngine engine, Hlc clock, int maxRows) {
-        if (maxRows < 1) {
-            throw new IllegalArgumentException("maxRows must be at least 1");
+        this(engine, clock, maxRows, DEFAULT_MAX_GROUPS);
+    }
+
+    public Executor(StorageEngine engine, Hlc clock, int maxRows, int maxGroups) {
+        if (maxRows < 1 || maxGroups < 1) {
+            throw new IllegalArgumentException("maxRows and maxGroups must be at least 1");
         }
         this.engine = engine;
         this.clock = clock;
         this.maxRows = maxRows;
+        this.maxGroups = maxGroups;
         clock.observe(engine.read(Store::maxStamp));
     }
 
@@ -265,26 +273,40 @@ public final class Executor {
     /**
      * Visits, in _id order, the live rows that may match {@code where}: through an index when one term of
      * it (the whole condition, or one term of a top-level AND) compares an indexed column or _id with a
-     * value, else every row. Visitors still check the whole condition, so the choice changes only speed.
+     * value, is an IN list or a LIKE with a literal prefix, else every row. Visitors still check the whole
+     * condition, so the choice changes only speed.
      */
     private static void scan(Store store, String db, String table, Expr where,
             java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
-        Expr.Compare via = cheapestIndexedTerm(store, db, table, where);
-        if (via == null || !store.forEachIndexed(db, table, via.column(), via.op().symbol(), via.value(), visitor)) {
+        Plan via = cheapestIndexedTerm(store, db, table, where);
+        if (via == null || !store.forEachIndexed(db, table, via.column(), via.lookup(), visitor)) {
             store.forEachRow(db, table, visitor);
         }
     }
 
+    /** As {@link #scan}, stopping at the first row for which {@code visitor} returns false. */
+    private static void scanWhile(Store store, String db, String table, Expr where,
+            java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        Plan via = cheapestIndexedTerm(store, db, table, where);
+        if (via == null || !store.forEachIndexedWhile(db, table, via.column(), via.lookup(), visitor)) {
+            store.forEachRowWhile(db, table, visitor);
+        }
+    }
+
+    /** An index read for one term of a condition: what {@code lookup} finds in {@code column}. */
+    record Plan(String column, Store.Lookup lookup) {}
+
     /** The term of {@code where} (itself, or one of a top-level AND) whose index visits the fewest rows. */
-    static Expr.Compare cheapestIndexedTerm(Store store, String db, String table, Expr where) {
+    static Plan cheapestIndexedTerm(Store store, String db, String table, Expr where) {
         List<Expr> terms = where instanceof Expr.And a ? a.terms() : where == null ? List.of() : List.of(where);
-        Expr.Compare best = null;
+        Plan best = null;
         long bestCount = Long.MAX_VALUE;
         for (Expr t : terms) {
-            if (t instanceof Expr.Compare c && c.op() != Expr.Cmp.NE) {
-                long n = store.indexEstimate(db, table, c.column(), c.op().symbol(), c.value());
+            Plan p = plan(t);
+            if (p != null) {
+                long n = store.indexEstimate(db, table, p.column(), p.lookup());
                 if (n >= 0 && n < bestCount) {
-                    best = c;
+                    best = p;
                     bestCount = n;
                 }
             }
@@ -292,11 +314,31 @@ public final class Executor {
         return best;
     }
 
+    /** The index read that finds every row for which {@code t} is true, or null if there is none. */
+    private static Plan plan(Expr t) {
+        if (t instanceof Expr.Compare c && c.op() != Expr.Cmp.NE) {
+            return new Plan(c.column(), new Store.Lookup.Compare(c.op().symbol(), c.value()));
+        }
+        if (t instanceof Expr.In in && !in.negated()) {
+            return new Plan(in.column(), new Store.Lookup.AnyOf(in.values()));
+        }
+        if (t instanceof Expr.Like l && !l.negated()) {
+            LikePattern p = l.pattern();
+            if (p.exact()) {
+                return new Plan(l.column(), new Store.Lookup.Compare("=", p.prefix()));
+            }
+            if (!p.prefix().isEmpty()) {
+                return new Plan(l.column(), new Store.Lookup.Prefix(p.prefix()));
+            }
+        }
+        return null;
+    }
+
     private record Match(String id, Map<String, Object> row) {}
 
     private Result select(Store store, Statement.Select q) {
         requireTable(store, q.db(), q.table());
-        if (q.projection() instanceof Statement.Projection.Count) {
+        if (q.projection() instanceof Statement.Projection.Count && q.groupBy().isEmpty()) {
             long[] n = {0};
             scan(store, q.db(), q.table(), q.where(), (id, row) -> {
                 if (matches(q.where(), id, row)) {
@@ -308,16 +350,30 @@ public final class Executor {
         if (q.limit() != null && q.limit() > maxRows) {
             throw new QueryException("LIMIT " + q.limit() + " is over the maximum of " + maxRows);
         }
+        if (Statement.Projection.aggregates(q.projection()) || !q.groupBy().isEmpty()) {
+            return grouped(store, q);
+        }
         long cap = q.limit() != null ? q.limit() : maxRows;
-        // Without ORDER BY rows come in _id order, so one past the cap is enough to know about truncation.
-        long keep = q.orderBy() == null ? cap + 1 : Long.MAX_VALUE;
         List<Match> found = new ArrayList<>();
-        scan(store, q.db(), q.table(), q.where(), (id, row) -> {
-            if (found.size() < keep && matches(q.where(), id, row)) {
-                found.add(new Match(id, row));
-            }
-        });
-        if (q.orderBy() != null) {
+        boolean idOrder = q.orderBy() == null || (ID.equals(q.orderBy().column()) && !q.orderBy().descending());
+        if (idOrder) {
+            // Rows come in _id order, so the first matches are the answer, and one past the cap is enough to
+            // know about truncation: stop there (a keyset page reads only its rows).
+            long keep = cap + 1;
+            scanWhile(store, q.db(), q.table(), q.where(), (id, row) -> {
+                if (matches(q.where(), id, row)) {
+                    found.add(new Match(id, row));
+                }
+                return found.size() < keep;
+            });
+        } else {
+            scan(store, q.db(), q.table(), q.where(), (id, row) -> {
+                if (matches(q.where(), id, row)) {
+                    found.add(new Match(id, row));
+                }
+            });
+        }
+        if (!idOrder) {
             String col = q.orderBy().column();
             Comparator<Match> byValue = (a, b) -> Values.sortOrder(get(a.id, a.row, col), get(b.id, b.row, col));
             if (q.orderBy().descending()) {
@@ -348,6 +404,252 @@ public final class Executor {
             rows.add(r);
         }
         return new Result.Rows(columns, rows, truncated);
+    }
+
+    /** The rows of one group: its key and first-seen values for each GROUP BY column, and its aggregates. */
+    private static final class Group {
+        final Object[] keys;
+        final Object[] values;
+        final Acc[] accs;
+        final Object[] results;
+
+        Group(Object[] keys, Object[] values, List<Statement.Item.Aggregate> aggs) {
+            this.keys = keys;
+            this.values = values;
+            this.accs = new Acc[aggs.size()];
+            for (int i = 0; i < accs.length; i++) {
+                accs[i] = Acc.of(aggs.get(i));
+            }
+            this.results = new Object[accs.length];
+        }
+    }
+
+    private static final List<Object> NO_GROUP_COLUMNS = List.of();
+
+    /**
+     * SELECT with aggregates or GROUP BY: one row per distinct combination of the GROUP BY values (null and
+     * missing are one value), or a single row without GROUP BY even over no rows. Groups are kept while the
+     * matching rows are read, and the statement fails once there would be more than {@code maxGroups}.
+     */
+    private Result grouped(Store store, Statement.Select q) {
+        List<Statement.Item> items = Statement.Projection.itemsOf(q.projection());
+        List<String> by = q.groupBy();
+        int k = by.size();
+        List<Statement.Item.Aggregate> aggs = new ArrayList<>();
+        for (Statement.Item i : items) {
+            if (i instanceof Statement.Item.Aggregate a && !aggs.contains(a)) {
+                aggs.add(a);
+            }
+        }
+        Map<Object, Group> groups = new java.util.HashMap<>();
+        scan(store, q.db(), q.table(), q.where(), (id, row) -> {
+            if (!matches(q.where(), id, row)) {
+                return;
+            }
+            Object key;
+            if (k == 1) {
+                key = Values.key(get(id, row, by.get(0)));
+            } else if (k == 0) {
+                key = NO_GROUP_COLUMNS;
+            } else {
+                Object[] ks = new Object[k];
+                for (int i = 0; i < k; i++) {
+                    ks[i] = Values.key(get(id, row, by.get(i)));
+                }
+                key = java.util.Arrays.asList(ks);
+            }
+            Group g = groups.get(key);
+            if (g == null) {
+                if (groups.size() >= maxGroups) {
+                    throw new QueryException(String.format(java.util.Locale.ROOT,
+                            "GROUP BY would make more than %,d groups", maxGroups));
+                }
+                Object[] values = new Object[k];
+                for (int i = 0; i < k; i++) {
+                    values[i] = get(id, row, by.get(i));
+                }
+                Object[] keys = k == 1 ? new Object[] {key} : ((List<?>) key).toArray();
+                g = new Group(keys, values, aggs);
+                groups.put(key, g);
+            }
+            for (int i = 0; i < aggs.size(); i++) {
+                String c = aggs.get(i).column();
+                g.accs[i].add(c == null ? Boolean.TRUE : get(id, row, c));
+            }
+        });
+        if (k == 0 && groups.isEmpty()) {
+            groups.put(NO_GROUP_COLUMNS, new Group(new Object[0], new Object[0], aggs));
+        }
+        List<Group> list = new ArrayList<>(groups.values());
+        list.sort((a, b) -> {
+            for (int i = 0; i < k; i++) {
+                int c = Values.keyOrder(a.keys[i], b.keys[i]);
+                if (c != 0) {
+                    return c;
+                }
+            }
+            return 0;
+        });
+        // In GROUP BY order, so that of two groups that cannot be summed, the same one is reported every time.
+        for (Group g : list) {
+            for (int i = 0; i < aggs.size(); i++) {
+                g.results[i] = g.accs[i].result();
+            }
+        }
+        if (q.orderBy() != null) {
+            String col = q.orderBy().column();
+            int at = col != null ? by.indexOf(col) : aggs.indexOf((Statement.Item.Aggregate) q.orderBy().key());
+            Comparator<Group> byValue = col != null
+                    ? (a, b) -> Values.sortOrder(a.values[at], b.values[at])
+                    : (a, b) -> Values.sortOrder(a.results[at], b.results[at]);
+            // The sort is stable: groups with equal values stay in GROUP BY order, in both directions.
+            list.sort(q.orderBy().descending() ? byValue.reversed() : byValue);
+        }
+        long cap = q.limit() != null ? q.limit() : maxRows;
+        boolean truncated = q.limit() == null && list.size() > cap;
+        List<Group> page = list.size() > cap ? list.subList(0, (int) cap) : list;
+        List<String> columns = new ArrayList<>(items.size());
+        for (Statement.Item i : items) {
+            columns.add(i.label());
+        }
+        List<List<Object>> rows = new ArrayList<>(page.size());
+        for (Group g : page) {
+            List<Object> r = new ArrayList<>(items.size());
+            for (Statement.Item i : items) {
+                r.add(i instanceof Statement.Item.Column c ? g.values[by.indexOf(c.name())] : g.results[aggs.indexOf(i)]);
+            }
+            rows.add(r);
+        }
+        return new Result.Rows(columns, rows, truncated);
+    }
+
+    /**
+     * One aggregate over the rows of a group, fed each row's value of its column (TRUE for COUNT(*)). SUM and
+     * AVG take numbers only: integers are added exactly, doubles in the order the rows come (_id order).
+     */
+    private abstract static class Acc {
+        abstract void add(Object v);
+
+        abstract Object result();
+
+        static Acc of(Statement.Item.Aggregate a) {
+            return switch (a.fn()) {
+                case COUNT -> new Count();
+                case SUM -> new Sum(false);
+                case AVG -> new Sum(true);
+                case MIN -> new Extreme(false);
+                case MAX -> new Extreme(true);
+            };
+        }
+    }
+
+    /** COUNT(*) (fed TRUE for every row) and COUNT(column): the values that are not null. */
+    private static final class Count extends Acc {
+        long n;
+
+        @Override
+        void add(Object v) {
+            if (v != null) {
+                n++;
+            }
+        }
+
+        @Override
+        Object result() {
+            return n;
+        }
+    }
+
+    private static final class Sum extends Acc {
+        final boolean average;
+        long numbers;
+        boolean anyInteger;
+        boolean anyDouble;
+        long integers;
+        java.math.BigInteger bigIntegers; // once the integers no longer fit in a long
+        double doubles = -0.0; // the identity of double addition, so a sum of -0.0 stays -0.0
+
+        Sum(boolean average) {
+            this.average = average;
+        }
+
+        @Override
+        void add(Object v) {
+            if (v instanceof Long || v instanceof Integer || v instanceof Short || v instanceof Byte) {
+                long x = ((Number) v).longValue();
+                numbers++;
+                anyInteger = true;
+                if (bigIntegers != null) {
+                    bigIntegers = bigIntegers.add(java.math.BigInteger.valueOf(x));
+                } else {
+                    try {
+                        integers = Math.addExact(integers, x);
+                    } catch (ArithmeticException overflow) {
+                        bigIntegers = java.math.BigInteger.valueOf(integers).add(java.math.BigInteger.valueOf(x));
+                    }
+                }
+            } else if (v instanceof Double || v instanceof Float) {
+                numbers++;
+                anyDouble = true;
+                doubles += ((Number) v).doubleValue();
+            }
+        }
+
+        @Override
+        Object result() {
+            if (numbers == 0) {
+                return null;
+            }
+            if (!anyDouble && !average) {
+                if (bigIntegers != null) {
+                    if (bigIntegers.bitLength() > 63) {
+                        throw new QueryException("SUM overflows a 64-bit integer");
+                    }
+                    return bigIntegers.longValue();
+                }
+                return integers;
+            }
+            double total = doubles;
+            if (anyInteger) {
+                total += bigIntegers != null ? bigIntegers.doubleValue() : (double) integers;
+            }
+            if (average) {
+                total /= numbers;
+            }
+            if (!Double.isFinite(total)) {
+                throw new QueryException((average ? "AVG" : "SUM") + " overflows a double");
+            }
+            return total;
+        }
+    }
+
+    /** MIN and MAX in the ORDER BY order, over the values that are not null; of equal ones, the first. */
+    private static final class Extreme extends Acc {
+        final boolean max;
+        Object best;
+
+        Extreme(boolean max) {
+            this.max = max;
+        }
+
+        @Override
+        void add(Object v) {
+            if (v != null) {
+                if (best == null) {
+                    best = v;
+                } else {
+                    int c = Values.sortOrder(v, best);
+                    if (max ? c > 0 : c < 0) {
+                        best = v;
+                    }
+                }
+            }
+        }
+
+        @Override
+        Object result() {
+            return best;
+        }
     }
 
     private static Object get(String id, Map<String, Object> row, String column) {
@@ -393,6 +695,14 @@ public final class Executor {
                 unknown |= v == null;
             }
             return unknown ? null : Boolean.FALSE;
+        }
+        if (e instanceof Expr.In in) {
+            Boolean v = in.holds(get(id, row, in.column()));
+            return v == null || !in.negated() ? v : Boolean.valueOf(!v);
+        }
+        if (e instanceof Expr.Like l) {
+            Boolean v = l.holds(get(id, row, l.column()));
+            return v == null || !l.negated() ? v : Boolean.valueOf(!v);
         }
         throw new IllegalArgumentException("unknown expression " + e);
     }
