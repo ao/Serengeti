@@ -139,9 +139,26 @@ public final class HttpApi implements AutoCloseable {
      */
     public void close() {
         stopping = true;
-        server.stop(1);
+        // stop() closes every connection, and closing a TLS connection waits for a write blocked on a peer that
+        // stopped reading (cut off by a partition, say): it could hang until docker's 10 s grace ran out and
+        // the node was killed. Waited for 3 s at most; the node then closes the rest, and exits.
+        Thread stop = new Thread(() -> server.stop(1), "http-stop");
+        stop.setDaemon(true);
+        stop.start();
+        try {
+            stop.join(STOP_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (stop.isAlive()) {
+            LOG.warning("the HTTP server did not stop within " + STOP_MILLIS / 1000 + " s (a connection's write is"
+                    + " stuck); stopping the rest of the node anyway");
+        }
         pool.shutdownNow();
     }
+
+    /** How long close() waits for the JDK server to stop. */
+    static final long STOP_MILLIS = 3_000;
 
     private volatile boolean stopping;
 
