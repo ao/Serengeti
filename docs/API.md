@@ -214,8 +214,8 @@ clients in [examples/](../examples/) print the message and exit non-zero.
 | 400 | The body is not the expected JSON, or the query is invalid. Query errors give the position: `expected FROM at position 9`. |
 | 401 | Missing or wrong credentials. The response has `WWW-Authenticate: Basic realm="serengeti"`. |
 | 403 | Wrong setup token, a POST whose `Origin` header names another site, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin). |
-| 404 | No such route. |
-| 405 | Wrong method for the route. |
+| 404 | No such route, whatever the method. |
+| 405 | Wrong method for the route. `Allow` names the methods it takes. |
 | 409 | Setup when an admin password exists, or deleting or demoting the last admin. |
 | 413 | Body over 1 MiB. |
 | 415 | `Content-Type` is not `application/json`. |

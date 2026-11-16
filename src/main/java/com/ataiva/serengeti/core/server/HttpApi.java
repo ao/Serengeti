@@ -158,6 +158,9 @@ public final class HttpApi implements AutoCloseable {
                 if (e.retryAfter > 0) {
                     h.set("Retry-After", Long.toString(e.retryAfter));
                 }
+                if (e.allow != null) {
+                    h.set("Allow", e.allow);
+                }
                 drain(ex.getRequestBody());
                 sendJson(ex, e.status, error(e.getMessage()));
             } catch (RuntimeException e) {
@@ -249,8 +252,9 @@ public final class HttpApi implements AutoCloseable {
                 changes(ex);
             }
             default -> {
-                requireMethod(method, "GET");
+                // A path that is not a route is 404 whatever the method; 405 is for routes that exist.
                 Static.Page p = pages.get(path).orElseThrow(() -> new HttpError(404, "no such route"));
+                requireMethod(method, "GET");
                 ex.getResponseHeaders().set("Content-Security-Policy", Static.CSP);
                 send(ex, 200, p.contentType(), p.body());
             }
@@ -384,7 +388,11 @@ public final class HttpApi implements AutoCloseable {
                     gone.put("deleted", true);
                     sendJson(ex, 200, gone);
                 }
-                default -> throw new HttpError(405, "use PUT or DELETE");
+                default -> {
+                    HttpError e = new HttpError(405, "use PUT or DELETE");
+                    e.allow = "PUT, DELETE";
+                    throw e;
+                }
             }
         } catch (IllegalStateException e) {
             throw new HttpError(409, e.getMessage());
@@ -551,7 +559,9 @@ public final class HttpApi implements AutoCloseable {
                 throw new HttpError(400, "body is not a JSON object");
             }
         } else if (!method.equals("GET")) {
-            throw new HttpError(405, "use GET or POST");
+            HttpError e = new HttpError(405, "use GET or POST");
+            e.allow = "GET, POST";
+            throw e;
         }
         Map<String, String> query = new LinkedHashMap<>();
         String raw = ex.getRequestURI().getRawQuery();
@@ -634,9 +644,11 @@ public final class HttpApi implements AutoCloseable {
         }
     }
 
+    /** A 405 names the method the route takes in {@code Allow}, as RFC 9110 requires. */
     private static void requireMethod(String actual, String expected) {
         if (!actual.equals(expected)) {
             HttpError e = new HttpError(405, "use " + expected);
+            e.allow = expected;
             throw e;
         }
     }
@@ -745,6 +757,8 @@ public final class HttpApi implements AutoCloseable {
         private static final long serialVersionUID = 1L;
         final int status;
         long retryAfter;
+        /** For a 405: the methods the route takes. */
+        String allow;
 
         HttpError(int status, String message) {
             super(message, null, false, false);

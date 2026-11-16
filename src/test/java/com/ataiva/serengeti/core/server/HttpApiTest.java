@@ -371,6 +371,32 @@ class HttpApiTest {
     }
 
     @Test
+    void wrongMethodNamesTheAllowedOneAndPathsThatAreNotRoutesAre404() throws Exception {
+        setUp();
+        HttpResponse<String> health = send(req("POST", "/health", "application/json", "{}"));
+        assertEquals(405, health.statusCode());
+        assertEquals("GET", health.headers().firstValue("Allow").orElse(null));
+        HttpResponse<String> query = send(authed(req("DELETE", "/v1/query", null, null)));
+        assertEquals(405, query.statusCode());
+        assertEquals("POST", query.headers().firstValue("Allow").orElse(null));
+        HttpResponse<String> page = send(authed(req("POST", "/app.js", "application/json", "{}")));
+        assertEquals(405, page.statusCode());
+        assertEquals("GET", page.headers().firstValue("Allow").orElse(null));
+        HttpResponse<String> account = send(authed(req("POST", "/v1/users/x", "application/json", "{}")));
+        assertEquals(405, account.statusCode());
+        assertEquals("PUT, DELETE", account.headers().firstValue("Allow").orElse(null));
+        HttpResponse<String> feed = send(authed(req("POST", "/v1/changes", "application/json", "{}")));
+        assertEquals(405, feed.statusCode());
+        assertEquals("GET", feed.headers().firstValue("Allow").orElse(null));
+        for (String method : List.of("GET", "POST", "PUT", "DELETE")) {
+            HttpResponse<String> r = send(authed(req(method, "/nowhere", "application/json", "{}")));
+            assertEquals(404, r.statusCode(), method);
+            assertEquals(Map.of("error", "no such route"), json(r), method);
+            assertTrue(r.headers().firstValue("Allow").isEmpty(), method);
+        }
+    }
+
+    @Test
     void listensOnLoopbackOnly() {
         assertTrue(api.address().getAddress().isLoopbackAddress());
     }
