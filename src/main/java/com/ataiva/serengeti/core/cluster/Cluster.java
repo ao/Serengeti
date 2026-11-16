@@ -80,6 +80,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         volatile boolean noAccounts;
         volatile long noAccountsSince;
         volatile CompletableFuture<Void> accountsInFlight;
+        /** Counts the syncs started with this peer; a sync's pulls stop once a newer one has started. */
+        volatile long generation;
+        /** A hello sent while a long sync runs, so the peer does not look unreachable meanwhile. */
+        volatile CompletableFuture<Void> probe;
 
         Peer(String address) {
             this.address = address;
@@ -437,8 +441,15 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             for (Peer p : peers) {
                 CompletableFuture<Boolean> f = p.inFlight;
                 if (f == null || f.isDone()) {
+                    p.generation++;
                     p.inFlight = syncWith(p).completeOnTimeout(false,
                             PeerClient.STATE_TIMEOUT.toMillis() + 5_000, TimeUnit.MILLISECONDS);
+                } else if (clock.getAsLong() - p.lastContact > SYNC_INTERVAL_MILLIS
+                        && (p.probe == null || p.probe.isDone())) {
+                    // A sync that pulls many pages, or waits for its turn to pull, must not make a peer that
+                    // answers look unreachable: writes need a majority reachable.
+                    p.probe = client.hello(p.address).thenAccept(h -> p.lastContact = clock.getAsLong())
+                            .exceptionally(err -> null);
                 }
             }
             if (++rounds % ACCOUNT_ROUNDS == 0) {
@@ -657,12 +668,63 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     static final int BUCKETS_PER_REQUEST = 200;
 
     /**
+     * Row pulls running at once on this node, over every peer and table. A pull holds a page of rows twice
+     * (the response's text and the ops parsed from it); before this limit, a node that had missed writes
+     * asked each peer for every differing bucket at once, and with a few hundred MB of data that took more
+     * heap than the node had, on it and on the peers building the answers.
+     */
+    static final int MAX_PULLS = 2;
+    /** A page aims at about this many ops, and at about {@link #PULL_TARGET_BYTES} of them. */
+    static final int PULL_TARGET_OPS = 2_000;
+    static final long PULL_TARGET_BYTES = 4L << 20;
+    /** The first page of a table asks for this many buckets; the next follow what the last one held. */
+    static final int FIRST_PULL_BUCKETS = 16;
+    /** A page asks for at most this many times the buckets of the one before. */
+    static final int PULL_GROWTH = 4;
+
+    private final AsyncLimiter pullLimiter = new AsyncLimiter(MAX_PULLS, PeerClient.STATE_TIMEOUT.toMillis() + 5_000);
+
+    /**
+     * Pulls the rows of the differing buckets from {@code from} on, one page at a time and through the
+     * node's pull limit, sizing each page from the last: a table of large rows gets pages of few buckets.
+     * Stops when a newer sync with the peer has started (that one pulls what is still missing).
+     */
+    private CompletableFuture<Integer> pullBuckets(Peer p, long generation, String db, String table,
+            List<Integer> differ, int from, int buckets, int merged) {
+        if (from >= differ.size() || closed || p.generation != generation) {
+            return CompletableFuture.completedFuture(merged);
+        }
+        List<Integer> page = List.copyOf(differ.subList(from, Math.min(differ.size(), from + buckets)));
+        return pullLimiter.run(() -> client.rows(p.address, db, table, page)).thenCompose(ops -> {
+            p.lastContact = clock.getAsLong();
+            int n = mergeOrThrow(ops);
+            int next = nextPullBuckets(page.size(), ops.size(), com.ataiva.serengeti.core.storage.Weight.ofOps(ops));
+            return pullBuckets(p, generation, db, table, differ, from + page.size(), next, merged + n);
+        });
+    }
+
+    /** The buckets of the next page, from what the last one asked for and held. */
+    static int nextPullBuckets(int asked, int ops, long bytes) {
+        double perBucketOps = Math.max(1.0, (double) ops / asked);
+        double perBucketBytes = Math.max(1.0, (double) bytes / asked);
+        double fit = Math.min(PULL_TARGET_OPS / perBucketOps, PULL_TARGET_BYTES / perBucketBytes);
+        long next = (long) Math.floor(fit);
+        return (int) Math.max(1, Math.min(Math.min(BUCKETS_PER_REQUEST, (long) asked * PULL_GROWTH), next));
+    }
+
+    /** For tests: pulls running and waiting. */
+    int[] pullsForTest() {
+        return new int[] {pullLimiter.running(), pullLimiter.waiting()};
+    }
+
+    /**
      * Protocol 2: compare per-table roots, then bucket sums of the tables that differ, then pull the rows
      * of the buckets that differ. In a steady cluster this moves only the root map; under writes, only the
      * buckets that the writes touched. Completes with the number of ops merged.
      */
     @SuppressWarnings("unchecked")
     private CompletableFuture<Integer> syncByBuckets(Peer p) {
+        long generation = p.generation;
         return client.roots(p.address).thenCompose(theirs -> {
             p.lastContact = clock.getAsLong(); // it answered; a long pull that follows must not age it out
             Map<String, Map<String, Object>> mine = engine.read(Store::rootHashes);
@@ -694,12 +756,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                                 differ.add(i);
                             }
                         }
-                        List<CompletableFuture<Integer>> pulls = new ArrayList<>();
-                        for (int from = 0; from < differ.size(); from += BUCKETS_PER_REQUEST) {
-                            List<Integer> chunk = differ.subList(from, Math.min(differ.size(), from + BUCKETS_PER_REQUEST));
-                            pulls.add(client.rows(p.address, db, table, List.copyOf(chunk)).thenApply(this::mergeOrThrow));
-                        }
-                        return sum(pulls);
+                        return pullBuckets(p, generation, db, table, differ, 0, FIRST_PULL_BUCKETS, 0);
                     }));
                 }
                 work.add(schemaStep);

@@ -70,6 +70,24 @@ public final class Weight {
         return 40 + 16 + 24 + of(id);
     }
 
+    /**
+     * The estimate of a list of ops as the node holds them on the way in: rows and their versions. Used to
+     * size the next page of a sync, not for the memory limit.
+     */
+    public static long ofOps(List<Op> ops) {
+        long n = 0;
+        for (Op op : ops) {
+            if (op instanceof Op.Put p) {
+                n += ofRow(p.id()) + ofVersion(p.row(), p.seen());
+            } else if (op instanceof Op.Delete d) {
+                n += ofRow(d.id()) + ofVersion(null, d.seen());
+            } else {
+                n += 64;
+            }
+        }
+        return n;
+    }
+
     /** One id in one index key's set: the set's tree entry. */
     static final long INDEX_ENTRY = 40;
 

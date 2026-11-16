@@ -645,12 +645,40 @@ public final class HttpApi implements AutoCloseable {
                 }
             }
         }
+        boolean heavy = HEAVY_INTERNAL.contains(path);
+        if (heavy) {
+            boolean got;
+            try {
+                got = heavyInternal.tryAcquire(HEAVY_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                got = false;
+            }
+            if (!got) {
+                // The peer tries again at its next sync; answering it now would hold one more page of rows.
+                throw new HttpError(503, "busy sending rows to other nodes; try again");
+            }
+        }
         try {
             sendJson(ex, 200, routes.handle(method, path, query, body));
         } catch (QueryService.Rejected r) {
             throw new HttpError(r.status(), r.getMessage());
+        } finally {
+            if (heavy) {
+                heavyInternal.release();
+            }
         }
     }
+
+    /**
+     * Node-to-node routes whose answer holds many rows. At most {@link #HEAVY_INTERNAL_AT_ONCE} are built and
+     * sent at once, whatever asks: several peers catching up at the same time, each asking for pages of 200
+     * buckets (2.1 does), once took a node's whole heap.
+     */
+    static final java.util.Set<String> HEAVY_INTERNAL = java.util.Set.of("/internal/v2/rows", "/internal/state");
+    static final int HEAVY_INTERNAL_AT_ONCE = 2;
+    static final long HEAVY_WAIT_MILLIS = 2_000;
+    private final java.util.concurrent.Semaphore heavyInternal = new java.util.concurrent.Semaphore(HEAVY_INTERNAL_AT_ONCE, true);
 
     private Users.Role authenticate(HttpExchange ex, Caller caller) {
         String address = ex.getRemoteAddress().getAddress().getHostAddress();

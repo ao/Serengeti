@@ -146,6 +146,11 @@ GitHub release notes and tags.
 - A graceful stop sometimes waited out docker's 10 s grace and was killed: the JDK server's stop closes
   every connection, and closing a TLS connection waits for a write blocked on a peer that stopped reading.
   The node now waits for it 3 s at most, then closes its cluster layer and storage and exits.
+- A node that had missed writes could run itself and its peers out of heap while catching up (2.1 too):
+  it asked every peer at once for the rows of every differing bucket, in pages of 200 buckets, and a few
+  thousand missed inserts touch most buckets. A node now runs at most two row pulls at once, sizes each
+  page from the last (about 2,000 rows or 4 MiB), and builds at most two pages for its peers at once,
+  answering 503 to more. Found by the 5-node soak hour; `tests/memory/catchup.sh` reproduces it.
 - An admin password of more than 72 bytes in `SERENGETI_ADMIN_PASSWORD` or its file passed the settings
   check, and the node then exited with status 1 and a stack trace; it is now refused with exit status 2 and
   a one-line message, like a short one.

@@ -110,6 +110,8 @@ jobs:
         run: docker build -t serengeti:mem .
       - name: Fill a 400 MiB node through its API
         run: SKIP_BUILD=1 IMAGE=serengeti:mem tests/memory/run.sh
+      - name: A node that missed writes catches up without running out of memory
+        run: SKIP_BUILD=1 IMAGE=serengeti:mem tests/memory/catchup.sh
 
   quickstart:
     name: Quick start (amd64)

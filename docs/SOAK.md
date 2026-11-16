@@ -212,6 +212,28 @@ and the old close hung there. On be63206 (the first fix), two 30-minute runs on 
 stall; on 8970539 every one of 28 stops and restarts exited on SIGTERM within 3.5 s (on be63206, 4 of 54
 stops were killed after docker's 10 s).
 
+### 3. Catching up after a restart can run a node out of heap (fixed in the commit after 50fda3a)
+
+In the hour on 5 nodes with seed 20261116 (engine 36230d2, 2 GiB per node, about 210 MiB of data by the
+node's estimate), n5 exited with `java.lang.OutOfMemoryError: Java heap space` 33 s after one of its
+restarts, while it caught up with the others through a slow link (netem, 100 ms and 5% loss). Every other
+check passed.
+
+A node that has missed writes compares bucket sums with each peer and pulls the rows of every bucket that
+differs. A few thousand missed inserts touch most of a table's 1,024 buckets, so it asked each peer for
+nearly every row it held, in pages of 200 buckets, and sent every page's request at once: with four peers
+and three tables, dozens of pages of about 12 MB of JSON each, each held as text and again as parsed rows,
+on the node pulling and on the peers building the answers. `tests/memory/catchup.sh` (three nodes of 768 MiB,
+120,000 rows of 1 KB, one node stopped while 6,000 more are written, then started) ran the two other nodes
+out of heap within 3 s of the restart, every time.
+
+The fix: a node runs at most two row pulls at once, over every peer and table; a table's pages are pulled
+one after another, the first with 16 buckets and each next one sized from the last to about 2,000 rows or 4
+MiB; and a node builds at most two row pages for its peers at once, answering 503 to more (the peer asks
+again at its next sync, a second later). While a sync with a peer takes longer than a second, a hello keeps
+the peer counted as reachable. With it, the repro's nodes all stayed up and the restarted one caught up in
+about 10 s.
+
 ## Runs
 
 All on one EC2 c7g.2xlarge (8 Graviton3 vCPUs, 16 GiB, Ubuntu 24.04, Docker 29), nothing else running.
