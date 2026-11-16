@@ -10,8 +10,8 @@ credentials of an account; see [Accounts](#accounts) for the roles.
 | `GET /ready` | none | `{"status":"ready"}`, or 503 `{"status":"not ready"}` while a readiness check fails. |
 | `POST /v1/setup` | setup token | Sets the first admin password. |
 | `POST /v1/query` | Basic | Runs one statement from [QUERY.md](QUERY.md). The read role can run SELECT and SHOW only. |
-| `POST /post` | Basic | The 1.x route name, kept for 2.0 only. Same body and result as `/v1/query`. |
-| `GET /v1/status` | Basic | Node id, version, uptime in seconds, number of databases, fsync policy. |
+| `POST /post` | Basic | The 1.x route name, still served. Same body and result as `/v1/query`. |
+| `GET /v1/status` | Basic | Node id, version, uptime in seconds, number of databases, fsync policy, and in a cluster a `cluster` object: size, quorum, peers reachable, whether the node is caught up or stale, and each peer. |
 | `POST /v1/password` | Basic | Changes the caller's password. |
 | `GET /v1/changes` | Basic | The changes this node applied after a cursor, waiting for one. See [Changes](#changes). |
 | `GET /v1/backup` | Basic, admin | Streams a snapshot of the data. See [Backup](#backup). |
@@ -78,7 +78,8 @@ Needs Basic credentials of any account. The body is Prometheus text format 0.0.4
 [examples/monitoring/](../examples/monitoring/) has Prometheus alert rules and a Grafana dashboard for
 these series.
 
-`route` is one of the paths in the table at the top of this page, or `other` for any other path. No series is
+`route` is one of the paths in the table at the top of this page (`/v1/users/{name}` for every account's
+path), or `other` for any other path. No series is
 labelled with a user name, an address or query text. Rows are not counted: that would scan every table on each
 scrape.
 
@@ -187,16 +188,21 @@ GET /v1/changes?db=shop&table=items&after=3f9a1c22e07b:41&wait=30
 ```
 
 Pass the returned `cursor` as `after` next time. `kind` is `row` (with `deleted` and the row's new value),
-`drop_table`, `drop_db`, `create_table` or `create_db`. A row appears when its value changes; a conflicting
-version that does not become the value is not a change (see CONSISTENCY.md). After `create_table` or
+`drop_table`, `drop_db`, `create_table` or `create_db`; with `table`, the database's `create_db` and
+`drop_db` are listed too. Index changes are not listed. A row appears each time a write to it becomes its
+value, also an UPDATE that leaves the value as it was; a conflicting version that does not become the
+value is not a change (see CONSISTENCY.md). After `create_table` or
 `create_db`, read the table or database again: when one is created again after a drop, rows that another
 node wrote after the drop can become visible, and they are not listed one by one. A change is listed once
-this node has it on disk, and not at all after a write to its disk fails (the feed then answers 503).
+this node has it on disk. A write that fails to reach the disk (a full disk, say) is answered 500, taken
+back and never listed, and the node goes on. After an fsync of the log fails, the node no longer knows what
+is on disk: the feed answers 503 from then on, until the node is restarted.
 
 To follow a table from the start: take a cursor with `after=now`, read the table with SELECT, then follow
 from the cursor. A change can then arrive for a row the SELECT already showed; apply changes by `_id`.
 
-A node keeps its last `changes_buffer` changes (10,000 by default) in memory, from when it started. A
+A node keeps its last `changes_buffer` changes (10,000 by default) in memory, from when it started; with
+`changes_buffer` 0 it keeps none and this route answers 404. A
 cursor from before a restart, from another node, or older than what the node still holds gets 410: read
 the table again and follow from `after=now`. Cursors belong to the node that gave them. At most 32 requests
 wait at once; more answer at once, with whatever there is.
@@ -226,8 +232,9 @@ PUT /v1/users/dashboard
 201 `{"user":"dashboard","role":"read"}` for a new account, 200 for a change. Give `role` alone to change the
 role, `password` alone to change the password (the role is kept; a new account without a role gets
 `write`). `GET /v1/users` returns `{"users": [{"user": "admin", "role": "admin"}, ...]}`; no response ever
-contains a password hash. `DELETE /v1/users/NAME` deletes the account. A name is 1 to 64 letters, digits,
-`.`, `_` or `-`; a password is 12 to 72 bytes. The last admin cannot be deleted or given another role (409).
+contains a password hash. `DELETE /v1/users/NAME` deletes the account (404 if there is none). A name is 1
+to 64 ASCII letters, digits, `.`, `_` or `-`; a password is at least 12 characters and at most 72 bytes in
+UTF-8. The last admin cannot be deleted or given another role (409).
 
 In a cluster, account changes made on one node reach the others within seconds: each change carries a
 version, the newest change to a name wins on every node, and a node that was down catches up when it
@@ -261,19 +268,19 @@ Serengeti's code.
 | Status | When |
 |---|---|
 | 400 | The body is not the expected JSON, or the query is invalid. Query errors give the position: `expected FROM at position 9`. |
-| 401 | Missing or wrong credentials. The response has `WWW-Authenticate: Basic realm="serengeti"`. |
-| 403 | Wrong setup token, a POST whose `Origin` header names another site, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin, anything but `/metrics`, `/v1/status` and `/v1/password` by a metrics account). |
-| 404 | No such route, whatever the method. |
+| 401 | Missing or wrong credentials. The response has `WWW-Authenticate: Basic realm="serengeti", charset="UTF-8"`. |
+| 403 | Wrong setup token, a request other than GET whose `Origin` header does not match its `Host` header, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin, anything but `/metrics`, `/v1/status` and `/v1/password` by a metrics account). |
+| 404 | No such route, whatever the method; no such account (`DELETE /v1/users/NAME`); the change feed on a node with `changes_buffer` 0. |
 | 405 | Wrong method for the route. `Allow` names the methods it takes. |
 | 409 | Setup when an admin password exists, or deleting or demoting the last admin. |
 | 413 | Body over 1 MiB. |
 | 415 | `Content-Type` is not `application/json`. |
 | 429 | Ten failed logins or setup attempts from this address in the last minute. `Retry-After` gives the seconds to wait. |
-| 500 | Storage failed or another unexpected error. |
-| 503 | Not set up yet. |
+| 500 | Storage failed (a write that could not reach the disk is taken back) or another unexpected error. |
+| 503 | Not set up yet; a write or a `"consistency": "majority"` read that cannot reach a majority (see [CONSISTENCY.md](CONSISTENCY.md)); a write that adds data to a node at its memory limit (`memory_limit_percent`); the change feed after an fsync of the node's log failed; a node that is stopping (`this node is stopping`, with `Connection: close`). |
 
 ## Browser use
 
 The console page loads its script from the node and is served with a Content-Security-Policy that allows
 no inline script. Cross-site pages cannot send queries with a browser's saved credentials: a form cannot
-send `application/json`, and POSTs with a foreign `Origin` are refused.
+send `application/json`, and requests other than GET with a foreign `Origin` are refused.
