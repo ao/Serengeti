@@ -4,3 +4,4 @@ target/
 *.iml
 *.class
 tests/bench/out/
+tests/soak/out/

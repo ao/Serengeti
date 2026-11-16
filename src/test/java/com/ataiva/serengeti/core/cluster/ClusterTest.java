@@ -660,9 +660,10 @@ class ClusterTest {
     }
 
     /**
-     * Found by tests/soak: Node.close() closed the cluster first and the HTTP server after it, and the server
-     * went on answering for up to a second, so a local write already in the log, and a majority read, got
-     * 500. A node whose cluster layer is closed answers 503 (or 200 for a write it has logged).
+     * Found by tests/soak (docs/SOAK.md, finding 1): Node.close() closed the cluster first and the HTTP server
+     * after it, and the server went on answering for up to a second, so a local write already in the log, and
+     * a majority read, got 500. A node whose cluster layer is closed answers 503 (or 200 for a write it has
+     * logged).
      */
     @Test
     void aStoppingNodeDoesNotAnswerInternalError() throws Exception {

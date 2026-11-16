@@ -71,6 +71,26 @@ jobs:
       - name: HTTP and query language edges, concurrency, kill -9, backup and restore, generated statements
         run: SKIP_BUILD=1 IMAGE=serengeti:edge tests/edge/run.sh
 
+  soak:
+    name: Soak, 5 minutes of random faults on 3 nodes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t serengeti:soak .
+      - name: Random kills, pauses, partitions and packet loss under client load; then check every node
+        env:
+          SEED: ${{ github.run_id }}
+        run: IMAGE=serengeti:soak NODES=3 DURATION=5 OUT=soak-out tests/soak/run.sh
+      - name: Event log, check details and node logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak
+          path: soak-out/
+          if-no-files-found: ignore
+
   upgrade:
     name: Upgrade from 2.0.0
     runs-on: ubuntu-24.04
