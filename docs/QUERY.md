@@ -313,8 +313,6 @@ row, in insert order:
   (`Parser.MAX_GROUP_BY`), an ORDER BY at most 32 keys (`Parser.MAX_ORDER_BY`), and a LIKE pattern at
   most 1,000 characters (`Parser.MAX_LIKE_PATTERN`).
 - An IN list has at most 1,000 values.
-- A select list has at most 256 items, a GROUP BY at most 32 columns, and a LIKE pattern at most
-  1,000 characters.
 - Parentheses and NOT may nest at most 64 levels deep in one condition (`Parser.MAX_DEPTH`). Long
   chains of AND or OR do not count towards this.
 - Names are at most 63 characters.
