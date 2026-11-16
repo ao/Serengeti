@@ -421,6 +421,35 @@ class HttpApiTest {
     }
 
     @Test
+    void aBodyThatIsNotUtf8Is400AndNeverReachesTheQuery() throws Exception {
+        setUp();
+        List<String> seen = new java.util.ArrayList<>();
+        queries = (q, r) -> {
+            seen.add(q);
+            return Map.of("ok", true);
+        };
+        byte[] prefix = "{\"query\": \"INSERT INTO d.t (v) VALUES ('".getBytes(StandardCharsets.UTF_8);
+        byte[] suffix = "')\"}".getBytes(StandardCharsets.UTF_8);
+        for (byte[] bad : List.of(new byte[] {(byte) 0xff}, new byte[] {(byte) 0xe2, (byte) 0x82},
+                new byte[] {(byte) 0xc0, (byte) 0xaf}, new byte[] {(byte) 0xed, (byte) 0xa0, (byte) 0x80},
+                new byte[] {(byte) 0xf4, (byte) 0x90, (byte) 0x80, (byte) 0x80})) {
+            byte[] body = new byte[prefix.length + bad.length + suffix.length];
+            System.arraycopy(prefix, 0, body, 0, prefix.length);
+            System.arraycopy(bad, 0, body, prefix.length, bad.length);
+            System.arraycopy(suffix, 0, body, prefix.length + bad.length, suffix.length);
+            HttpResponse<String> r = send(authed(HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + api.address().getPort() + "/v1/query"))
+                    .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofByteArray(body))));
+            assertEquals(400, r.statusCode(), java.util.HexFormat.of().formatHex(bad));
+            assertEquals(Map.of("error", "body is not valid UTF-8"), json(r));
+        }
+        assertEquals(List.of(), seen);
+        String valid = "{\"query\": \"é中😀\"}";
+        assertEquals(200, send(authed(req("POST", "/v1/query", "application/json", valid))).statusCode());
+        assertEquals(List.of("é中😀"), seen);
+    }
+
+    @Test
     void listensOnLoopbackOnly() {
         assertTrue(api.address().getAddress().isLoopbackAddress());
     }
