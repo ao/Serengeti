@@ -18,7 +18,8 @@ GitHub release notes and tags.
   cursor (rows written there or merged from peers, tables and databases dropped or created), long-polling
   up to 60 s. A change is listed once the node has it on disk, and the feed answers 503 after a write to
   the disk fails. A node keeps the last `changes_buffer` (10,000) changes, fewer when together they would
-  take more than a sixteenth of the heap; an older cursor, or one from before a restart, gets 410. See
+  take more than a sixteenth of the heap (metrics `serengeti_changes_held` and `serengeti_changes_bytes`);
+  an older cursor, or one from before a restart, gets 410. See
   docs/API.md, "Changes".
 - Accounts and roles. An admin creates, changes and deletes accounts over `/v1/users`; each account is
   `read` (SELECT and SHOW), `write` (also writes and schema changes) or `admin` (also accounts and backups),
@@ -51,9 +52,14 @@ GitHub release notes and tags.
   `SERENGETI_ADMIN_PASSWORD` when it is set. `serengeti backup` takes a backup the same way, to standard
   output or a 0600 file, and checks that it is complete: `kubectl exec serengeti-0 -- serengeti backup >
   backup.jsonl`.
-- `tests/edge/run.sh`, a conformance and limits suite for the HTTP API and the query language: about 900
+- `tests/edge/run.sh`, a conformance and limits suite for the HTTP API and the query language: about 970
   checks plus 5,000 generated statements per run, concurrency, kill -9 and backup cases. It found the bugs
   listed under Fixed; CI runs it.
+- `tests/soak/run.sh`, a randomized fault test for 3- to 7-node TLS clusters: clients write and read through
+  every node while a seeded schedule kills, stops, pauses, partitions and slows nodes, then every node is
+  checked against what the clients were told (nothing acknowledged lost, no deleted row back, nodes equal,
+  indexes equal to scans, every running node answering). docs/SOAK.md has what it covers and the runs; CI
+  runs it for 5 minutes. It found the two shutdown and stall bugs under Fixed.
 - `c [NOT] IN (v1, v2, ...)`, 1 to 1,000 values: exactly `c = v1 OR c = v2 ...`, so a null in the list
   makes NOT IN never true. On an indexed column or `_id`, IN reads the rows of each value.
 - `c [NOT] LIKE 'pattern'`, with `%` for any run of characters, `_` for one UTF-16 code unit, and `\%`,
@@ -119,7 +125,8 @@ GitHub release notes and tags.
   512 MiB container, that memory reached about 150 MB the JVM does not count (measured with Native Memory
   Tracking against the container's anonymous memory), and the kernel killed the node before its memory
   limit refused a write.
-- The image uses G1 and gives the heap 60% of the container's memory (was 75%), leaving room for the log's
+- The image uses G1 (2.1's image left the choice to the JVM, which takes SerialGC in a container under
+  2 GiB) and gives the heap 60% of the container's memory (was 75%), leaving room for the log's
   page cache: at 75% a container filling with data was killed by the kernel before the heap was full.
 
 ## [Unreleased] - 2.1.0

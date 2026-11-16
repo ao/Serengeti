@@ -186,6 +186,9 @@ GitHub Actions runs these on every change:
   statements per run, concurrent schema changes, `kill -9` rounds and a backup across three nodes;
 - a node filled to its memory limit in a 512 MiB container, with large rows and with small rows under two
   indexes, that must refuse writes, back up, restart, delete every row and restart again;
+- a soak test: 3 to 7 TLS nodes under client load while nodes are killed, stopped, paused, partitioned
+  and slowed at random, then every node checked against what the clients were told (5 minutes in CI;
+  hours in the runs [docs/SOAK.md](docs/SOAK.md) lists);
 - the Python and JavaScript clients against a node, a TLS node and nodes that stall or cut answers short;
 - the quick start above, the examples, the recorded demo, the Compose cluster and the Kubernetes example
   (on kind), run as written.
