@@ -103,7 +103,7 @@ curl --cacert ca.pem -u "admin:$SERENGETI_PASSWORD" https://127.0.0.1:19851/v1/s
 
 The comments in the Compose file say more, and [docs/CONFIGURATION.md](docs/CONFIGURATION.md) has the
 settings. CI runs this example as written. [examples/monitoring](examples/monitoring/) adds Prometheus,
-16 tested alert rules and a Grafana dashboard to it.
+18 tested alert rules and a Grafana dashboard to it.
 
 ## Writes in a cluster
 

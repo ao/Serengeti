@@ -110,3 +110,16 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.instance }} failed to write a scheduled backup in the last hour"
+
+      - alert: SerengetiCertificateExpiring
+        expr: serengeti_tls_expiry_time_seconds - time() < 21 * 86400
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "A certificate in {{ $labels.instance }}'s {{ $labels.store }} expires within 21 days; replace it and restart the node"
+
+      - alert: SerengetiCertificateExpiringSoon
+        expr: serengeti_tls_expiry_time_seconds - time() < 3 * 86400
+        labels: {severity: critical}
+        annotations:
+          summary: "A certificate in {{ $labels.instance }}'s {{ $labels.store }} expires within 3 days"

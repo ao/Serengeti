@@ -109,6 +109,18 @@ class TlsTest {
     }
 
     @Test
+    void theEarliestExpiryOfEachStoreIsAboutTwoDaysAway() {
+        // TestCerts makes every certificate valid for 2 days from now.
+        long now = System.currentTimeMillis() / 1000;
+        for (Path store : new Path[] {nodeKs, TestCerts.truststore(dir, "good")}) {
+            long notAfter = Tls.earliestExpiry(store, TestCerts.PASSWORD.toCharArray(), "tls_keystore");
+            assertTrue(notAfter > now + 2 * 86_400 - 600 && notAfter <= now + 2 * 86_400 + 60, store + ": " + notAfter);
+        }
+        assertThrows(com.ataiva.serengeti.core.config.ConfigException.class,
+                () -> Tls.earliestExpiry(nodeKs, "wrong".toCharArray(), "tls_keystore"));
+    }
+
+    @Test
     void servesHttpsToAClientThatTrustsTheCa() throws Exception {
         HttpClient c = client("good");
         assertEquals(200, get(c, "https", "localhost", api, "/health").statusCode());

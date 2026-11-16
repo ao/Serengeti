@@ -138,6 +138,7 @@ class MetricsTest {
         assertEquals(0, before.value("serengeti_sync_ops_pulled_total"));
         assertEquals(0, before.value("serengeti_backup_interval_seconds"), "no scheduled backups");
         assertEquals(0, before.value("serengeti_backup_last_success_time_seconds"));
+        assertFalse(before.text.contains("serengeti_tls_expiry_time_seconds{"), "no TLS, no expiry series");
 
         assertEquals(200, send("GET", "/health", null, null).statusCode());
         Exposition after = settled(7);
@@ -152,7 +153,8 @@ class MetricsTest {
             @Override
             public NodeOps.Gauges gauges() {
                 return new NodeOps.Gauges(0, 0, 0, 0, 0, 0, 0, false, 0, 0, true,
-                        new NodeOps.Cluster(5, 2, 3, false, true, 42), new NodeOps.Backups(3600, 1_700_000_000, 2, 5678));
+                        new NodeOps.Cluster(5, 2, 3, false, true, 42), new NodeOps.Backups(3600, 1_700_000_000, 2, 5678),
+                        new NodeOps.TlsExpiry(1_800_000_000L, 1_900_000_000L));
             }
 
             @Override
@@ -177,6 +179,8 @@ class MetricsTest {
         assertEquals(1_700_000_000, e.value("serengeti_backup_last_success_time_seconds"));
         assertEquals(2, e.value("serengeti_backup_failures_total"));
         assertEquals(5678, e.value("serengeti_backup_last_bytes"));
+        assertEquals(1_800_000_000L, e.value("serengeti_tls_expiry_time_seconds", "store", "keystore"));
+        assertEquals(1_900_000_000L, e.value("serengeti_tls_expiry_time_seconds", "store", "truststore"));
     }
 
     @Test

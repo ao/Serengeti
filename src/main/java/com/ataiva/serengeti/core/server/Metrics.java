@@ -100,6 +100,15 @@ final class Metrics {
         sample(b, "serengeti_cluster_stale", c.stale() ? 1 : 0);
         family(b, "serengeti_sync_ops_pulled_total", "counter", "Row versions this node pulled from its peers while syncing.");
         sample(b, "serengeti_sync_ops_pulled_total", c.syncOpsPulled());
+        family(b, "serengeti_tls_expiry_time_seconds", "gauge",
+                "Unix time at which the first certificate of the key store (this node's chain) or the trust store"
+                + " (the CAs for peers) expires, as read at start; absent without that store.");
+        if (g.tls().keystore() > 0) {
+            b.append("serengeti_tls_expiry_time_seconds{store=\"keystore\"} ").append(g.tls().keystore()).append('\n');
+        }
+        if (g.tls().truststore() > 0) {
+            b.append("serengeti_tls_expiry_time_seconds{store=\"truststore\"} ").append(g.tls().truststore()).append('\n');
+        }
         NodeOps.Backups k = g.backups();
         family(b, "serengeti_backup_interval_seconds", "gauge", "How often the node writes a backup into backup_dir; 0: never.");
         sample(b, "serengeti_backup_interval_seconds", k.intervalSeconds());

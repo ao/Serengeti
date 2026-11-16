@@ -29,7 +29,7 @@ trap cleanup EXIT
 echo "# the alert rules"
 out=$(docker run --rm -v "$PWD:/m:ro" -w /m --entrypoint promtool "$PROM_IMAGE" check rules alerts.yml 2>&1) && rc=0 || rc=$?
 expect "promtool accepts alerts.yml" 0 "$rc"
-contains "with every rule" "SUCCESS: 16 rules found" "$out"
+contains "with every rule" "SUCCESS: 18 rules found" "$out"
 out=$(docker run --rm -v "$PWD:/m:ro" -w /m --entrypoint promtool "$PROM_IMAGE" test rules alerts.test.yml 2>&1) && rc=0 || rc=$?
 expect "the rules pass their unit tests" 0 "$rc"
 [ "$rc" = 0 ] || echo "$out" | tail -30
@@ -89,7 +89,7 @@ expect "Prometheus scrapes all three nodes" 3 "$(printf %s "$targets" | grep -o 
 [ "$(printf %s "$targets" | grep -o '"health":"up"' | wc -l | tr -d ' ')" = 3 ] || printf '%s\n' "$targets" | head -c 2000
 contains "every node reports three reachable" '"value":[' "$(pq 'count(serengeti_cluster_reachable_nodes == 3) == 3')"
 expect "and is ready" 3 "$(pq 'sum(serengeti_ready)' | sed -n 's/.*"value":\[[0-9.]*,"\([0-9]*\)".*/\1/p')"
-expect "Prometheus loaded the 16 rules" 16 "$(prom /api/v1/rules | grep -o '"type":"alerting"' | wc -l | tr -d ' ')"
+expect "Prometheus loaded the 18 rules" 18 "$(prom /api/v1/rules | grep -o '"type":"alerting"' | wc -l | tr -d ' ')"
 expect "and no alert is active" 0 "$(prom /api/v1/alerts | grep -o '"alertname"' | wc -l | tr -d ' ')"
 
 g() { curl -s -o /tmp/sgm-body -w '%{http_code}' --max-time 10 "$@" || true; }

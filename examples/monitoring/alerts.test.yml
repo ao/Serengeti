@@ -221,3 +221,30 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, job: serengeti, instance: "n3:1985"}
             exp_annotations: {summary: "n3:1985 failed to write a scheduled backup in the last hour"}
+
+  - name: certificates close to their expiry, and one far from it
+    interval: 1m
+    input_series:
+      # Expiry times in seconds from the test's start (time() is 0 there).
+      - series: 'serengeti_tls_expiry_time_seconds{job="serengeti", instance="n1:1985", store="keystore"}'
+        values: '1728000x200'
+      - series: 'serengeti_tls_expiry_time_seconds{job="serengeti", instance="n1:1985", store="truststore"}'
+        values: '31536000x200'
+      - series: 'serengeti_tls_expiry_time_seconds{job="serengeti", instance="n2:1985", store="keystore"}'
+        values: '264600x200'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: SerengetiCertificateExpiring
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n1:1985", store: keystore}
+            exp_annotations: {summary: "A certificate in n1:1985's keystore expires within 21 days; replace it and restart the node"}
+          - exp_labels: {severity: warning, job: serengeti, instance: "n2:1985", store: keystore}
+            exp_annotations: {summary: "A certificate in n2:1985's keystore expires within 21 days; replace it and restart the node"}
+      - eval_time: 1h
+        alertname: SerengetiCertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: SerengetiCertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: {severity: critical, job: serengeti, instance: "n2:1985", store: keystore}
+            exp_annotations: {summary: "A certificate in n2:1985's keystore expires within 3 days"}

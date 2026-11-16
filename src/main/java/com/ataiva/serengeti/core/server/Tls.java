@@ -53,6 +53,32 @@ public final class Tls {
         }
     }
 
+    /**
+     * Unix seconds at which the first certificate in the store stops being valid: of the key entries' chains
+     * in a key store, of the trusted certificates in a trust store. 0 when the store holds none.
+     */
+    public static long earliestExpiry(Path store, char[] password, String setting) {
+        KeyStore ks = load(store, password, setting);
+        long earliest = Long.MAX_VALUE;
+        try {
+            for (String alias : Collections.list(ks.aliases())) {
+                java.security.cert.Certificate[] chain = ks.isKeyEntry(alias) ? ks.getCertificateChain(alias)
+                        : new java.security.cert.Certificate[] {ks.getCertificate(alias)};
+                if (chain == null) {
+                    continue;
+                }
+                for (java.security.cert.Certificate c : chain) {
+                    if (c instanceof java.security.cert.X509Certificate x) {
+                        earliest = Math.min(earliest, x.getNotAfter().getTime() / 1000);
+                    }
+                }
+            }
+        } catch (GeneralSecurityException e) {
+            throw new ConfigException(setting + " " + store + ": " + e.getMessage());
+        }
+        return earliest == Long.MAX_VALUE ? 0 : earliest;
+    }
+
     static SSLParameters parameters(SSLContext ctx) {
         SSLParameters p = ctx.getDefaultSSLParameters();
         p.setProtocols(PROTOCOLS);

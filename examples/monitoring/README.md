@@ -49,6 +49,11 @@ it further; from another machine, use an SSH tunnel (`ssh -L 13000:127.0.0.1:130
 | SerengetiVersionsDiffer | the nodes run different versions | 2 hours |
 | SerengetiBackupLate | a node with `backup_dir` has written no backup for twice its interval | 5 min |
 | SerengetiBackupFailing | a scheduled backup failed in the last hour | at once |
+| SerengetiCertificateExpiring | a certificate in a node's key store or trust store expires within 21 days | 1 hour |
+| SerengetiCertificateExpiringSoon | the same, within 3 days | at once |
+
+A node reads its certificates at start, so after replacing them, restart it; the expiry it reports
+changes then.
 
 503 is left out of SerengetiServerErrors on purpose: a node answers it while it stops, without a majority
 and when it is full, and those have alerts of their own. The thresholds are starting points; change them in
@@ -70,6 +75,6 @@ The example evaluates the alerts but sends them nowhere. To be told, add an Aler
 - Prometheus keeps 15 days of samples in its volume (`--storage.tsdb.retention.time`).
 
 [run.sh](run.sh) runs these steps with a built image and checks the result: the rules' unit tests pass,
-Prometheus scrapes the three nodes and loads 16 rules, the account cannot read or write data, Grafana
+Prometheus scrapes the three nodes and loads 18 rules, the account cannot read or write data, Grafana
 refuses a wrong password, has the dashboard and answers every one of its queries, SerengetiDown is raised
 for a stopped node, and every published port is on 127.0.0.1.

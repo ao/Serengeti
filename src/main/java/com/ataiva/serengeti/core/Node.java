@@ -42,6 +42,26 @@ public final class Node implements AutoCloseable {
     private final StorageEngine storage;
     /** Scheduled backups into backup_dir; null when it is not set. */
     private final ScheduledBackups backups;
+    /** When the certificates loaded at start expire, for the metrics. */
+    private final NodeOps.TlsExpiry tlsExpiry;
+
+    /** Days before a certificate's expiry from which a start logs a warning. */
+    static final long EXPIRY_WARNING_DAYS = 30;
+
+    private static void warnIfExpiring(String setting, Path store, long notAfterSeconds) {
+        if (notAfterSeconds <= 0) {
+            return;
+        }
+        long left = notAfterSeconds - System.currentTimeMillis() / 1000;
+        if (left <= 0) {
+            LOG.severe(setting + " " + store + " holds a certificate that expired at "
+                    + java.time.Instant.ofEpochSecond(notAfterSeconds) + "; TLS clients and peers will refuse it");
+        } else if (left < EXPIRY_WARNING_DAYS * 86_400) {
+            LOG.warning(setting + " " + store + " holds a certificate that expires at "
+                    + java.time.Instant.ofEpochSecond(notAfterSeconds) + ", in " + left / 86_400 + " days; the node"
+                    + " reads its certificates at start, so restart it after replacing them");
+        }
+    }
     /** Refuses writes that add data once the data fills its share of the heap; null at memory_limit_percent 100. */
     private final MemoryGuard memory;
     private final Hlc clock;
@@ -123,6 +143,13 @@ public final class Node implements AutoCloseable {
         javax.net.ssl.SSLContext peerTls = config.clustered() && config.tls()
                 ? com.ataiva.serengeti.core.server.Tls.clientContext(config.tlsTruststore, config.tlsTruststorePassword)
                 : null;
+        this.tlsExpiry = new NodeOps.TlsExpiry(
+                config.tls() ? com.ataiva.serengeti.core.server.Tls.earliestExpiry(config.tlsKeystore,
+                        config.tlsKeystorePassword, "tls_keystore") : 0,
+                config.tlsTruststore != null ? com.ataiva.serengeti.core.server.Tls.earliestExpiry(config.tlsTruststore,
+                        config.tlsTruststorePassword, "tls_truststore") : 0);
+        warnIfExpiring("tls_keystore", config.tlsKeystore, tlsExpiry.keystore());
+        warnIfExpiring("tls_truststore", config.tlsTruststore, tlsExpiry.truststore());
         Path dir = config.dataDir;
         try {
             Files.createDirectories(dir);
@@ -337,7 +364,7 @@ public final class Node implements AutoCloseable {
                         counts[2], memory == null ? 0 : memory.budget(), memory != null && counts[2] >= memory.budget(),
                         feed[0], feed[1], storage.failed(), c, backups == null ? NodeOps.Backups.OFF
                                 : new NodeOps.Backups(backups.intervalSeconds(), backups.lastSuccessSeconds(),
-                                        backups.failures(), backups.lastBytes()));
+                                        backups.failures(), backups.lastBytes()), tlsExpiry);
             }
         };
     }

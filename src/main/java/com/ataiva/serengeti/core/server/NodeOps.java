@@ -67,15 +67,23 @@ public interface NodeOps {
      */
     record Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases, long conflicts,
             long dataBytes, long dataBudget, boolean memoryFull, long changesHeld, long changesBytes,
-            boolean diskFailed, Cluster cluster, Backups backups) {
+            boolean diskFailed, Cluster cluster, Backups backups, TlsExpiry tls) {
         public static final Gauges ZERO = new Gauges(0, 0, 0, 0, 0, 0, 0, false, 0, 0);
 
         /** A node without peers or scheduled backups, on a disk that has not failed. */
         public Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases, long conflicts,
                 long dataBytes, long dataBudget, boolean memoryFull, long changesHeld, long changesBytes) {
             this(walBytes, walFsyncs, walFsyncNanos, databases, conflicts, dataBytes, dataBudget, memoryFull,
-                    changesHeld, changesBytes, false, Cluster.SINGLE, Backups.OFF);
+                    changesHeld, changesBytes, false, Cluster.SINGLE, Backups.OFF, TlsExpiry.NONE);
         }
+    }
+
+    /**
+     * Unix seconds at which the first certificate of the key store (this node's chain) and of the trust store
+     * (the CAs it trusts for peers) expires, as loaded at start; 0 for a store that is not configured.
+     */
+    record TlsExpiry(long keystore, long truststore) {
+        public static final TlsExpiry NONE = new TlsExpiry(0, 0);
     }
 
     /**
