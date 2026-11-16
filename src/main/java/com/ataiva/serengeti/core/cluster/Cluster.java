@@ -76,6 +76,9 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         volatile boolean v2Synced;
         /** This node is stale and has pushed the writes it made while away to this peer. */
         volatile boolean isolatedPushed;
+        /** The peer has no routes for rows by id (2.1, or 2.2 before them); asked again after PROBE_MILLIS. */
+        volatile boolean noRowRoutes;
+        volatile long noRowRoutesSince;
         /** The peer has no account routes (older than 2.2); asked again after PROBE_MILLIS. */
         volatile boolean noAccounts;
         volatile long noAccountsSince;
@@ -721,15 +724,14 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         if (from >= differ.size()) {
             return CompletableFuture.completedFuture(merged);
         }
-        if (closed) {
-            return CompletableFuture.failedFuture(new UnavailableException("this node is stopping"));
-        }
-        if (stop.getAsBoolean()) {
-            return CompletableFuture.failedFuture(new Superseded());
+        RuntimeException why = stopReason(stop);
+        if (why != null) {
+            return CompletableFuture.failedFuture(why);
         }
         List<Integer> page = List.copyOf(differ.subList(from, Math.min(differ.size(), from + buckets)));
         return limiter.run(() -> client.rows(p.address, db, table, page)).thenCompose(ops -> {
             p.lastContact = clock.getAsLong();
+            bucketPages.incrementAndGet();
             int n = mergeOrThrow(ops);
             int next = nextPullBuckets(page.size(), ops.size(), com.ataiva.serengeti.core.storage.Weight.ofOps(ops));
             return pullBuckets(p, limiter, stop, db, table, differ, from + page.size(), next, merged + n);
@@ -751,9 +753,232 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     }
 
     /**
-     * Protocol 2: compare per-table roots, then bucket sums of the tables that differ, then pull the rows
-     * of the buckets that differ. In a steady cluster this moves only the root map; under writes, only the
-     * buckets that the writes touched. Completes with the number of ops merged.
+     * Why the next page of a sync must not start, or null if it may: the node is stopping, or {@code stop}
+     * says the sync is over (a newer background one with the peer started, or its majority read is done).
+     */
+    private RuntimeException stopReason(java.util.function.BooleanSupplier stop) {
+        if (closed) {
+            return new UnavailableException("this node is stopping");
+        }
+        if (stop.getAsBoolean()) {
+            return new Superseded();
+        }
+        return null;
+    }
+
+    // ---- protocol 3: rows by id ----
+
+    /** Most ids in one POST /internal/v3/rows; the route refuses more. */
+    static final int IDS_PER_REQUEST = 2_000;
+    /** Most characters of ids in one such request, so that its body stays well under the internal limit. */
+    static final long IDS_REQUEST_CHARS = 1L << 20;
+    /** The first page of ids pulled from a page of hashes asks for this many; the next follow the last. */
+    static final int FIRST_PULL_IDS = 500;
+    /** A page of row hashes aims at about this many rows, and at about {@link #PULL_TARGET_BYTES}. */
+    static final int HASH_TARGET_IDS = 20_000;
+
+    /** What one table's pull from one peer works with. */
+    private record TablePull(Peer peer, AsyncLimiter limiter, java.util.function.BooleanSupplier stop, String db, String table) {}
+
+    private final java.util.concurrent.atomic.AtomicLong bucketPages = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong hashPages = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong idPages = new java.util.concurrent.atomic.AtomicLong();
+
+    /** For tests: pages of whole buckets, of row hashes and of rows by id this node has pulled. */
+    long[] pagesForTest() {
+        return new long[] {bucketPages.get(), hashPages.get(), idPages.get()};
+    }
+
+    /** For tests: answer 404 to the protocol 3 routes, as 2.1 and 2.2 builds before them do. */
+    private volatile boolean rowRoutesOff;
+
+    void rowRoutesForTest(boolean on) {
+        rowRoutesOff = !on;
+    }
+
+    private volatile long rowProbeMillis = PROBE_MILLIS;
+
+    void rowProbeMillisForTest(long millis) {
+        rowProbeMillis = millis;
+    }
+
+    /** A peer found without the protocol 3 routes is asked again after PROBE_MILLIS: it may have been upgraded. */
+    private boolean tryRowRoutes(Peer p) {
+        return !p.noRowRoutes || clock.getAsLong() - p.noRowRoutesSince > rowProbeMillis;
+    }
+
+    private void noRowRoutes(Peer p) {
+        if (!p.noRowRoutes) {
+            LOG.info("peer " + p.address + " cannot send rows by id (it runs 2.1, or an earlier 2.2); pulling whole buckets from it");
+        }
+        p.noRowRoutes = true;
+        p.noRowRoutesSince = clock.getAsLong();
+    }
+
+    private void rowRoutesFound(Peer p) {
+        if (p.noRowRoutes) {
+            LOG.info("peer " + p.address + " now sends rows by id");
+            p.noRowRoutes = false;
+        }
+    }
+
+    /**
+     * Pulls what differs in the buckets {@code differ} of a table. From a peer with the protocol 3 routes,
+     * the buckets this node holds rows in are compared row by row, a page of row hashes at a time, and only
+     * the rows that differ or that only the peer has are pulled; the buckets this node holds no row in are
+     * pulled whole, since every row of them is missing here. From an older peer every bucket is pulled whole.
+     */
+    private CompletableFuture<Integer> pullTable(TablePull t, List<Integer> differ) {
+        if (!tryRowRoutes(t.peer())) {
+            return pullBuckets(t.peer(), t.limiter(), t.stop(), t.db(), t.table(), differ, 0, FIRST_PULL_BUCKETS, 0);
+        }
+        int[] counts = engine.read(s -> s.bucketRowCounts(t.db(), t.table()));
+        List<Integer> empty = new ArrayList<>();
+        List<Integer> held = new ArrayList<>();
+        for (int b : differ) {
+            (counts[b] == 0 ? empty : held).add(b);
+        }
+        return pullBuckets(t.peer(), t.limiter(), t.stop(), t.db(), t.table(), empty, 0, FIRST_PULL_BUCKETS, 0)
+                .thenCompose(n -> compareBuckets(t, held, counts, 0, FIRST_PULL_BUCKETS, 0, HASH_TARGET_IDS, n));
+    }
+
+    /**
+     * Compares the buckets {@code held} (from {@code from} on) with the peer's, one page of row hashes at a
+     * time, pulling the rows that differ before the next page. A page is as many buckets as come to about
+     * {@code targetIds} rows, counting for each bucket this node's rows or the peer's average in the last
+     * page, whichever is more; at most {@code maxBuckets}. A peer without the routes gets the rest pulled
+     * whole, as before 2.2.
+     */
+    private CompletableFuture<Integer> compareBuckets(TablePull t, List<Integer> held, int[] counts, int from,
+            int maxBuckets, double peerPerBucket, long targetIds, int merged) {
+        if (from >= held.size()) {
+            return CompletableFuture.completedFuture(merged);
+        }
+        RuntimeException stop = stopReason(t.stop());
+        if (stop != null) {
+            return CompletableFuture.failedFuture(stop);
+        }
+        Peer p = t.peer();
+        int n = hashPageBuckets(held, from, counts, peerPerBucket, targetIds, maxBuckets);
+        List<Integer> page = List.copyOf(held.subList(from, from + n));
+        return t.limiter().run(() -> client.hashes(p.address, t.db(), t.table(), page)).handle((theirs, err) -> {
+            if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
+                throw new java.util.concurrent.CompletionException(unwrap(err));
+            }
+            return theirs; // null: the peer has no such route
+        }).thenCompose(theirs -> {
+            if (theirs == null) {
+                noRowRoutes(p);
+                return pullBuckets(p, t.limiter(), t.stop(), t.db(), t.table(), held, from, FIRST_PULL_BUCKETS, merged);
+            }
+            p.lastContact = clock.getAsLong();
+            rowRoutesFound(p);
+            hashPages.incrementAndGet();
+            Map<String, Long> mine = engine.read(s -> s.rowHashes(t.db(), t.table(), new HashSet<>(page)));
+            List<String> want = differingIds(theirs.ids(), theirs.hashes(), mine);
+            int rows = theirs.ids().size();
+            double perBucket = (double) rows / page.size();
+            double perRowBytes = rows == 0 ? 1 : Math.max(1.0, (double) theirs.bytes() / rows);
+            long nextTarget = (long) Math.max(1, Math.min(HASH_TARGET_IDS, PULL_TARGET_BYTES / perRowBytes));
+            return pullIds(t, want, 0, FIRST_PULL_IDS, 0).handle((k, err) -> {
+                if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
+                    throw new java.util.concurrent.CompletionException(unwrap(err));
+                }
+                return err == null ? k : null;
+            }).thenCompose(k -> {
+                if (k == null) {
+                    noRowRoutes(p);
+                    return pullBuckets(p, t.limiter(), t.stop(), t.db(), t.table(), held, from, FIRST_PULL_BUCKETS, merged);
+                }
+                return compareBuckets(t, held, counts, from + n, n * PULL_GROWTH, perBucket, nextTarget, merged + k);
+            });
+        });
+    }
+
+    /** The buckets of the next page of row hashes (at least one): see {@link #compareBuckets}. */
+    static int hashPageBuckets(List<Integer> held, int from, int[] counts, double peerPerBucket, long targetIds,
+            int maxBuckets) {
+        int limit = Math.min(Math.min(BUCKETS_PER_REQUEST, Math.max(1, maxBuckets)), held.size() - from);
+        long perBucket = (long) Math.ceil(peerPerBucket);
+        long rows = 0;
+        int n = 0;
+        while (n < limit) {
+            long e = Math.max(counts[held.get(from + n)], perBucket);
+            if (n > 0 && rows + e > targetIds) {
+                break;
+            }
+            rows += e;
+            n++;
+        }
+        return n;
+    }
+
+    /**
+     * The ids to pull after comparing a page of the peer's row hashes with this node's: those whose hashes
+     * differ (the peer's versions may be the older ones; merging them then changes nothing) and those only
+     * the peer has. Ids only this node has need nothing: the peer pulls them from here.
+     */
+    static List<String> differingIds(List<String> theirIds, long[] theirHashes, Map<String, Long> mine) {
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < theirIds.size(); i++) {
+            Long h = mine.get(theirIds.get(i));
+            if (h == null || h.longValue() != theirHashes[i]) {
+                out.add(theirIds.get(i));
+            }
+        }
+        return out;
+    }
+
+    /** Pulls the rows {@code ids} (from {@code from} on) by id, one page after another, sized like the bucket pages. */
+    private CompletableFuture<Integer> pullIds(TablePull t, List<String> ids, int from, int max, int merged) {
+        if (from >= ids.size()) {
+            return CompletableFuture.completedFuture(merged);
+        }
+        RuntimeException stop = stopReason(t.stop());
+        if (stop != null) {
+            return CompletableFuture.failedFuture(stop);
+        }
+        int n = idPageSize(ids, from, max);
+        List<String> page = List.copyOf(ids.subList(from, from + n));
+        return t.limiter().run(() -> client.rowsById(t.peer().address, t.db(), t.table(), page)).thenCompose(ops -> {
+            t.peer().lastContact = clock.getAsLong();
+            idPages.incrementAndGet();
+            int k = mergeOrThrow(ops);
+            int next = nextPullIds(page.size(), ops.size(), com.ataiva.serengeti.core.storage.Weight.ofOps(ops));
+            return pullIds(t, ids, from + n, next, merged + k);
+        });
+    }
+
+    /** How many ids from {@code from} on go in one request: at most {@code max}, and within the request limits. */
+    static int idPageSize(List<String> ids, int from, int max) {
+        int limit = Math.min(Math.min(IDS_PER_REQUEST, Math.max(1, max)), ids.size() - from);
+        long chars = 0;
+        int n = 0;
+        while (n < limit) {
+            chars += ids.get(from + n).length();
+            if (n > 0 && chars > IDS_REQUEST_CHARS) {
+                break;
+            }
+            n++;
+        }
+        return n;
+    }
+
+    /** The ids of the next page, from what the last one asked for and held: as for buckets, per id. */
+    static int nextPullIds(int asked, int ops, long bytes) {
+        double perIdOps = Math.max(1.0, (double) ops / asked);
+        double perIdBytes = Math.max(1.0, (double) bytes / asked);
+        double fit = Math.min(PULL_TARGET_OPS / perIdOps, PULL_TARGET_BYTES / perIdBytes);
+        long next = (long) Math.floor(fit);
+        return (int) Math.max(1, Math.min(Math.min(IDS_PER_REQUEST, (long) asked * PULL_GROWTH), next));
+    }
+
+    /**
+     * Protocol 2: compare per-table roots, then bucket sums of the tables that differ, then pull what
+     * differs in those buckets: the rows that differ, found by comparing row hashes with the peer (protocol
+     * 3, {@link #pullTable}), or every row of the bucket from a peer without that. In a steady cluster this
+     * moves only the root map; under writes, only what the writes touched. Completes with the number of ops
+     * merged.
      */
     @SuppressWarnings("unchecked")
     private CompletableFuture<Integer> syncByBuckets(Peer p, java.util.concurrent.atomic.AtomicBoolean readDone) {
@@ -791,7 +1016,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                                 differ.add(i);
                             }
                         }
-                        return pullBuckets(p, limiter, stop, db, table, differ, 0, FIRST_PULL_BUCKETS, 0);
+                        return pullTable(new TablePull(p, limiter, stop, db, table), differ);
                     }));
                 }
                 work.add(schemaStep);
@@ -998,25 +1223,51 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             case "/internal/v2/rows" -> {
                 String db = required(query, "db");
                 String table = required(query, "table");
-                Set<Integer> wanted = new HashSet<>();
-                try {
-                    for (String part : required(query, "buckets").split(",")) {
-                        int b = Integer.parseInt(part.trim());
-                        if (b < 0 || b >= Store.BUCKETS) {
-                            throw new NumberFormatException();
-                        }
-                        wanted.add(b);
-                    }
-                } catch (NumberFormatException e) {
-                    throw new QueryService.Rejected(400, "buckets must be numbers from 0 to " + (Store.BUCKETS - 1));
-                }
-                if (wanted.size() > BUCKETS_PER_REQUEST) {
-                    throw new QueryService.Rejected(400, "at most " + BUCKETS_PER_REQUEST + " buckets per request");
-                }
+                Set<Integer> wanted = buckets(query);
                 // Schema ops travel with the rows, so the receiver can place rows whose table it has not seen.
                 List<Op> ops = engine.read(s -> {
                     List<Op> o = new ArrayList<>(s.schemaOps(db));
                     o.addAll(s.bucketOps(db, table, wanted));
+                    return o;
+                });
+                return Map.of("ops", Op.toJson(ops));
+            }
+            case "/internal/v3/hashes" -> {
+                if (rowRoutesOff) {
+                    throw new QueryService.Rejected(404, "no such route");
+                }
+                String db = required(query, "db");
+                String table = required(query, "table");
+                Set<Integer> wanted = buckets(query);
+                Map<String, Long> hashes = engine.read(s -> s.rowHashes(db, table, wanted));
+                return Map.of("ids", new ArrayList<Object>(hashes.keySet()), "h", new ArrayList<Object>(hashes.values()));
+            }
+            case "/internal/v3/rows" -> {
+                if (rowRoutesOff) {
+                    throw new QueryService.Rejected(404, "no such route");
+                }
+                if (!"POST".equals(method)) {
+                    throw new QueryService.Rejected(405, "use POST");
+                }
+                String db = requiredString(body, "db");
+                String table = requiredString(body, "table");
+                if (!(body.get("ids") instanceof List<?> list)) {
+                    throw new QueryService.Rejected(400, "ids must be a list of row ids");
+                }
+                if (list.size() > IDS_PER_REQUEST) {
+                    throw new QueryService.Rejected(400, "at most " + IDS_PER_REQUEST + " ids per request");
+                }
+                List<String> ids = new ArrayList<>(list.size());
+                for (Object o : list) {
+                    if (!(o instanceof String id)) {
+                        throw new QueryService.Rejected(400, "ids must be a list of row ids");
+                    }
+                    ids.add(id);
+                }
+                // As for /internal/v2/rows: the schema ops with the rows.
+                List<Op> ops = engine.read(s -> {
+                    List<Op> o = new ArrayList<>(s.schemaOps(db));
+                    o.addAll(s.rowOps(db, table, ids));
                     return o;
                 });
                 return Map.of("ops", Op.toJson(ops));
@@ -1065,6 +1316,33 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             throw new QueryService.Rejected(400, name + " is required");
         }
         return v;
+    }
+
+    private static String requiredString(Map<String, Object> body, String name) throws QueryService.Rejected {
+        if (!(body.get(name) instanceof String v) || v.isEmpty()) {
+            throw new QueryService.Rejected(400, name + " is required");
+        }
+        return v;
+    }
+
+    /** The {@code buckets} parameter: at most BUCKETS_PER_REQUEST bucket numbers, comma-separated. */
+    private static Set<Integer> buckets(Map<String, String> query) throws QueryService.Rejected {
+        Set<Integer> wanted = new HashSet<>();
+        try {
+            for (String part : required(query, "buckets").split(",")) {
+                int b = Integer.parseInt(part.trim());
+                if (b < 0 || b >= Store.BUCKETS) {
+                    throw new NumberFormatException();
+                }
+                wanted.add(b);
+            }
+        } catch (NumberFormatException e) {
+            throw new QueryService.Rejected(400, "buckets must be numbers from 0 to " + (Store.BUCKETS - 1));
+        }
+        if (wanted.size() > BUCKETS_PER_REQUEST) {
+            throw new QueryService.Rejected(400, "at most " + BUCKETS_PER_REQUEST + " buckets per request");
+        }
+        return wanted;
     }
 
     private static byte[] sha256(String s) {

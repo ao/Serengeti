@@ -22,8 +22,8 @@ here has a date.
   and `serengeti-certs` in the image to make a cluster's certificates.
 - Replication across 1 to 7 nodes from a static peer list, or an opt-in address range of at most 256
   addresses ([docs/CONSISTENCY.md](docs/CONSISTENCY.md)). A write is acknowledged once a majority has it
-  on disk, or, with `"ack": "local"`, once this node has it. Nodes sync by comparing per-table and
-  per-bucket hashes and pull only the rows that differ. Writes that had not seen each other are all kept
+  on disk, or, with `"ack": "local"`, once this node has it. Nodes sync by comparing per-table,
+  per-bucket and per-row hashes and pull only the rows that differ. Writes that had not seen each other are all kept
   and listed by `SHOW CONFLICTS` until the next write to the row. Reads can ask for a majority.
   Node-to-node traffic needs a cluster key and uses TLS.
 - `GET /ready`, Prometheus metrics at `GET /metrics`, a request log, and backup and restore
@@ -46,10 +46,9 @@ here has a date.
 ## Possible next steps
 
 Not committed to, and in no particular order: indexes on more than one column;
-clients published as packages; a change feed that survives a restart; a catch-up that pulls only the rows
-that differ instead of whole buckets (a node that missed a few thousand inserts now pulls most of each
-table from each peer, in bounded pages); account changes merged field by field, so that a password reset
-on one node cannot undo a role or a list of databases given on another at the same moment.
+clients published as packages; a change feed that survives a restart; account changes merged field by
+field, so that a password reset on one node cannot undo a role or a list of databases given on another at
+the same moment.
 
 ## Not planned
 

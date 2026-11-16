@@ -297,4 +297,90 @@ class StoreTest {
         assertEquals(s.toOps(), copy.toOps());
         assertEquals(s.maxStamp(), copy.maxStamp());
     }
+
+    /** A store with a live row, a conflict, a tombstone and a 2.0 copy, spread over several buckets. */
+    static Store rowsForHashes() {
+        Store s = table();
+        for (int i = 0; i < 40; i++) {
+            s.apply(new Op.Put("shop", "items", "r" + i, row("v", i), at(10 + i, "n1"), Map.of()));
+        }
+        s.apply(new Op.Put("shop", "items", "c", row("v", 1), at(60, "n1"), Map.of()));
+        s.apply(new Op.Put("shop", "items", "c", row("v", 2), at(61, "n2"), Map.of()));
+        s.apply(new Op.Delete("shop", "items", "r3", at(70, "n1"), Map.of("n1", at(13, "n1"))));
+        s.apply(new Op.Put("shop", "items", "old", row("v", 0), at(5, "n3")));
+        return s;
+    }
+
+    static java.util.Set<Integer> allBuckets() {
+        java.util.Set<Integer> all = new java.util.HashSet<>();
+        for (int b = 0; b < Store.BUCKETS; b++) {
+            all.add(b);
+        }
+        return all;
+    }
+
+    @Test
+    void rowHashesOfLiveRowsAddUpToTheBucketSums() {
+        Store s = rowsForHashes();
+        Map<String, Long> h = s.rowHashes("shop", "items", allBuckets());
+        assertEquals(42, h.size(), "every row, the tombstone included");
+        assertEquals(new java.util.ArrayList<>(new java.util.TreeSet<>(h.keySet())), new java.util.ArrayList<>(h.keySet()),
+                "in id order");
+        long[] sums = new long[Store.BUCKETS];
+        h.forEach((id, v) -> {
+            if (s.row("shop", "items", id) != null) {
+                sums[Store.bucket(id)] += v;
+            }
+        });
+        assertEquals(java.util.Arrays.toString(s.bucketSums("shop", "items")), java.util.Arrays.toString(sums));
+        assertTrue(h.get("r3") != 0, "a tombstone has a hash of its own here, unlike in the bucket sums");
+    }
+
+    @Test
+    void rowHashesDifferExactlyWhenTheVersionsDo() {
+        Store a = rowsForHashes();
+        Store b = rowsForHashes();
+        assertEquals(a.rowHashes("shop", "items", allBuckets()), b.rowHashes("shop", "items", allBuckets()));
+        // Another tombstone stamp, one version of a conflict missing, a copy without its context.
+        b.apply(new Op.Delete("shop", "items", "r3", at(71, "n2"), Map.of("n1", at(70, "n1"))));
+        Store c = table();
+        c.apply(new Op.Put("shop", "items", "c", row("v", 1), at(60, "n1"), Map.of()));
+        c.apply(new Op.Put("shop", "items", "r5", row("v", 5), at(15, "n1")));
+        Map<String, Long> ha = a.rowHashes("shop", "items", allBuckets());
+        Map<String, Long> hb = b.rowHashes("shop", "items", allBuckets());
+        Map<String, Long> hc = c.rowHashes("shop", "items", allBuckets());
+        assertFalse(ha.get("r3").equals(hb.get("r3")));
+        assertFalse(ha.get("c").equals(hc.get("c")));
+        assertFalse(ha.get("r5").equals(hc.get("r5")));
+        assertEquals(ha.get("r4"), hb.get("r4"));
+    }
+
+    @Test
+    void rowHashesKeepToTheBucketsAskedFor() {
+        Store s = rowsForHashes();
+        int bucket = Store.bucket("r7");
+        Map<String, Long> h = s.rowHashes("shop", "items", java.util.Set.of(bucket));
+        assertTrue(h.containsKey("r7"));
+        h.keySet().forEach(id -> assertEquals(bucket, Store.bucket(id), id));
+        assertTrue(s.rowHashes("shop", "nope", allBuckets()).isEmpty());
+        assertTrue(s.rowHashes("nope", "items", allBuckets()).isEmpty());
+        int[] counts = s.bucketRowCounts("shop", "items");
+        assertEquals(42, java.util.Arrays.stream(counts).sum(), "tombstones count as rows held");
+        assertEquals(Store.BUCKETS, s.bucketRowCounts("nope", "items").length);
+    }
+
+    @Test
+    void rowOpsAreEveryVersionOfTheRowsAskedFor() {
+        Store s = rowsForHashes();
+        List<Op> ops = s.rowOps("shop", "items", List.of("c", "r3", "missing", "c"));
+        assertEquals(3, ops.size(), ops.toString());
+        assertEquals(List.of(new Op.Put("shop", "items", "c", row("v", 2), at(61, "n2"), Map.of()),
+                new Op.Put("shop", "items", "c", row("v", 1), at(60, "n1"), Map.of()),
+                new Op.Delete("shop", "items", "r3", at(70, "n1"), Map.of("n1", at(13, "n1")))), ops);
+        assertTrue(s.rowOps("shop", "nope", List.of("c")).isEmpty());
+        Store copy = table();
+        copy.applyAll(ops);
+        assertEquals(s.rowHashes("shop", "items", java.util.Set.of(Store.bucket("c"))).get("c"),
+                copy.rowHashes("shop", "items", java.util.Set.of(Store.bucket("c"))).get("c"));
+    }
 }

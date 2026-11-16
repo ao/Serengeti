@@ -762,7 +762,8 @@ public final class HttpApi implements AutoCloseable {
         }
     }
 
-    static final java.util.Set<String> HEAVY_INTERNAL = java.util.Set.of("/internal/v2/rows", "/internal/state");
+    static final java.util.Set<String> HEAVY_INTERNAL = java.util.Set.of("/internal/v2/rows", "/internal/state",
+            "/internal/v3/hashes", "/internal/v3/rows");
     static final int HEAVY_INTERNAL_AT_ONCE = 4;
     static final long HEAVY_WAIT_MILLIS = 1_000;
     /** A peer pulls at most 2 background and 4 read pages at once; one that stopped reading holds no more. */

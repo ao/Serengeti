@@ -4,7 +4,8 @@
 # rows of 1 KB, then one node is stopped while 6,000 more are written across both tables, and started again.
 # A few thousand missed rows touch most of every table's buckets, so the restarted node has nearly all of
 # each table to compare with each peer. Before the pull limit, the two other nodes ran out of heap within
-# seconds of the restart (docs/SOAK.md, finding 3).
+# seconds of the restart (docs/SOAK.md, finding 3). It also prints how long the restarted node took to have
+# every row and how many bytes its network interface received and sent meanwhile.
 #
 #   IMAGE=serengeti:catchup tests/memory/catchup.sh     (builds the image first unless SKIP_BUILD=1)
 #   ROWS=60000 PAD=1000 MISS=3000 MEM=768m              the defaults: rows per table and their padding
@@ -96,12 +97,28 @@ docker stop -t 10 "$RUN-n3" >/dev/null
 expect "write $((MISS * 2)) more while n3 is stopped" "$((MISS * 2))" \
   "$(docker exec "$RUN-py" python /load.py n1 "$ROWS" "$MISS" "$PAD" "$PW" 2>&1 | tail -1)"
 docker start "$RUN-n3" >/dev/null
+started=$(date +%s%N)
 want=$((ROWS + MISS))
-for _ in $(seq 120); do
-  [ "$(count n3 a)" = "$want" ] && [ "$(count n3 b)" = "$want" ] && break
-  sleep 1
+caught=
+while [ $(( ($(date +%s%N) - started) / 1000000000 )) -lt 120 ]; do
+  if [ "$(count n3 a)" = "$want" ] && [ "$(count n3 b)" = "$want" ]; then
+    caught=$(date +%s%N)
+    break
+  fi
+  sleep 0.5
 done
+# Traffic of n3's network interface since its start (a new one each start): the rows it pulled from its
+# peers, and what they pulled from it.
+net() { docker exec "$RUN-n3" cat "/sys/class/net/eth0/statistics/$1" 2>/dev/null || echo 0; }
+rx=$(net rx_bytes)
+tx=$(net tx_bytes)
 expect "n3 catches up: both tables have every row" "$want $want" "$(count n3 a) $(count n3 b)"
+if [ -n "$caught" ]; then
+  sleep 10 # the peers may still be comparing with it
+  awk -v t=$(( (caught - started) / 1000000 )) -v rx="$rx" -v tx="$tx" -v rx2="$(net rx_bytes)" -v tx2="$(net tx_bytes)" 'BEGIN {
+    printf "     n3 caught up in %.1f s after its start; it received %.1f MB and sent %.1f MB (%.1f and %.1f by 10 s later)\n",
+      t / 1000, rx / 1e6, tx / 1e6, rx2 / 1e6, tx2 / 1e6 }'
+fi
 for i in 1 2 3; do
   expect "n$i is still running" "running 0" \
     "$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$RUN-n$i")"

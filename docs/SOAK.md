@@ -241,6 +241,14 @@ of their own, allows four row pages to be built for peers at once (waiting 1 s, 
 makes a background sync whose pages stopped for a newer one count as failed: it had counted as complete,
 so a node could take itself for synced with a peer while rows were still missing.
 
+The pages kept the heap bounded, but a node catching up still pulled nearly every row of each table from
+each peer, and each peer nearly every row from it. Now the differing buckets are compared row by row
+first: the node asks for each row's id and a hash of its versions (about 40 bytes a row) and pulls only the
+rows whose hashes differ or that only the peer has (docs/CONSISTENCY.md, "Sync"). In `catchup.sh`, three
+runs each on an EC2 c7g.4xlarge shared with other test jobs, the restarted node received 275 MB and sent
+244 to 313 MB before; after, it received 21 MB and sent 1 to 7 MB, and had every row 2.6 s after its
+start instead of 4.6 to 5.2 s.
+
 ## Runs
 
 All on one EC2 c7g.2xlarge (8 Graviton3 vCPUs, 16 GiB, Ubuntu 24.04, Docker 29), nothing else running.

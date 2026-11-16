@@ -44,11 +44,20 @@ that was down or partitioned catches up, and how a write that missed a peer gets
 
 Each table spreads its rows over 1024 buckets by a hash of their id, and keeps, per bucket, a sum of
 hashes of its live rows' versions, updated on every change. Every second each node asks each peer for one
-root value per table, compares, asks for the 1024 bucket sums of any table that differs, and pulls only
-the rows of the buckets that differ. A cluster where nothing changed exchanges the roots and nothing else;
-catching up after one row changed pulls that row's bucket. Nodes running 2.0 do not have these routes,
-and are synced the 2.0 way (one digest per database, whole databases pulled), so a cluster can be upgraded
-one node at a time.
+root value per table, compares, and asks for the 1024 bucket sums of any table that differs. For the
+buckets that differ, it then asks for the id of each row in them and a hash of that row's versions
+(tombstones included), compares them with its own, and pulls only the rows whose hashes differ or that
+only the peer has; rows only it has are left for the peer to pull. A bucket it holds no row of is pulled
+whole, since every row in it is missing. A cluster where nothing changed exchanges the roots and nothing
+else; a node that missed a few thousand writes to a large table compares about 40 bytes per row of the
+buckets that differ and pulls the rows it missed. Hashes come in pages of about 20,000 rows, rows in pages
+of at most 2,000 ids, one after another per table, with at most two pulls of either kind running at once on
+a node (four more for majority reads).
+
+Nodes running 2.1 do not have the row routes; from those a node pulls every row of each differing bucket,
+as 2.1 does, and asks again every 30 s in case they were upgraded. Nodes running 2.0 have neither, and
+are synced the 2.0 way (one digest per database, whole databases pulled), so a cluster can be upgraded one
+node at a time.
 
 ## Deletes and how long a node may be away
 

@@ -557,9 +557,14 @@ public final class Store {
          * tombstones changes no sum), else the sum over all versions (so a conflicting delete still differs).
          */
         long hash(String id) {
-            if (!live()) {
-                return 0;
-            }
+            return live() ? versionsHash(id) : 0;
+        }
+
+        /**
+         * The sum over all versions, deletes included: two replicas hold the same versions of a row exactly
+         * when these agree (up to 64-bit collisions). Equal to {@link #hash} for a live row.
+         */
+        long versionsHash(String id) {
             long h = 0;
             for (Version v : versions) {
                 // A copy that lost its context (it went through a 2.0 node) hashes differently from the full
@@ -861,6 +866,59 @@ public final class Store {
                 }
             }
         });
+        return out;
+    }
+
+    /**
+     * For each row of the given buckets of a table (tombstones included), in id order: its id and the hash
+     * of all its versions. Two replicas hold the same versions of a row exactly when the hashes agree, so
+     * comparing these finds the rows of a bucket that differ. A live row's hash is its share of its bucket
+     * sum; a tombstone's is not 0 here, so a delete that one side lacks shows as a difference.
+     */
+    public Map<String, Long> rowHashes(String db, String table, java.util.Set<Integer> wanted) {
+        Map<String, Long> out = new java.util.LinkedHashMap<>();
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        if (t == null) {
+            return out;
+        }
+        t.rows.forEach((id, r) -> {
+            if (wanted.contains(bucket(id))) {
+                out.put(id, r.versionsHash(id));
+            }
+        });
+        return out;
+    }
+
+    /** How many rows (tombstones included) each bucket of a table holds; all zeros if it is unknown. */
+    public int[] bucketRowCounts(String db, String table) {
+        int[] out = new int[BUCKETS];
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        if (t != null) {
+            for (String id : t.rows.keySet()) {
+                out[bucket(id)]++;
+            }
+        }
+        return out;
+    }
+
+    /** Every version (values and tombstones) of the rows with these ids, as ops; ids not held are skipped. */
+    public List<Op> rowOps(String db, String table, java.util.Collection<String> ids) {
+        List<Op> out = new ArrayList<>();
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        if (t == null) {
+            return out;
+        }
+        for (String id : new java.util.TreeSet<>(ids)) {
+            RowState r = t.rows.get(id);
+            if (r != null) {
+                for (Version v : r.versions()) {
+                    out.add(v.toOp(db, table, id));
+                }
+            }
+        }
         return out;
     }
 

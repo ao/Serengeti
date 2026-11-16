@@ -175,6 +175,14 @@ GitHub release notes and tags.
   logs that it is ignored.
 
 ### Changed
+- A node catching up pulls only the rows that differ, not every row of each bucket that differs. For the
+  differing buckets it asks a peer for each row's id and a hash of its versions
+  (`GET /internal/v3/hashes`, about 40 bytes a row), and pulls the rows whose hashes differ or that only
+  the peer has (`POST /internal/v3/rows`, at most 2,000 ids). A few thousand missed inserts touch most
+  buckets, so a node used to pull most of each table from each peer, and each peer most of it from the
+  node: in `tests/memory/catchup.sh` (126,000 rows of 1 KB, 6,000 missed) the restarted node received
+  275 MB and sent 244 to 313 MB, and now receives 21 MB and sends 1 to 7 MB (3 runs each, EC2
+  c7g.4xlarge). Peers on 2.1 answer 404 to these routes and are pulled from by whole buckets as before.
 - `cluster_plaintext` takes only `allow`. Another value (`yes`, `true`) meant "not allowed" without a word;
   it now stops the node with exit status 2, like any other invalid setting.
 - A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past

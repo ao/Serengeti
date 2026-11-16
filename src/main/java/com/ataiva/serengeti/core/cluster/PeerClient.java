@@ -100,6 +100,47 @@ final class PeerClient {
     }
 
     CompletableFuture<List<Op>> rows(String peer, String db, String table, java.util.Collection<Integer> buckets) {
+        return get(peer, "/internal/v2/rows?db=" + enc(db) + "&table=" + enc(table) + "&buckets=" + join(buckets), STATE_TIMEOUT)
+                .thenApply(m -> Op.listFromJson(m.get("ops")));
+    }
+
+    // ---- protocol 3: rows by id ----
+
+    /** A peer's rows in some buckets: ids in id order, the hash of each row's versions, and the answer's size. */
+    record RowHashes(List<String> ids, long[] hashes, long bytes) {}
+
+    /** The peer's row hashes in these buckets; NotSupported from a peer without the route (before rowsync). */
+    CompletableFuture<RowHashes> hashes(String peer, String db, String table, java.util.Collection<Integer> buckets) {
+        String path = "/internal/v3/hashes?db=" + enc(db) + "&table=" + enc(table) + "&buckets=" + join(buckets);
+        return send(request(peer, path, STATE_TIMEOUT).GET().build(), true).thenApply(m -> {
+            if (!(m.get("ids") instanceof List<?> ids) || !(m.get("h") instanceof List<?> h) || ids.size() != h.size()) {
+                throw new IllegalStateException("peer sent bad row hashes");
+            }
+            List<String> outIds = new java.util.ArrayList<>(ids.size());
+            long[] outH = new long[h.size()];
+            long bytes = 0;
+            for (int i = 0; i < outH.length; i++) {
+                if (!(ids.get(i) instanceof String id) || !(h.get(i) instanceof Long v)) {
+                    throw new IllegalStateException("peer sent bad row hashes");
+                }
+                outIds.add(id);
+                outH[i] = v;
+                bytes += id.length() + 24; // quotes, commas and up to 20 digits
+            }
+            return new RowHashes(outIds, outH, bytes);
+        });
+    }
+
+    /** All versions of the rows with these ids, and the schema ops; NotSupported from a peer without the route. */
+    CompletableFuture<List<Op>> rowsById(String peer, String db, String table, List<String> ids) {
+        String body = Json.write(Map.of("db", db, "table", table, "ids", ids));
+        HttpRequest r = request(peer, "/internal/v3/rows", STATE_TIMEOUT)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+        return send(r, true).thenApply(m -> Op.listFromJson(m.get("ops")));
+    }
+
+    private static String join(java.util.Collection<Integer> buckets) {
         StringBuilder b = new StringBuilder();
         for (int i : buckets) {
             if (b.length() > 0) {
@@ -107,8 +148,7 @@ final class PeerClient {
             }
             b.append(i);
         }
-        return get(peer, "/internal/v2/rows?db=" + enc(db) + "&table=" + enc(table) + "&buckets=" + b, STATE_TIMEOUT)
-                .thenApply(m -> Op.listFromJson(m.get("ops")));
+        return b.toString();
     }
 
     private static String enc(String s) {

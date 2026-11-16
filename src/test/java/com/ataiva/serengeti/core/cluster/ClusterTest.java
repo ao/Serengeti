@@ -714,6 +714,266 @@ class ClusterTest {
                 HttpResponse.BodyHandlers.ofString()).statusCode());
     }
 
+    // ---- catching up by rows that differ (/internal/v3/hashes and /internal/v3/rows) ----
+
+    private HttpResponse<String> internal(int i, String path, String body, String key) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[i] + path))
+                .timeout(Duration.ofSeconds(20));
+        if (key != null) {
+            b.header(InternalRoutes.KEY_HEADER, key);
+        }
+        if (body != null) {
+            b.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body));
+        }
+        return HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** A row op in its JSON form; {@code seen} null leaves the context out (as from 2.0). */
+    private static Map<String, Object> rowOp(String table, String id, Map<String, Object> row, String at,
+            Map<String, Object> seen) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("op", row == null ? "delete" : "put");
+        m.put("db", "d");
+        m.put("table", table);
+        m.put("id", id);
+        if (row != null) {
+            m.put("row", row);
+        }
+        m.put("at", at);
+        if (seen != null) {
+            m.put("seen", seen);
+        }
+        return m;
+    }
+
+    /** Merges ops on node i as a peer's would be: they are not passed on, so other nodes get them by sync only. */
+    private void merge(int i, List<? extends Map<String, ?>> ops) throws Exception {
+        HttpResponse<String> r = internal(i, "/internal/apply", Json.write(Map.of("ops", ops)), KEY);
+        assertEquals(200, r.statusCode(), r.body());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> kinds(HttpResponse<String> r) {
+        List<String> out = new ArrayList<>();
+        for (Object o : (List<Object>) Json.parseObject(r.body()).get("ops")) {
+            out.add(((Map<String, Object>) o).get("op") + ":" + ((Map<String, Object>) o).getOrDefault("id", ""));
+        }
+        return out;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theRowRoutesAnswerWithinTheirLimits() throws Exception {
+        start(0);
+        long now = System.currentTimeMillis();
+        merge(0, List.of(Map.of("op", "create_db", "db", "d", "at", now + ".0.z1"),
+                Map.of("op", "create_table", "db", "d", "table", "t", "at", now + ".1.z1"),
+                rowOp("t", "x", Map.of("n", 1L), now + ".2.z1", Map.of()),
+                rowOp("t", "x", Map.of("n", 2L), now + ".3.z2", Map.of()), // concurrent with the one before
+                rowOp("t", "y", Map.of("n", 3L), now + ".4.z1", null),
+                rowOp("t", "y", null, now + ".5.z1", null),
+                rowOp("t", "z", Map.of("n", 4L), now + ".6.z1", Map.of())));
+        java.util.TreeSet<Integer> buckets = new java.util.TreeSet<>();
+        for (String id : List.of("x", "y", "z")) {
+            buckets.add(com.ataiva.serengeti.core.storage.Store.bucket(id));
+        }
+        String list = String.join(",", buckets.stream().map(String::valueOf).toList());
+        HttpResponse<String> h = internal(0, "/internal/v3/hashes?db=d&table=t&buckets=" + list, null, KEY);
+        assertEquals(200, h.statusCode(), h.body());
+        Map<String, Object> m = Json.parseObject(h.body());
+        assertEquals(List.of("x", "y", "z"), m.get("ids"), "the tombstone of y included");
+        assertEquals(3, ((List<Object>) m.get("h")).size());
+        assertFalse(((List<Object>) m.get("h")).contains(0L), h.body());
+        assertEquals(Map.of("ids", List.of(), "h", List.of()),
+                Json.parseObject(internal(0, "/internal/v3/hashes?db=d&table=nope&buckets=1", null, KEY).body()));
+        StringBuilder many = new StringBuilder("0");
+        for (int b = 1; b <= Cluster.BUCKETS_PER_REQUEST; b++) {
+            many.append(',').append(b);
+        }
+        for (String bad : List.of("db=d&table=t&buckets=" + many, "db=d&table=t&buckets=1024", "db=d&table=t&buckets=-1",
+                "db=d&table=t&buckets=x", "db=d&table=t", "table=t&buckets=1", "db=d&buckets=1")) {
+            assertEquals(400, internal(0, "/internal/v3/hashes?" + bad, null, KEY).statusCode(), bad);
+        }
+        assertEquals(401, internal(0, "/internal/v3/hashes?db=d&table=t&buckets=1", null, null).statusCode());
+        assertEquals(401, internal(0, "/internal/v3/rows", "{\"db\": \"d\", \"table\": \"t\", \"ids\": []}", "wrong key")
+                .statusCode());
+
+        HttpResponse<String> r = internal(0, "/internal/v3/rows", Json.write(Map.of("db", "d", "table", "t",
+                "ids", List.of("x", "y", "nope", "x"))), KEY);
+        assertEquals(200, r.statusCode(), r.body());
+        assertEquals(List.of("create_db:", "create_table:", "put:x", "put:x", "delete:y"), kinds(r),
+                "the schema, both versions of x and the tombstone of y; nothing for an id it does not hold");
+        assertEquals(List.of("create_db:", "create_table:"), kinds(internal(0, "/internal/v3/rows",
+                "{\"db\": \"d\", \"table\": \"t\", \"ids\": []}", KEY)));
+        assertEquals(List.of(), kinds(internal(0, "/internal/v3/rows", "{\"db\": \"e\", \"table\": \"t\", \"ids\": [\"x\"]}", KEY)));
+        List<String> tooMany = new ArrayList<>();
+        for (int k = 0; k <= Cluster.IDS_PER_REQUEST; k++) {
+            tooMany.add("r" + k);
+        }
+        for (String bad : List.of(Json.write(Map.of("db", "d", "table", "t", "ids", tooMany)),
+                "{\"db\": \"d\", \"table\": \"t\", \"ids\": \"x\"}", "{\"db\": \"d\", \"table\": \"t\", \"ids\": [1]}",
+                "{\"db\": \"d\", \"table\": \"t\", \"ids\": [null]}", "{\"db\": \"d\", \"table\": \"t\"}",
+                "{\"db\": \"d\", \"ids\": []}", "{\"table\": \"t\", \"ids\": []}", "{\"db\": 1, \"table\": \"t\", \"ids\": []}",
+                "{\"db\": \"\", \"table\": \"t\", \"ids\": []}", "[]", "not json")) {
+            assertEquals(400, internal(0, "/internal/v3/rows", bad, KEY).statusCode(), bad);
+        }
+        tooMany.remove(0);
+        assertEquals(200, internal(0, "/internal/v3/rows", Json.write(Map.of("db", "d", "table", "t", "ids", tooMany)), KEY)
+                .statusCode(), "2,000 ids is the limit");
+        assertEquals(405, internal(0, "/internal/v3/rows", null, KEY).statusCode(), "a GET");
+
+        // A node without the routes (2.1, or a test hook) answers 404, which is what the fallback goes by.
+        nodes[0].cluster().rowRoutesForTest(false);
+        assertEquals(404, internal(0, "/internal/v3/hashes?db=d&table=t&buckets=1", null, KEY).statusCode());
+        assertEquals(404, internal(0, "/internal/v3/rows", "{\"db\": \"d\", \"table\": \"t\", \"ids\": []}", KEY).statusCode());
+        nodes[0].cluster().rowRoutesForTest(true);
+        assertEquals(200, internal(0, "/internal/v3/hashes?db=d&table=t&buckets=1", null, KEY).statusCode());
+    }
+
+    /** The values of {@code column} in each version SHOW CONFLICTS lists on node i, current first. */
+    @SuppressWarnings("unchecked")
+    private List<Object> conflictValues(int i, String table, String column) {
+        try {
+            HttpResponse<String> r = query(i, "SHOW CONFLICTS IN d." + table);
+            if (r.statusCode() != 200) {
+                return List.of("status " + r.statusCode());
+            }
+            List<Object> out = new ArrayList<>();
+            for (Object row : (List<Object>) Json.parseObject(r.body()).get("rows")) {
+                out.add(((Map<String, Object>) ((List<Object>) row).get(5)).get(column));
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of(e.toString());
+        }
+    }
+
+    private static String values(String prefix, int from, int to) {
+        StringBuilder b = new StringBuilder();
+        for (int k = from; k < to; k++) {
+            b.append(k == from ? "" : ", ").append("('").append(prefix).append(k).append("', ").append(k).append(')');
+        }
+        return b.toString();
+    }
+
+    @Test
+    void aRestartedNodeCatchesUpByPullingOnlyTheRowsThatDiffer() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        for (int i = 0; i < 3; i++) {
+            waitWritable(i);
+        }
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES " + values("r", 0, 3000)).statusCode());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has 3000 rows", () -> has(n, "SELECT COUNT(*) FROM d.t", List.of(List.of(3000L))));
+        }
+        // Node 2 changes r5 on its own, then is away while the others change it too (a conflict), insert, update,
+        // delete, and create a table.
+        stop(0);
+        stop(1);
+        assertEquals(200, write(2, "UPDATE d.t SET n = -2 WHERE _id = 'r5'", "local").statusCode());
+        stop(2);
+        start(0);
+        start(1);
+        waitWritable(0);
+        waitWritable(1);
+        assertEquals(200, query(0, "UPDATE d.t SET n = -1 WHERE _id = 'r5'").statusCode());
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES " + values("s", 10_000, 10_500)).statusCode());
+        assertEquals(200, query(0, "UPDATE d.t SET n = -7 WHERE n >= 1000 AND n < 1300").statusCode());
+        assertEquals(200, query(1, "DELETE FROM d.t WHERE n >= 2000 AND n < 2200").statusCode());
+        assertEquals(200, query(1, "CREATE TABLE d.u").statusCode());
+        assertEquals(200, query(1, "INSERT INTO d.u (_id, n) VALUES " + values("u", 0, 100)).statusCode());
+        start(2);
+        eventually("node 2 has every change", () -> has(2, "SELECT COUNT(*) FROM d.t", List.of(List.of(3300L)))
+                && has(2, "SELECT COUNT(*) FROM d.t WHERE n = -7", List.of(List.of(300L)))
+                && has(2, "SELECT COUNT(*) FROM d.t WHERE n >= 2000 AND n < 2200", List.of(List.of(0L)))
+                && has(2, "SELECT COUNT(*) FROM d.u", List.of(List.of(100L))));
+        for (int i : new int[] {0, 2}) {
+            eventually("node " + i + " holds both versions of r5", () -> conflictValues(i, "t", "n").equals(List.of(-1L, -2L)));
+        }
+        long[] pages = nodes[2].cluster().pagesForTest();
+        assertTrue(pages[1] > 0 && pages[2] > 0, "pulled by row hashes and ids: " + java.util.Arrays.toString(pages));
+        assertTrue(pages[0] > 0, "the new table's buckets, empty here, pulled whole: " + java.util.Arrays.toString(pages));
+        // Pulling whole buckets would take every row of d.t from each peer: 6,600 ops or more.
+        long pulled = nodes[2].cluster().pulledOps();
+        assertTrue(pulled < 3_300, "pulled " + pulled + " ops");
+        waitWritable(2);
+    }
+
+    @Test
+    void aPeerWithoutTheRowRoutesIsPulledByWholeBucketsAndAskedAgainLater() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        for (int i = 0; i < 3; i++) {
+            waitWritable(i);
+        }
+        nodes[0].cluster().rowRoutesForTest(false);
+        nodes[1].cluster().rowRoutesForTest(false);
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES " + values("r", 0, 1000)).statusCode());
+        eventually("node 2 has 1000 rows", () -> has(2, "SELECT COUNT(*) FROM d.t", List.of(List.of(1000L))));
+        stop(2);
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES " + values("s", 5000, 5100)).statusCode());
+        assertEquals(200, query(1, "DELETE FROM d.t WHERE n < 10").statusCode());
+        start(2);
+        nodes[2].cluster().rowProbeMillisForTest(300);
+        eventually("node 2 caught up from peers without the routes",
+                () -> has(2, "SELECT COUNT(*) FROM d.t", List.of(List.of(1090L))));
+        long[] pages = nodes[2].cluster().pagesForTest();
+        assertEquals(0, pages[1], java.util.Arrays.toString(pages));
+        assertEquals(0, pages[2], java.util.Arrays.toString(pages));
+        assertTrue(pages[0] > 0, java.util.Arrays.toString(pages));
+        // Upgraded: once asked again, the peers send rows by id. A change to a row node 2 holds (so its bucket
+        // is compared, not pulled whole), merged on both and not pushed:
+        nodes[0].cluster().rowRoutesForTest(true);
+        nodes[1].cluster().rowRoutesForTest(true);
+        Thread.sleep(400);
+        String at = System.currentTimeMillis() + ".0.z9";
+        for (int i = 0; i < 2; i++) {
+            merge(i, List.of(rowOp("t", "r500", Map.of("n", -5L), at, Map.of())));
+        }
+        eventually("node 2 has the change", () -> has(2, "SELECT n FROM d.t WHERE _id = 'r500'", List.of(List.of(-5L))));
+        pages = nodes[2].cluster().pagesForTest();
+        assertTrue(pages[1] > 0 && pages[2] > 0, java.util.Arrays.toString(pages));
+    }
+
+    @Test
+    void majorityReadsCatchUpByRowsThatDiffer() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        for (int i = 0; i < 3; i++) {
+            waitWritable(i);
+        }
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES " + values("r", 0, 500)).statusCode());
+        eventually("node 2 has 500 rows", () -> has(2, "SELECT COUNT(*) FROM d.t", List.of(List.of(500L))));
+        // Changes that a majority (nodes 0 and 1) holds and node 2 gets only by sync: a majority read there
+        // must see each at once.
+        for (int k = 0; k < 10; k++) {
+            String at = System.currentTimeMillis() + "." + k + ".z9";
+            Map<String, Object> op = k % 2 == 0 ? rowOp("t", "m" + k, Map.of("n", -1L), at, Map.of())
+                    : rowOp("t", "r" + k, null, at, null);
+            for (int i = 0; i < 2; i++) {
+                merge(i, List.of(op));
+            }
+            HttpResponse<String> r = query(2, "SELECT COUNT(*) FROM d.t WHERE n = -1", "majority");
+            assertEquals(200, r.statusCode(), r.body());
+            assertTrue(r.body().contains("[[" + (k / 2 + 1) + "]]"), k + ": " + r.body());
+            HttpResponse<String> all = query(2, "SELECT COUNT(*) FROM d.t", "majority");
+            assertTrue(all.body().contains("[[" + (500 + (k / 2 + 1) - (k + 1) / 2) + "]]"), k + ": " + all.body());
+        }
+        long[] pages = nodes[2].cluster().pagesForTest();
+        assertTrue(pages[1] > 0 && pages[2] > 0, java.util.Arrays.toString(pages));
+    }
+
     /**
      * Found by tests/soak (docs/SOAK.md, finding 1): Node.close() closed the cluster first and the HTTP server
      * after it, and the server went on answering for up to a second, so a local write already in the log, and
