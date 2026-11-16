@@ -132,6 +132,22 @@ def words(c):
            c.rows("SELECT group, sum(sum), max(group), COUNT(like) FROM group.like GROUP BY group ORDER BY sum(sum)"))
     expect("like LIKE and like IN", [["b"]], c.rows("SELECT _id FROM group.like WHERE like LIKE 'z' AND like IN ('z')"))
     c.ok("DROP DATABASE group")
+    # Nor are DISTINCT and HAVING: each is a keyword only where the grammar puts it.
+    steps = ["CREATE DATABASE distinct", "CREATE TABLE distinct.having", "CREATE INDEX ON distinct.having (distinct)",
+             "INSERT INTO distinct.having (_id, distinct, having) VALUES ('a', 1, 'x'), ('b', 1, 'y'), ('c', 2, 'y')",
+             "UPDATE distinct.having SET having = 'z' WHERE distinct = 2"]
+    for s in steps:
+        accepted(f"DISTINCT and HAVING as names: {s}", c, s)
+    expect("SELECT distinct FROM reads the column distinct", [[1], [1], [2]], c.rows("SELECT distinct FROM distinct.having"))
+    expect("SELECT distinct, having", [[1, "x"], [1, "y"], [2, "z"]], c.rows("SELECT distinct, having FROM distinct.having"))
+    expect("SELECT DISTINCT distinct", [[1], [2]], c.rows("SELECT DISTINCT distinct FROM distinct.having"))
+    expect("COUNT(distinct) and COUNT(DISTINCT distinct)", [[3, 2]],
+           c.rows("SELECT COUNT(distinct), COUNT(DISTINCT distinct) FROM distinct.having"))
+    expect("GROUP BY having HAVING having", [["y", 1]],
+           c.rows("SELECT having, COUNT(*) FROM distinct.having GROUP BY having HAVING having = 'y'"))
+    expect("ORDER BY distinct DESC, having", [["c"], ["a"], ["b"]],
+           c.rows("SELECT _id FROM distinct.having ORDER BY distinct DESC, having"))
+    c.ok("DROP DATABASE distinct")
 
     section("keywords, blanks and comments")
     c.ok("CREATE TABLE IF NOT EXISTS q.t")
@@ -321,11 +337,31 @@ def statements(c):
             ("ORDER BY a column that is not grouped", "SELECT a FROM q.t GROUP BY a ORDER BY b", 400, "GROUP BY"),
             ("ORDER BY an aggregate not listed", "SELECT a FROM q.t GROUP BY a ORDER BY count(*)", 400, "select list"),
             ("ORDER BY an aggregate without GROUP BY", "SELECT a FROM q.t ORDER BY SUM(a)", 400, "needs GROUP BY"),
-            ("HAVING", "SELECT a, COUNT(*) FROM q.t GROUP BY a HAVING COUNT(*) > 1", 400, None),
-            ("COUNT(DISTINCT a)", "SELECT COUNT(DISTINCT a) FROM q.t", 400, None),
+            ("DISTINCT *", "SELECT DISTINCT * FROM q.t", 400, "not *"),
+            ("DISTINCT with an aggregate", "SELECT DISTINCT a, COUNT(*) FROM q.t", 400, "aggregate"),
+            ("DISTINCT with GROUP BY", "SELECT DISTINCT a FROM q.t GROUP BY a", 400, "GROUP BY"),
+            ("DISTINCT with HAVING", "SELECT DISTINCT a FROM q.t HAVING a = 1", 400, "HAVING"),
+            ("DISTINCT with a column twice", "SELECT DISTINCT a, A FROM q.t", 400, "twice"),
+            ("DISTINCT ordered by a column it does not list", "SELECT DISTINCT a FROM q.t ORDER BY b", 400,
+             "SELECT DISTINCT list"),
+            ("SUM(DISTINCT a)", "SELECT SUM(DISTINCT a) FROM q.t", 400, "only COUNT takes DISTINCT"),
+            ("COUNT(DISTINCT *)", "SELECT COUNT(DISTINCT *) FROM q.t", 400, "takes a column"),
+            ("COUNT(DISTINCT) of two columns", "SELECT COUNT(DISTINCT a, b) FROM q.t", 400, None),
+            ("HAVING without GROUP BY and a column", "SELECT a FROM q.t HAVING a > 1", 400, "HAVING needs GROUP BY"),
+            ("HAVING without GROUP BY, with a column and an aggregate", "SELECT a, COUNT(*) FROM q.t HAVING COUNT(*) > 1",
+             400, "GROUP BY"),
+            ("HAVING on a column that is not grouped", "SELECT a FROM q.t GROUP BY a HAVING b > 1", 400, "GROUP BY column"),
+            ("HAVING with *", "SELECT * FROM q.t HAVING COUNT(*) > 1", 400, "HAVING"),
+            ("HAVING before GROUP BY", "SELECT COUNT(*) FROM q.t HAVING COUNT(*) > 1 GROUP BY a", 400, None),
+            ("HAVING after ORDER BY", "SELECT a FROM q.t GROUP BY a ORDER BY a HAVING a = 1", 400, None),
+            ("HAVING with a literal on the left", "SELECT a FROM q.t GROUP BY a HAVING 1 < COUNT(*)", 400, None),
+            ("HAVING with an aggregate on the right", "SELECT a FROM q.t GROUP BY a HAVING COUNT(*) > SUM(a)", 400, None),
             ("COUNT(*) with ORDER BY", "SELECT COUNT(*) FROM q.t ORDER BY a", 400, "ORDER BY"),
             ("COUNT(*) with LIMIT", "SELECT COUNT(*) FROM q.t LIMIT 1", 400, "LIMIT"),
-            ("ORDER BY two columns", "SELECT * FROM q.t ORDER BY a, b", 400, None),
+            ("ORDER BY a column twice", "SELECT * FROM q.t ORDER BY a, b, A DESC", 400, "twice"),
+            ("ORDER BY 33 keys", "SELECT * FROM q.t ORDER BY " + ", ".join(f"c{i}" for i in range(33)), 400,
+             "at most 32 keys"),
+            ("ORDER BY with a trailing comma", "SELECT * FROM q.t ORDER BY a,", 400, None),
             ("ORDER BY without a column", "SELECT * FROM q.t ORDER BY", 400, None),
             ("LIMIT before ORDER BY", "SELECT * FROM q.t LIMIT 1 ORDER BY a", 400, None),
             ("two LIMITs", "SELECT * FROM q.t LIMIT 1 LIMIT 2", 400, None),
@@ -475,6 +511,58 @@ def ordering(c):
     want = [r[0] for r in sorted((r for r in rows if r[1] is not None and compare(r[1], ">", 0)), key=key(True))]
     expect("ORDER BY DESC LIMIT through an index range", want[:4],
            c.ids("SELECT _id FROM q.mix WHERE v > 0 ORDER BY v DESC LIMIT 4"))
+
+    section("ORDER BY on several keys")
+    c.ok("CREATE TABLE IF NOT EXISTS q.mk")
+    c.ok("DELETE FROM q.mk")
+    rng = random.Random(5)
+    pool = [None, MISSING, False, True, 0, 1, 1.0, -0.0, 2.5, "", "a", "b", chr(0x1F600)]
+    mk = {}
+    for i in range(80):
+        rid = f"k{(i * 7) % 80:02d}"
+        a, b = rng.choice(pool), rng.choice(pool)
+        cols = ["_id"] + [n for n, v in (("a", a), ("b", b)) if v is not MISSING]
+        vals = [lit(rid)] + [lit(v) for v in (a, b) if v is not MISSING]
+        c.ok(f"INSERT INTO q.mk ({', '.join(cols)}) VALUES ({', '.join(vals)})")
+        mk[rid] = {"_id": rid, "a": None if a is MISSING else a, "b": None if b is MISSING else b, "nope": None}
+
+    def by_keys(keys, keep=lambda r: True):
+        def cmp(x, y):
+            for col, desc in keys:
+                c_ = sort_key_cmp(x[col], y[col])
+                if c_:
+                    return -c_ if desc else c_
+            return (x["_id"] > y["_id"]) - (x["_id"] < y["_id"])
+        return [r["_id"] for r in sorted((r for r in mk.values() if keep(r)), key=functools.cmp_to_key(cmp))]
+
+    def text(keys):
+        return ", ".join(f"{k}{' DESC' if d else ''}" for k, d in keys)
+
+    for indexed in (False, True):
+        if indexed:
+            c.ok("CREATE INDEX IF NOT EXISTS ON q.mk (a)")
+        tag = "with an index on a" if indexed else "by scan"
+        mism, n = [], 0
+        for keys in [[("a", False), ("b", False)], [("a", True), ("b", False)], [("b", True), ("a", True)],
+                     [("a", False), ("_id", True)], [("_id", False), ("a", True)], [("_id", True), ("b", False)],
+                     [("b", False), ("nope", True), ("a", False)], [("nope", False), ("b", True)]]:
+            for where, keep in [(None, lambda r: True), ("a > 0", lambda r: compare(r["a"], ">", 0) is True),
+                                ("b IN ('a', 1)", lambda r: compare(r["b"], "=", "a") is True or compare(r["b"], "=", 1) is True)]:
+                for limit in (None, 7):
+                    q = f"SELECT _id FROM q.mk{' WHERE ' + where if where else ''} ORDER BY {text(keys)}"
+                    q += f" LIMIT {limit}" if limit else ""
+                    want = by_keys(keys, keep)[:limit]
+                    got = c.ids(q)
+                    n += 1
+                    if got != want:
+                        mism.append((q, want[:5], got[:5]))
+        check(f"ORDER BY on several keys, {tag}: each key in turn, rows equal on all of them by _id ascending "
+              f"({n} statements)", not mism, repr(mism[:2]))
+    keys32 = [(f"c{i}", i % 2 == 0) for i in range(31)] + [("a", False)]
+    expect("32 keys are accepted (31 no row has, then a)", by_keys([("a", False)]),
+           c.ids(f"SELECT _id FROM q.mk ORDER BY {text(keys32)}"))
+    j = c.ok("SELECT n FROM q.big ORDER BY _id, n DESC LIMIT 3")
+    expect("ORDER BY _id first reads in _id order", [[0], [1], [2]], j["rows"])
 
 
 def nesting(c):
@@ -688,6 +776,8 @@ def agg_model(fn, values):
         return len(values), None
     if fn == "count":
         return sum(1 for v in values if v is not None), None
+    if fn == "countd":
+        return len({group_key(v) for v in values if v is not None}), None
     if fn in ("min", "max"):
         best = None
         for v in values:
@@ -724,6 +814,52 @@ def group_key(v):
     return (3, utf16(v))
 
 
+def having_checks(c):
+    """HAVING against filtering, here, the rows of the same GROUP BY without it (q.agg as aggregates() left it)."""
+    section("HAVING against filtering the groups")
+
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    def like_x(v):
+        return isinstance(v, str) and v.startswith("x")
+
+    base = "SELECT g, COUNT(*), COUNT(DISTINCT n), MAX(h), AVG(n) FROM q.agg"
+    full = c.rows(base + " GROUP BY g")
+    # Each condition with what it means for one row [g, count, count distinct, max(h), avg(n)]: true, or not.
+    conds = [("COUNT(*) > 20", lambda r: r[1] > 20),
+             ("COUNT(DISTINCT n) >= 8 OR g IS NULL", lambda r: r[2] >= 8 or r[0] is None),
+             ("MAX(h) = 'y'", lambda r: r[3] == "y"),
+             ("MAX(h) LIKE 'x%' AND NOT COUNT(*) IN (1, 2, 3)", lambda r: like_x(r[3]) and r[1] not in (1, 2, 3)),
+             ("AVG(n) > 1", lambda r: num(r[4]) and r[4] > 1),
+             ("NOT AVG(n) > 1", lambda r: num(r[4]) and not r[4] > 1),
+             ("AVG(n) IS NULL OR AVG(n) < 0", lambda r: r[4] is None or r[4] < 0),
+             ("g IN (1, 'a') OR COUNT(*) < 10", lambda r: compare(r[0], "=", 1) is True or compare(r[0], "=", "a") is True
+              or r[1] < 10),
+             ("g != 'b'", lambda r: compare(r[0], "!=", "b") is True),
+             ("NOT (g = 'b' OR MAX(h) = 'q')", lambda r: compare(r[0], "=", "b") is False and compare(r[3], "=", "q") is False)]
+    mism = []
+    for cond, keep in conds:
+        want = [r for r in full if keep(r)]
+        got = c.rows(f"{base} GROUP BY g HAVING {cond}")
+        if got != want:
+            mism.append((cond, want[:3], got[:3]))
+        got = c.rows(f"SELECT g FROM q.agg GROUP BY g HAVING {cond}")
+        if got != [r[:1] for r in want]:
+            mism.append(("not listed: " + cond, want[:3], got[:3]))
+        got = c.rows(f"{base} GROUP BY g HAVING {cond} ORDER BY count(*) DESC, g LIMIT 3")
+        ordered = sorted(want, key=functools.cmp_to_key(lambda a, b: -sort_key_cmp(a[1], b[1]) or sort_key_cmp(a[0], b[0])))
+        if got != ordered[:3]:
+            mism.append(("ordered: " + cond, ordered[:3], got[:3]))
+    check(f"HAVING keeps the groups its condition is true for, {len(conds) * 3} statements, also with aggregates it "
+          "does not list and before ORDER BY and LIMIT", not mism, repr(mism[:2]))
+    total = c.count("q.agg")
+    expect("HAVING without GROUP BY: one group", [[total]], c.rows(f"SELECT COUNT(*) FROM q.agg HAVING COUNT(*) = {total}"))
+    expect("which it may drop", [], c.rows("SELECT COUNT(*) FROM q.agg HAVING COUNT(*) > 1000000"))
+    expect("and over no rows it is still one group", [[0, None]],
+           c.rows("SELECT COUNT(*), MAX(n) FROM q.agg WHERE g = 'none' HAVING COUNT(*) = 0"))
+
+
 def aggregates(c, rng):
     section("aggregates and GROUP BY against a model")
     c.ok("CREATE TABLE IF NOT EXISTS q.agg")
@@ -748,10 +884,20 @@ def aggregates(c, rng):
         v = rows[r][col] if col != "_id" else r
         return None if v is MISSING else v
 
-    fns = ["count(*)", "count", "sum", "min", "max", "avg"]
-    specs = [([], ["count(*)", "count", "sum", "min", "max", "avg"], None), (["g"], fns, None), (["h", "g"], fns, None),
-             (["g"], ["count(*)"], ("count(*)", True)), (["g"], ["sum", "count(*)"], ("sum", False)),
-             (["h"], ["max", "min"], ("h", True)), (["n"], ["count(*)"], None), (["g", "h"], [], None)]
+    def agg_text(f):
+        return "COUNT(*)" if f == "count(*)" else "COUNT(DISTINCT n)" if f == "countd" else f"{f.upper()}(n)"
+
+    def agg_label(f):
+        return "count" if f == "count(*)" else "count(distinct n)" if f == "countd" else f"{f}(n)"
+
+    fns = ["count(*)", "count", "countd", "sum", "min", "max", "avg"]
+    # (GROUP BY, aggregates, ORDER BY keys as (key, descending)). Those without aggregates also run as DISTINCT.
+    specs = [([], fns, None), (["g"], fns, None), (["h", "g"], fns, None),
+             (["g"], ["count(*)"], [("count(*)", True)]), (["g"], ["sum", "count(*)"], [("sum", False)]),
+             (["h"], ["max", "min"], [("h", True)]), (["n"], ["count(*)"], None), (["g", "h"], [], None),
+             (["g", "h"], ["count(*)", "countd"], [("countd", True), ("h", False), ("count(*)", True)]),
+             (["h", "g"], ["max"], [("max", False), ("g", True)]), (["n"], [], [("n", True)]),
+             (["h", "g"], [], [("g", True), ("h", False)]), (["g", "_id"], [], [("_id", True)])]
     for indexed in (False, True):
         if indexed:
             c.ok("CREATE INDEX ON q.agg (g)")
@@ -759,17 +905,18 @@ def aggregates(c, rng):
         for where, keep in [(None, lambda r: True), ("g IN (1, 'a', NULL, TRUE)", lambda r: compare(val(r, "g"), "=", 1)
                                                       or compare(val(r, "g"), "=", "a") or val(r, "g") is True),
                             ("g LIKE 'a%'", lambda r: isinstance(val(r, "g"), str) and val(r, "g").startswith("a"))]:
-            mism = []
+            mism, distincts = [], 0
             for by, aggs, order in specs:
-                items = [b for b in by] + [("COUNT(*)" if f == "count(*)" else f"{f.upper()}(n)") for f in aggs]
-                labels = by + ["count" if f == "count(*)" else f"{f}(n)" for f in aggs]
+                items = [b for b in by] + [agg_text(f) for f in aggs]
+                labels = by + [agg_label(f) for f in aggs]
                 q = f"SELECT {', '.join(items)} FROM q.agg" + (f" WHERE {where}" if where else "")
                 if by:
                     q += " GROUP BY " + ", ".join(by)
+                tail = ""
                 if order:
-                    key = order[0]
-                    q += " ORDER BY " + (key if key in by else "COUNT(*)" if key == "count(*)" else f"{key.upper()}(n)")
-                    q += " DESC" if order[1] else ""
+                    tail = " ORDER BY " + ", ".join((k if k in by else agg_text(k)) + (" DESC" if d else "")
+                                                    for k, d in order)
+                q += tail
                 groups = {}
                 for r in ordered:
                     if not keep(r):
@@ -793,19 +940,29 @@ def aggregates(c, rng):
                         res[f] = v
                     out.append((gv, res))
                 if order:
-                    key = order[0]
-                    out.sort(key=functools.cmp_to_key(lambda a, b: sort_key_cmp(
-                        a[0][by.index(key)] if key in by else a[1][key], b[0][by.index(key)] if key in by else b[1][key])),
-                        reverse=order[1])
+                    def by_order(a, b):
+                        for k, d in order:
+                            x = sort_key_cmp(a[0][by.index(k)] if k in by else a[1][k],
+                                             b[0][by.index(k)] if k in by else b[1][k])
+                            if x:
+                                return -x if d else x
+                        return 0
+                    out.sort(key=functools.cmp_to_key(by_order))  # stable: ties keep the GROUP BY order
                 want = [gv + [res[f] for f in aggs] for gv, res in out]
-                s, j, data = c.q(q)
-                if error:
-                    if s != 400 or error not in (j or {}).get("error", ""):
-                        mism.append((q, error, s, short(data)))
-                elif s != 200 or j["columns"] != labels or j["rows"] != want:
-                    mism.append((q, want[:3], s, short(data)))
-            check(f"aggregates and GROUP BY{' WHERE ' + where if where else ''}, {tag}: {len(specs)} statements "
-                  "match the model", not mism, repr(mism[:2]))
+                runs = [q]
+                if by and not aggs:
+                    runs.append(f"SELECT DISTINCT {', '.join(by)} FROM q.agg" + (f" WHERE {where}" if where else "") + tail)
+                    distincts += 1
+                for q in runs:
+                    s, j, data = c.q(q)
+                    if error:
+                        if s != 400 or error not in (j or {}).get("error", ""):
+                            mism.append((q, error, s, short(data)))
+                    elif s != 200 or j["columns"] != labels or j["rows"] != want:
+                        mism.append((q, want[:3], s, short(data)))
+            check(f"aggregates, GROUP BY and DISTINCT{' WHERE ' + where if where else ''}, {tag}: "
+                  f"{len(specs) + distincts} statements match the model", not mism, repr(mism[:2]))
+    having_checks(c)
     c.ok("INSERT INTO q.agg (_id, g, n) VALUES ('zz1', 'over', 9223372036854775807), ('zz2', 'over', 1)")
     refused("a SUM of integers that leaves 64 bits", c, "SELECT SUM(n) FROM q.agg WHERE g = 'over'",
             "SUM overflows a 64-bit integer")
@@ -824,6 +981,18 @@ def aggregates(c, rng):
     refused("100,001 groups are refused", c, "SELECT _id, COUNT(*) FROM q.groups GROUP BY _id",
             "GROUP BY would make more than 100,000 groups")
     accepted("100,000 are not", c, "SELECT COUNT(*) FROM q.groups WHERE _id < '100000' GROUP BY _id LIMIT 1")
+    refused("the cap counts groups before HAVING", c, "SELECT _id FROM q.groups GROUP BY _id HAVING _id = '000001'",
+            "GROUP BY would make more than 100,000 groups")
+    refused("SELECT DISTINCT of 100,001 values is refused", c, "SELECT DISTINCT _id FROM q.groups",
+            "SELECT DISTINCT would hold more than 100,000 rows")
+    j = c.ok("SELECT DISTINCT _id FROM q.groups WHERE _id < '100000' ORDER BY _id DESC LIMIT 2")
+    expect("100,000 are not", [["099999"], ["099998"]], j["rows"])
+    refused("COUNT(DISTINCT) of 100,001 values is refused", c, "SELECT COUNT(DISTINCT _id) FROM q.groups",
+            "COUNT(DISTINCT) would hold more than 100,000 values")
+    expect("COUNT(DISTINCT) of 100,000 values is not", [[100000]],
+           c.rows("SELECT COUNT(DISTINCT _id) FROM q.groups WHERE _id < '100000'"))
+    j = c.ok("SELECT DISTINCT n FROM q.big")
+    expect("10,001 distinct values: 10,000 returned, truncated", (10000, True), (j["count"], j["truncated"]))
     expect("COUNT(*) of the whole table is not capped", 100001, c.count("q.groups"))
     pages, seen, last = 0, [], None
     while True:

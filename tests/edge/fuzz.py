@@ -2,7 +2,8 @@
 
 Every answer must be 200 or a 400 with a message (never 500, never no answer), a parse error's position must
 lie inside the text, a valid statement must never get a parse error, and the node must keep answering.
-Valid SELECTs are also run as "WHERE (e) OR (e)", which never uses an index, and must give the same rows.
+Valid SELECTs are also run as "WHERE (e) OR (e)", which never uses an index, and with "HAVING (h) OR (h)",
+and must give the same rows; a valid SELECT DISTINCT must give the rows of its GROUP BY form.
 
     FUZZ_SEED=123 FUZZ_N=5000 python3 edge.py fuzz HOST       (the seed is printed so a failure can be replayed)
 """
@@ -19,7 +20,10 @@ KEYWORDS = ["AND", "ASC", "BY", "COUNT", "CREATE", "DATABASE", "DATABASES", "DEL
             "TABLE", "TABLES", "TRUE", "UPDATE", "VALUES", "WHERE"]
 SYMBOLS = ["(", ")", ",", ".", ";", "*", "=", "!=", "<>", "<", "<=", ">", ">="]
 CMP = ["=", "!=", "<>", "<", "<=", ">", ">="]
-COLS = ["a", "b", "v", "_id", "on", "index", "conflicts", "x" * 63]
+COLS = ["a", "b", "v", "_id", "on", "index", "conflicts", "x" * 63, "distinct", "having"]
+# Columns named like the words that are keywords only where the grammar puts them stay lowercase, so that the
+# checks below can find the clause keywords DISTINCT and HAVING, which are always written in capitals here.
+LOWER = ("distinct", "having")
 TABLES = [("f", "t"), ("f", "u"), ("f", "on"), ("f2", "x"), ("f", "nosuch"), ("nodb", "t")]
 # Values a statement may compare or store. Strings include quotes, comment markers and non-ASCII text.
 VALUES = ["NULL", "TRUE", "FALSE", "0", "-0", "1", "-1", "2", "1.0", "-0.0", "0.5", "1e300", "-2.5E-7",
@@ -36,7 +40,7 @@ JUNK = KEYWORDS + SYMBOLS + VALUES + [
     "HAVING", "DISTINCT", "OFFSET", "ILIKE", "ESCAPE"]
 SEMANTIC = ("does not exist", "already exists", "already has an index", "has no index", "_id must be",
             "_id cannot be changed", "_id needs no index", "over the maximum", "nested more than", "overflows a",
-            "would make more than")
+            "would make more than", "would hold more than")
 AGGREGATES = ["COUNT", "SUM", "MIN", "MAX", "AVG"]
 # Pieces of LIKE patterns: wildcards, the three escapes, and characters the stored values hold.
 LIKE_PIECES = ["%", "_", "\\%", "\\_", "\\\\", "a", "A", "b", "1", "z", "''", " ", chr(0xE9), chr(0x1F600)]
@@ -50,69 +54,97 @@ class Gen:
         db, t = self.r.choice(TABLES[:4]) if self.r.random() < 0.9 else self.r.choice(TABLES)
         return [db, ".", t]
 
+    def case(self, n):
+        return n.upper() if self.r.random() < 0.1 and n not in LOWER else n
+
     def name(self):
-        n = self.r.choice(COLS)
-        return n.upper() if self.r.random() < 0.1 else n
+        return self.case(self.r.choice(COLS))
 
     def value(self):
         return self.r.choice(VALUES)
 
-    def expr(self, depth=0, budget=None):
-        """A condition; `depth` counts parentheses and NOTs, which may reach 64."""
+    def expr(self, depth=0, left=None):
+        """A condition; `depth` counts parentheses and NOTs, which may reach 64. `left` gives the tokens of
+        each left side (a column, or in HAVING a GROUP BY column or an aggregate)."""
         r = self.r
         k = r.random()
         if depth < 64 and k < 0.12:
-            return ["NOT"] + self.expr(depth + 1)
+            return ["NOT"] + self.expr(depth + 1, left)
         if depth < 64 and k < 0.24:
-            return ["("] + self.expr(depth + 1) + [")"]
+            return ["("] + self.expr(depth + 1, left) + [")"]
         if k < 0.36:
-            parts = [self.expr(depth) for _ in range(r.randint(2, 4))]
+            parts = [self.expr(depth, left) for _ in range(r.randint(2, 4))]
             out = parts[0]
             for p in parts[1:]:
                 out = out + [r.choice(["AND", "OR"])] + p
             return out
-        col = self.name()
+        col = left() if left else [self.name()]
         if k < 0.46:
-            return [col, "IS"] + (["NOT"] if r.random() < 0.5 else []) + ["NULL"]
+            return col + ["IS"] + (["NOT"] if r.random() < 0.5 else []) + ["NULL"]
         neg = ["NOT"] if r.random() < 0.3 else []
         if k < 0.56:
             vals = [self.value() for _ in range(r.randint(1, 5))]
-            return [col] + neg + ["IN", "("] + sum(([v, ","] for v in vals), [])[:-1] + [")"]
+            return col + neg + ["IN", "("] + sum(([v, ","] for v in vals), [])[:-1] + [")"]
         if k < 0.66:
-            return [col] + neg + ["LIKE", self.pattern()]
-        return [col, r.choice(CMP), self.value()]
+            return col + neg + ["LIKE", self.pattern()]
+        return col + [r.choice(CMP), self.value()]
+
+    def having(self, by, aggs):
+        """A HAVING condition on the GROUP BY columns `by` and aggregates: those listed, and one that is not."""
+        lefts = [[self.case(b)] for b in by] + aggs + [self.item(self.name())]
+        return self.expr(left=lambda: self.r.choice(lefts))
+
+    def order(self, keys):
+        """ORDER BY's keys: 1 to 3 of `keys` (each a token list), none twice, each maybe with ASC or DESC."""
+        uniq = {}
+        for k in keys:
+            uniq.setdefault(" ".join(k).lower(), k)  # COUNT(*) and count(*), or a and A, are one key
+        chosen = self.r.sample(list(uniq.values()), self.r.randint(1, min(3, len(uniq))))
+        out = []
+        for i, k in enumerate(chosen):
+            out += ([","] if i else []) + k + ([self.r.choice(["ASC", "DESC"])] if self.r.random() < 0.6 else [])
+        return out
 
     def pattern(self):
         """A LIKE pattern that follows the rules, as a string literal."""
         return "'" + "".join(self.r.choice(LIKE_PIECES) for _ in range(self.r.randint(0, 5))) + "'"
 
     def item(self, column):
-        """An aggregate: COUNT(*), or one of COUNT, SUM, MIN, MAX, AVG of a column; any case."""
+        """An aggregate: COUNT(*), COUNT(DISTINCT column), or one of COUNT, SUM, MIN, MAX, AVG of a column; any case."""
         fn = self.r.choice(AGGREGATES)
         fn = fn.lower() if self.r.random() < 0.2 else fn
-        arg = "*" if fn.upper() == "COUNT" and self.r.random() < 0.4 else column
-        return [fn, "(", arg, ")"]
+        if fn.upper() == "COUNT":
+            k = self.r.random()
+            if k < 0.4:
+                return [fn, "(", "*", ")"]
+            if k < 0.6:
+                return [fn, "(", "DISTINCT", column, ")"]
+        return [fn, "(", column, ")"]
 
     def select_list(self):
-        """Tokens of a SELECT's list and what follows FROM's table, following every parse rule."""
+        """Tokens of a SELECT's list and what follows FROM's table, following every parse rule: None for a
+        plain list, [] for aggregates only, ("distinct", columns) or (GROUP BY tokens, columns, aggregates)."""
         r = self.r
         k = r.random()
-        if k < 0.25:
+        if k < 0.22:
             return ["*"], None
-        if k < 0.35:
+        if k < 0.32:
             return ["COUNT", "(", "*", ")"], None
-        if k < 0.6:
+        if k < 0.52:
             cols = [self.name() for _ in range(r.randint(1, 3))]
             return sum(([c, ","] for c in cols), [])[:-1], None
+        if k < 0.62:
+            cols = r.sample(COLS, r.randint(1, 3))
+            return ["DISTINCT"] + sum(([self.case(c), ","] for c in cols), [])[:-1], ("distinct", cols)
         if k < 0.75:
             items = [self.item(self.name()) for _ in range(r.randint(1, 3))]
             return sum((i + [","] for i in items), [])[:-1], []
-        by = r.sample(["a", "b", "v", "_id", "on", "index", "conflicts", "x" * 63], r.randint(1, 3))
-        items = [[c] for c in by if r.random() < 0.6] + [self.item(self.name()) for _ in range(r.randint(0, 3))]
+        by = r.sample(COLS, r.randint(1, 3))
+        items = [[self.case(c)] for c in by if r.random() < 0.6] + [self.item(self.name()) for _ in range(r.randint(0, 3))]
         r.shuffle(items)
         if not items:
             items = [["COUNT", "(", "*", ")"]]
-        group = ["GROUP", "BY"] + sum(([c.upper() if r.random() < 0.1 else c, ","] for c in by), [])[:-1]
+        group = ["GROUP", "BY"] + sum(([self.case(c), ","] for c in by), [])[:-1]
         return sum((i + [","] for i in items), [])[:-1], (group, by, [i for i in items if len(i) > 1])
 
     def deep(self):
@@ -138,18 +170,28 @@ class Gen:
         if k < 0.30:
             items, grouping = self.select_list()
             toks = ["SELECT"] + items + ["FROM"] + self.table() + self.where()
+            kind = "select"
             if grouping == [] or (grouping is None and items[:1] == ["COUNT"]):
-                return toks, "select"  # aggregates without GROUP BY: one row, no ORDER BY or LIMIT
-            order = [self.name()]
-            if grouping is not None:
+                # Aggregates without GROUP BY: one row (or none after HAVING), no ORDER BY or LIMIT.
+                if r.random() < 0.3:
+                    aggs = [["COUNT", "(", "*", ")"]] if grouping is None else self.items_of(items)
+                    toks += ["HAVING"] + self.having([], aggs)
+                return toks, kind
+            keys = [[self.case(c)] for c in r.sample(COLS, 3)]
+            if grouping is not None and grouping[0] == "distinct":
+                kind = "distinct"
+                keys = [[self.case(c)] for c in grouping[1]]
+            elif grouping is not None:
                 group, by, aggs = grouping
                 toks += group
-                order = r.choice([[r.choice(by)]] + aggs)
+                if r.random() < 0.4:
+                    toks += ["HAVING"] + self.having(by, aggs)
+                keys = [[self.case(b)] for b in by] + aggs
             if r.random() < 0.4:
-                toks += ["ORDER", "BY"] + order + ([r.choice(["ASC", "DESC"])] if r.random() < 0.6 else [])
+                toks += ["ORDER", "BY"] + self.order(keys)
             if r.random() < 0.4:
                 toks += ["LIMIT", str(r.choice([0, 1, 2, 5, 100, 10000]))]
-            return toks, "select"
+            return toks, kind
         if k < 0.45:
             cols = r.sample(["a", "b", "v", "on", "_id"], r.randint(1, 3))
             n = r.randint(1, 4)
@@ -185,6 +227,19 @@ class Gen:
         else:
             toks = [op, "TABLE"] + (self._ifx(op)) + ["f2", ".", r.choice(["x", "y"])]
         return toks, "ddl"
+
+    @staticmethod
+    def items_of(toks):
+        """The items of a select list written as tokens, split at the commas outside parentheses."""
+        out, cur, depth = [], [], 0
+        for t in toks:
+            if t == "," and depth == 0:
+                out.append(cur)
+                cur = []
+                continue
+            depth += (t == "(") - (t == ")")
+            cur.append(t)
+        return out + [cur]
 
     def _ifx(self, op):
         if self.r.random() < 0.5:
@@ -250,6 +305,29 @@ def answer_problem(query, s, j, data, valid):
     return None
 
 
+CLAUSES = ("GROUP", "HAVING", "ORDER", "LIMIT")
+
+
+def metamorphic(toks, kind):
+    """Statements that must give exactly the rows and columns of the valid SELECT `toks`."""
+    out = []
+    # The same rows (or groups and aggregates) without the index: (e) OR (e) never uses one. And (h) OR (h)
+    # in HAVING keeps the same groups.
+    for clause in ("WHERE", "HAVING"):
+        if clause in toks:
+            w = toks.index(clause)
+            end = next((k for k in range(w + 1, len(toks)) if toks[k] in CLAUSES), len(toks))
+            cond = toks[w + 1:end]
+            if cond.count("(") + cond.count("NOT") < 60:
+                out.append(toks[:w + 1] + ["("] + cond + [")", "OR", "("] + cond + [")"] + toks[end:])
+    # SELECT DISTINCT a, b is SELECT a, b ... GROUP BY a, b.
+    if kind == "distinct":
+        f = toks.index("FROM")
+        end = next((k for k in range(f + 1, len(toks)) if toks[k] in ("ORDER", "LIMIT")), len(toks))
+        out.append(toks[:1] + toks[2:end] + ["GROUP", "BY"] + toks[2:f] + toks[end:])
+    return out
+
+
 def setup(c):
     c.ok("CREATE DATABASE IF NOT EXISTS f")
     for t in ("t", "u", "on"):
@@ -305,18 +383,12 @@ def run(host, n=None, seed=None):
         if not valid and s == 200 and toks[:1] == ["DROP"] and (j or {}).get("affected"):
             dropped.append((i, query))
             setup(c)
-        # The same rows (or groups and aggregates) without the index: (e) OR (e) never uses one.
-        if valid and s == 200 and kind == "select" and "WHERE" in toks:
-            w = toks.index("WHERE")
-            end = next((k for k in range(w + 1, len(toks)) if toks[k] in ("GROUP", "ORDER", "LIMIT")), len(toks))
-            cond = toks[w + 1:end]
-            depth = cond.count("(") + cond.count("NOT")
-            if depth < 60:
-                again = toks[:w + 1] + ["("] + cond + [")", "OR", "("] + cond + [")"] + toks[end:]
+        if valid and s == 200 and kind in ("select", "distinct"):
+            for again in metamorphic(toks, kind):
                 s2, j2, d2 = c.q(" ".join(again))
                 counts["metamorphic"] += 1
                 if s2 != 200 or j2.get("rows") != j.get("rows") or j2.get("columns") != j.get("columns"):
-                    meta_problems.append((i, query, f"{s2} {short(d2)} vs {short(data)}"))
+                    meta_problems.append((i, query, f"{' '.join(again)!r:.200}: {s2} {short(d2)} vs {short(data)}"))
         if i % 250 == 249:
             st = once(host, "GET", "/health", auth=False).status
             if st != 200:
@@ -335,8 +407,8 @@ def run(host, n=None, seed=None):
           f"{len(problems)} bad answers, first: {problems[0][3] if problems else ''}")
     for i, query, p in meta_problems[:5]:
         print(f"  #{i} {query!r:.300}: {p}", flush=True)
-    check(f"(e) OR (e) gives the same rows as e, {counts['metamorphic']} SELECTs (seed {seed})", not meta_problems,
-          f"{len(meta_problems)} differ")
+    check(f"(e) OR (e) in WHERE and HAVING, and DISTINCT as GROUP BY, give the same rows, {counts['metamorphic']} "
+          f"statements (seed {seed})", not meta_problems, f"{len(meta_problems)} differ")
     check("valid statements were mostly accepted", counts["valid-200"] > counts["valid-400"], repr(counts))
     expect("the node answers afterwards", 200, once(host, "GET", "/health", auth=False).status)
     # The writes left every table in a state where index lookups and scans agree, before and after the

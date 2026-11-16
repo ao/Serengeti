@@ -28,11 +28,12 @@ insert      = "INSERT" "INTO" table "(" name { "," name } ")"
               "VALUES" tuple { "," tuple } ;
 tuple       = "(" value { "," value } ")" ;
 
-select      = "SELECT" ( "*" | item { "," item } )
-              "FROM" table [ "WHERE" expr ] [ "GROUP" "BY" name { "," name } ]
-              [ "ORDER" "BY" item [ "ASC" | "DESC" ] ] [ "LIMIT" integer ] ;
+select      = "SELECT" [ "DISTINCT" ] ( "*" | item { "," item } )
+              "FROM" table [ "WHERE" expr ] [ "GROUP" "BY" name { "," name } ] [ "HAVING" expr ]
+              [ "ORDER" "BY" key { "," key } ] [ "LIMIT" integer ] ;
 item        = name | aggregate ;
-aggregate   = "COUNT" "(" ( "*" | name ) ")"
+key         = item [ "ASC" | "DESC" ] ;
+aggregate   = "COUNT" "(" ( "*" | [ "DISTINCT" ] name ) ")"
             | ( "SUM" | "MIN" | "MAX" | "AVG" ) "(" name ")" ;
 update      = "UPDATE" table "SET" name "=" value { "," name "=" value } [ "WHERE" expr ] ;
 delete      = "DELETE" "FROM" table [ "WHERE" expr ] ;
@@ -41,9 +42,11 @@ expr        = and { "OR" and } ;
 and         = not { "AND" not } ;
 not         = "NOT" not | primary ;
 primary     = "(" expr ")"
-            | name ( cmp value | "IS" [ "NOT" ] "NULL"
-                   | [ "NOT" ] "IN" "(" value { "," value } ")"
-                   | [ "NOT" ] "LIKE" string ) ;
+            | operand ( cmp value | "IS" [ "NOT" ] "NULL"
+                      | [ "NOT" ] "IN" "(" value { "," value } ")"
+                      | [ "NOT" ] "LIKE" string ) ;
+operand     = name                                   (in WHERE)
+            | name | aggregate                       (in HAVING) ;
 cmp         = "=" | "!=" | "<>" | "<" | "<=" | ">" | ">=" ;
 
 table       = name "." name ;
@@ -56,13 +59,18 @@ integer     = digits ;
 
 The keywords are: AND, ASC, BY, COUNT, CREATE, DATABASE, DATABASES, DELETE, DESC, DROP, EXISTS,
 FALSE, FROM, IF, IN, INSERT, INTO, IS, LIMIT, NOT, NULL, OR, ORDER, SELECT, SET, SHOW, TABLE, TABLES,
-TRUE, UPDATE, VALUES, WHERE. They cannot be used as names. AVG, CONFLICTS, GROUP, INDEX, INDEXES,
-LIKE, MAX, MIN, ON and SUM are not reserved: they have their meaning only where the grammar puts them,
-so `SELECT sum, group FROM shop.items WHERE like = 1` reads three columns, and `sum(sum)` adds up a
-column called `sum`.
+TRUE, UPDATE, VALUES, WHERE. They cannot be used as names. AVG, CONFLICTS, DISTINCT, GROUP, HAVING,
+INDEX, INDEXES, LIKE, MAX, MIN, ON and SUM are not reserved: they have their meaning only where the
+grammar puts them, so `SELECT sum, group FROM shop.items WHERE like = 1` reads three columns, and
+`sum(sum)` adds up a column called `sum`. DISTINCT is the keyword right after SELECT unless a comma or
+FROM follows, and right after `COUNT(` unless `)` follows: `SELECT distinct FROM t` reads a column called
+distinct, `SELECT DISTINCT distinct FROM t` its distinct values, `COUNT(distinct)` counts its values and
+`COUNT(DISTINCT distinct)` its distinct values. HAVING is the keyword only after the table, the WHERE
+condition or the GROUP BY list.
 
 A condition compares a column with a literal value, a list of them (IN) or a pattern (LIKE); the left
-side is always a column. `NOT` binds tighter than `AND`, which binds tighter than `OR`.
+side is always a column, and in HAVING may also be an aggregate. `NOT` binds tighter than `AND`, which
+binds tighter than `OR`.
 
 Further parse rules:
 
@@ -70,14 +78,20 @@ Further parse rules:
 - An UPDATE sets each column once.
 - An IN list has 1 to 1,000 values.
 - In a LIKE pattern, `\` comes only before `%`, `_` or `\`.
-- Only COUNT takes `*`.
+- Only COUNT takes `*` or DISTINCT.
 - Without GROUP BY, a select list with an aggregate has only aggregates, and cannot have ORDER BY or
-  LIMIT: it returns one row.
-- With GROUP BY, each column of the select list is a GROUP BY column, and ORDER BY names a GROUP BY
-  column or an aggregate of the select list written the same way (`ORDER BY count(*) DESC`; keywords
-  and names are not case-sensitive there either). A GROUP BY lists each column once. `SELECT *` cannot
-  have GROUP BY.
+  LIMIT: it returns one row (or none, after HAVING).
+- With GROUP BY, each column of the select list is a GROUP BY column, and each ORDER BY key names a
+  GROUP BY column or an aggregate of the select list written the same way (`ORDER BY count(*) DESC`;
+  keywords and names are not case-sensitive there either). A GROUP BY lists each column once. `SELECT *`
+  cannot have GROUP BY.
+- SELECT DISTINCT lists columns, each once: not `*` and no aggregates. It cannot have GROUP BY or HAVING,
+  and its ORDER BY keys name columns of its list.
+- HAVING needs GROUP BY, or a select list of aggregates only. Each left side in it is a GROUP BY column or
+  an aggregate; the aggregate need not be in the select list.
 - ORDER BY an aggregate needs GROUP BY.
+- An ORDER BY has 1 to 32 keys, none listed twice (`a` and `A`, or `count(*)` and `COUNT(*)`, are the
+  same key, whatever their directions).
 - The LIMIT is a non-negative whole number.
 
 ## Errors
@@ -165,9 +179,11 @@ definition replicates like a table's, and each node builds its own. Dropping the
 
 ## Ordering
 
-Without ORDER BY, rows come back in `_id` order. ORDER BY sorts on one column, in this order
-ascending: null (and missing), false, true, numbers, strings, then any other stored value. DESC
-reverses it. Rows with equal values are ordered by `_id`, ascending in both directions.
+Without ORDER BY, rows come back in `_id` order. ORDER BY sorts on its first key, rows equal on that by
+the second, and so on. Each key sorts in this order ascending: null (and missing), false, true, numbers,
+strings, then any other stored value; DESC reverses it for that key. Rows equal on every key are ordered
+by `_id`, ascending whatever the directions. So `ORDER BY kind, price DESC` lists the kinds in order, and
+within a kind the dearest first, and rows of the same kind and price by `_id`.
 
 ## Aggregates and GROUP BY
 
@@ -177,6 +193,8 @@ SELECT kind, COUNT(*), MAX(price) FROM shop.items GROUP BY kind ORDER BY count(*
 ```
 
 - `COUNT(*)` counts rows, and `COUNT(c)` the rows where c is not null (a missing c counts as null).
+  `COUNT(DISTINCT c)` counts the distinct values of c that are not null, equal as GROUP BY makes them
+  (below): 1 and 1.0 are one value, and so are equal objects and equal arrays.
 - `SUM(c)` and `AVG(c)` take the numbers of c and skip every other value: null, strings, booleans,
   objects and arrays. If the numbers are all integers, SUM is an integer, added exactly; if the total
   does not fit in 64 bits the statement fails with `SUM overflows a 64-bit integer` (400 over HTTP). Only
@@ -198,10 +216,48 @@ its own, and a missing column counts as null. Objects and arrays are one group w
 whatever the order of their keys.
 
 Groups come back ordered by the GROUP BY columns ascending, in the ORDER BY order, with objects and
-arrays (equal there) ordered by their JSON text with keys sorted. ORDER BY sorts on one GROUP BY column
-or one aggregate of the select list instead; groups with equal values keep their GROUP BY order, in
-both directions. LIMIT counts groups. A statement fails if the SUM or AVG of any group cannot be given;
+arrays (equal there) ordered by their JSON text with keys sorted. ORDER BY sorts on GROUP BY columns and
+aggregates of the select list instead; groups equal on every key keep their GROUP BY order, in any
+direction. LIMIT counts groups. A statement fails if the SUM or AVG of any group cannot be given;
 when several cannot, the first in GROUP BY order is named.
+
+## SELECT DISTINCT
+
+```
+SELECT DISTINCT kind, size FROM shop.items WHERE qty > 0 ORDER BY size DESC, kind;
+```
+
+`SELECT DISTINCT a, b FROM t WHERE ...` returns what `SELECT a, b FROM t WHERE ... GROUP BY a, b`
+returns: one row per distinct combination of the values, with GROUP BY's equality (1 and 1.0 are one
+value, shown as the row with the lowest `_id` has it; null and missing are one value; equal objects and
+arrays are one), in GROUP BY's order unless ORDER BY says otherwise, and with its caps. ORDER BY names
+columns of the list, and LIMIT counts rows.
+
+To read the distinct values of a column called distinct, write `SELECT DISTINCT distinct FROM t`.
+
+## HAVING
+
+```
+SELECT kind, COUNT(*) FROM shop.items GROUP BY kind HAVING COUNT(*) > 1 AND MAX(price) < 10;
+SELECT kind FROM shop.items GROUP BY kind HAVING SUM(qty) IS NULL OR kind LIKE 'b%';
+SELECT COUNT(*) FROM shop.items WHERE qty = 0 HAVING COUNT(*) > 100;
+```
+
+HAVING keeps the groups its condition is true for. The condition has the form of a WHERE condition
+(comparisons, IN, LIKE, IS [NOT] NULL, AND, OR, NOT and parentheses, with the same three-valued logic),
+except that the left side of each term is a GROUP BY column or an aggregate. An aggregate in HAVING need
+not be in the select list: it is computed and not returned. It compares as the select list would show it:
+COUNT as an integer, AVG as a double, SUM as an integer or a double, MIN and MAX as the value. So
+`HAVING AVG(qty) = 2` holds for an average of 2.0, and `HAVING SUM(qty) > 0` is unknown, and drops the
+group, when the group has no numbers and its SUM is null.
+
+Without GROUP BY, the select list has only aggregates and the whole input is one group, also when no row
+matches: `SELECT COUNT(*) FROM t WHERE x = 1 HAVING COUNT(*) = 0` returns one row, 0, when nothing
+matches, and no row otherwise.
+
+HAVING drops groups before ORDER BY and LIMIT. Every aggregate, of the select list and of HAVING, is
+computed for every group first, so one that cannot be given (a SUM beyond 64 bits) fails the statement
+even in a group that HAVING drops.
 
 ## Results
 
@@ -217,8 +273,8 @@ SELECT and SHOW return rows. Each row is an array with one value per column:
   first seen.
 - `SELECT COUNT(*)` returns one column `count` and one row.
 - In a select list with aggregates, a GROUP BY column keeps its name, `COUNT(*)` is `count`, and any
-  other aggregate is written in lowercase with its column: `count(qty)`, `sum(qty)`, `min(qty)`,
-  `max(qty)`, `avg(qty)`.
+  other aggregate is written in lowercase with its column: `count(qty)`, `count(distinct qty)`,
+  `sum(qty)`, `min(qty)`, `max(qty)`, `avg(qty)`. The columns of SELECT DISTINCT keep their names.
 
 ```
 {"type":"rows","columns":["kind","count","sum(qty)"],"rows":[["bolt",2,420],["nut",1,300]],"count":2,"truncated":false}
@@ -242,20 +298,28 @@ row, in insert order:
 ## Limits
 
 - A SELECT returns at most 10,000 rows (`Executor.DEFAULT_MAX_ROWS`; the cap is a constructor
-  argument), and with GROUP BY at most 10,000 groups. A LIMIT above the cap is an error. Without
-  LIMIT, if more rows or groups match, the first 10,000 are returned and `truncated` is true. COUNT(*)
-  is not capped.
+  argument), and with GROUP BY or DISTINCT at most 10,000 groups. A LIMIT above the cap is an error.
+  Without LIMIT, if more rows or groups match (after HAVING), the first 10,000 are returned and
+  `truncated` is true. COUNT(*) is not capped.
 - A GROUP BY holds at most 100,000 groups while it reads the rows (`Executor.DEFAULT_MAX_GROUPS`, also
   a constructor argument). A statement that would make more fails with `GROUP BY would make more than
-  100,000 groups` as soon as it gets there, LIMIT or not.
+  100,000 groups` as soon as it gets there, LIMIT or not, and HAVING does not change that: the groups are
+  counted before it drops any. SELECT DISTINCT has the same cap, and fails with `SELECT DISTINCT would
+  hold more than 100,000 rows`.
+- The COUNT(DISTINCT) aggregates of one statement hold at most 100,000 values in all, over every group
+  and every such aggregate (`Executor.DEFAULT_MAX_DISTINCT`, also a constructor argument). A statement
+  that would hold more fails with `COUNT(DISTINCT) would hold more than 100,000 values`.
+- A select list has at most 256 items (`Parser.MAX_SELECT_ITEMS`), a GROUP BY at most 32 columns
+  (`Parser.MAX_GROUP_BY`), an ORDER BY at most 32 keys (`Parser.MAX_ORDER_BY`), and a LIKE pattern at
+  most 1,000 characters (`Parser.MAX_LIKE_PATTERN`).
 - An IN list has at most 1,000 values.
 - A select list has at most 256 items, a GROUP BY at most 32 columns, and a LIKE pattern at most
   1,000 characters.
 - Parentheses and NOT may nest at most 64 levels deep in one condition (`Parser.MAX_DEPTH`). Long
   chains of AND or OR do not count towards this.
 - Names are at most 63 characters.
-- SELECT with ORDER BY sorts all matching rows in memory before applying the limit, except with
-  `ORDER BY _id` ascending, which is the order rows are read in (see below). A statement whose WHERE
+- SELECT with ORDER BY sorts all matching rows in memory before applying the limit, except when its
+  first key is `_id` ascending, which is the order rows are read in (see below). A statement whose WHERE
   has no term an index answers (see Indexes) scans the table.
 
 ## Reading a large table
@@ -296,6 +360,9 @@ SELECT * FROM shop.items WHERE price >= 2 AND name != 'Cake' ORDER BY price DESC
 SELECT COUNT(*) FROM shop.items WHERE price IS NULL;
 SELECT name FROM shop.items WHERE _id IN ('tea', 'cake') OR name LIKE 'J%';
 SELECT price, COUNT(*) FROM shop.items GROUP BY price ORDER BY count(*) DESC;
+SELECT DISTINCT price FROM shop.items ORDER BY price DESC;
+SELECT price, COUNT(DISTINCT name) FROM shop.items GROUP BY price HAVING COUNT(*) > 1;
+SELECT name, price FROM shop.items ORDER BY price DESC, name LIMIT 10;
 UPDATE shop.items SET price = 4, note = 'It''s back' WHERE _id = 'tea';
 DELETE FROM shop.items WHERE NOT (price < 3 OR price IS NULL);
 SHOW TABLES IN shop;

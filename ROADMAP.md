@@ -9,8 +9,9 @@ here has a date.
   (`SERENGETI_FSYNC`, default `always`); concurrent writes share fsyncs. Snapshots bound the log, and
   recovery drops an incomplete last record. A lock on the data directory keeps a second node off it.
 - Tables of JSON rows, and the query language in [docs/QUERY.md](docs/QUERY.md): CREATE and DROP for
-  databases, tables and single-column indexes, SHOW, INSERT, SELECT with WHERE (comparisons, IN, LIKE,
-  IS NULL), ORDER BY and LIMIT, COUNT, SUM, MIN, MAX and AVG with GROUP BY, UPDATE and DELETE.
+  databases, tables and single-column indexes, SHOW, INSERT, SELECT and SELECT DISTINCT with WHERE
+  (comparisons, IN, LIKE, IS NULL), ORDER BY on one or more keys and LIMIT, COUNT, COUNT(DISTINCT), SUM,
+  MIN, MAX and AVG with GROUP BY and HAVING, UPDATE and DELETE.
 - An HTTP API ([docs/API.md](docs/API.md)) in which every route except `GET /health` and `GET /ready`
   needs HTTP Basic credentials. Accounts have a role (metrics, read, write or admin) and replicate across the
   cluster. The first admin password comes from the environment, a file or a one-time setup token.
@@ -44,7 +45,7 @@ here has a date.
 ## Possible next steps
 
 Not committed to, and in no particular order: permissions per database; indexes on more than one column;
-DISTINCT and HAVING; clients published as packages; a change feed that survives a restart.
+clients published as packages; a change feed that survives a restart.
 
 ## Not planned
 

@@ -83,6 +83,21 @@ GitHub release notes and tags.
   use the ORDER BY order. At most 10,000 groups are returned and 100,000 held while a statement runs.
   `sum`, `min`, `max`, `avg`, `group` and `like` still work as names. See docs/QUERY.md, "Aggregates and
   GROUP BY".
+- `SELECT DISTINCT a, b`: the rows of `SELECT a, b ... GROUP BY a, b`, with the same equality, order and
+  caps (`SELECT DISTINCT would hold more than 100,000 rows`). It takes columns only, and ORDER BY names
+  columns of its list.
+- `COUNT(DISTINCT c)`: the distinct non-null values of c, equal as GROUP BY makes them, in a column
+  `count(distinct c)`. One statement holds at most 100,000 such values over all its groups, else 400
+  `COUNT(DISTINCT) would hold more than 100,000 values`.
+- HAVING, after GROUP BY or with a select list of aggregates only: WHERE's form, with a GROUP BY column or
+  an aggregate on each left side. The aggregate need not be in the select list. HAVING drops groups before
+  ORDER BY and LIMIT; the 100,000-group cap counts groups before it.
+- ORDER BY on up to 32 keys, each ASC or DESC. Rows equal on every key keep `_id` order, and groups their
+  GROUP BY order. With `_id` ascending as the first key, a SELECT still reads in `_id` order and stops
+  after its page.
+- `distinct` and `having` still work as names: `SELECT distinct FROM t` reads a column called distinct,
+  and `SELECT DISTINCT distinct FROM t` its distinct values. See docs/QUERY.md, "SELECT DISTINCT" and
+  "HAVING".
 - docs/QUERY.md, "Reading a large table": keyset paging with `WHERE _id > 'last' ORDER BY _id LIMIT n`.
 
 ### Fixed
