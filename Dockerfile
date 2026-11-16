@@ -17,7 +17,7 @@ RUN if [ -n "$VERSION" ]; then \
 FROM eclipse-temurin:21-jre
 RUN groupadd --system --gid 10001 serengeti \
  && useradd --system --uid 10001 --gid 10001 --home-dir /data --no-create-home serengeti \
- && mkdir /data && chown 10001:10001 /data && chmod 700 /data
+ && mkdir /data /backups && chown 10001:10001 /data /backups && chmod 700 /data /backups
 COPY --from=build /serengeti.jar /opt/serengeti/serengeti.jar
 COPY --chmod=755 docker/serengeti-certs docker/serengeti /usr/local/bin/
 USER 10001:10001

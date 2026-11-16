@@ -166,6 +166,14 @@
         {"refId": "B", "expr": "sum(rate(serengeti_login_limited_total{instance=~\"$instance\"}[$__rate_interval]))", "legendFormat": "limited"}
       ],
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "Age of the newest scheduled backup",
+      "description": "For nodes with backup_dir set; it should stay under backup_interval_minutes.",
+      "gridPos": {"x": 0, "y": 40, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "(time() - serengeti_backup_last_success_time_seconds{instance=~\"$instance\"}) and serengeti_backup_interval_seconds > 0", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
     }
   ]
 }

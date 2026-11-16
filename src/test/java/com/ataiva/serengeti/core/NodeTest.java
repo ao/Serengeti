@@ -307,6 +307,41 @@ class NodeTest {
     }
 
     @Test
+    void scheduledBackupsRestoreIntoANodeWithTheRows() throws Exception {
+        Path data = tmp.resolve("data");
+        Path backups = tmp.resolve("backups");
+        Path file;
+        try (Node n = Node.start(config(data, "SERENGETI_ADMIN_PASSWORD", PW, "SERENGETI_BACKUP_DIR", backups.toString(),
+                "SERENGETI_BACKUP_KEEP", "2"), Node.QUERIES)) {
+            assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+            assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, qty) VALUES ('a', 1), ('b', 2)").statusCode());
+            file = n.backupNowForTest().orElseThrow();
+            assertTrue(file.startsWith(backups), file.toString());
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, qty) VALUES ('c', 3)").statusCode());
+            String metrics = get(n, "/metrics", PW).body();
+            assertTrue(metrics.contains("\nserengeti_backup_interval_seconds 3600\n"), metrics);
+            assertFalse(metrics.contains("\nserengeti_backup_last_success_time_seconds 0\n"), "a backup was written");
+        }
+        Path restored = tmp.resolve("restored");
+        com.ataiva.serengeti.core.server.Backup.restore(file, restored);
+        try (Node n = Node.start(config(restored, "SERENGETI_ADMIN_PASSWORD", PW), Node.QUERIES)) {
+            HttpResponse<String> r = query(n, "SELECT _id, qty FROM shop.items");
+            assertEquals(200, r.statusCode(), r.body());
+            assertEquals(java.util.List.of(java.util.List.of("a", 1L), java.util.List.of("b", 2L)),
+                    com.ataiva.serengeti.core.json.Json.parseObject(r.body()).get("rows"), "the rows of the backup's time");
+        }
+        // A backup directory that is a file stops the node with a clear error, and leaves the data unlocked.
+        Path notADir = Files.writeString(tmp.resolve("not-a-dir"), "x");
+        ConfigException e = assertThrows(ConfigException.class, () -> Node.start(config(data, "SERENGETI_BACKUP_DIR",
+                notADir.toString()), Node.NO_QUERIES));
+        assertTrue(e.getMessage().contains("backup_dir"), e.getMessage());
+        try (Node n = Node.start(config(data), Node.NO_QUERIES)) {
+            assertEquals(200, get(n, "/health", null).statusCode(), "the directory was not left locked");
+        }
+    }
+
+    @Test
     void aStaleSetupTokenIsRemovedWhenThePasswordComesFromTheEnvironment() throws Exception {
         Path data = tmp.resolve("data");
         try (Node n = Node.start(config(data), Node.NO_QUERIES)) {

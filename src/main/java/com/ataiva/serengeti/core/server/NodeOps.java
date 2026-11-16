@@ -67,15 +67,23 @@ public interface NodeOps {
      */
     record Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases, long conflicts,
             long dataBytes, long dataBudget, boolean memoryFull, long changesHeld, long changesBytes,
-            boolean diskFailed, Cluster cluster) {
+            boolean diskFailed, Cluster cluster, Backups backups) {
         public static final Gauges ZERO = new Gauges(0, 0, 0, 0, 0, 0, 0, false, 0, 0);
 
-        /** A node without peers, on a disk that has not failed. */
+        /** A node without peers or scheduled backups, on a disk that has not failed. */
         public Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases, long conflicts,
                 long dataBytes, long dataBudget, boolean memoryFull, long changesHeld, long changesBytes) {
             this(walBytes, walFsyncs, walFsyncNanos, databases, conflicts, dataBytes, dataBudget, memoryFull,
-                    changesHeld, changesBytes, false, Cluster.SINGLE);
+                    changesHeld, changesBytes, false, Cluster.SINGLE, Backups.OFF);
         }
+    }
+
+    /**
+     * Scheduled backups (backup_dir): the interval in seconds (0: off), Unix seconds of the newest backup
+     * (0: none yet), failed attempts since start, and the size of the last one this run wrote.
+     */
+    record Backups(long intervalSeconds, long lastSuccessSeconds, long failures, long lastBytes) {
+        public static final Backups OFF = new Backups(0, 0, 0, 0);
     }
 
     /**

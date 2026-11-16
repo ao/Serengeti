@@ -189,3 +189,35 @@ tests:
         exp_alerts:
           - exp_labels: {severity: info}
             exp_annotations: {summary: "The nodes have run different versions for 2 hours"}
+
+  - name: backups that stop, a node without them, and one that keeps up
+    interval: 1m
+    input_series:
+      - series: 'serengeti_backup_interval_seconds{job="serengeti", instance="n1:1985"}'
+        values: '3600x200'
+      - series: 'serengeti_backup_last_success_time_seconds{job="serengeti", instance="n1:1985"}'
+        values: '0x200'
+      - series: 'serengeti_backup_interval_seconds{job="serengeti", instance="n2:1985"}'
+        values: '0x200'
+      - series: 'serengeti_backup_last_success_time_seconds{job="serengeti", instance="n2:1985"}'
+        values: '0x200'
+      - series: 'serengeti_backup_interval_seconds{job="serengeti", instance="n3:1985"}'
+        values: '3600x200'
+      - series: 'serengeti_backup_last_success_time_seconds{job="serengeti", instance="n3:1985"}'
+        values: '0+60x200'
+      - series: 'serengeti_backup_failures_total{job="serengeti", instance="n3:1985"}'
+        values: '0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: SerengetiBackupLate
+        exp_alerts: []
+      - eval_time: 130m
+        alertname: SerengetiBackupLate
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n1:1985"}
+            exp_annotations: {summary: "n1:1985 has written no scheduled backup for twice its backup_interval_minutes"}
+      - eval_time: 3m
+        alertname: SerengetiBackupFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: serengeti, instance: "n3:1985"}
+            exp_annotations: {summary: "n3:1985 failed to write a scheduled backup in the last hour"}

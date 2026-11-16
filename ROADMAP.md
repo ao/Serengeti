@@ -26,7 +26,7 @@ here has a date.
   and listed by `SHOW CONFLICTS` until the next write to the row. Reads can ask for a majority.
   Node-to-node traffic needs a cluster key and uses TLS.
 - `GET /ready`, Prometheus metrics at `GET /metrics`, a request log, and backup and restore
-  (`GET /v1/backup` or `serengeti backup`, and `serengeti restore`).
+  (`GET /v1/backup`, `serengeti backup` or on a schedule into `backup_dir`, and `serengeti restore`).
 - `serengeti shell`, and clients for Python and JavaScript in [clients/](clients/).
 - Rolling upgrades from 2.0 and 2.1, and a rollback to either on the same data directory.
 - A console at `/`, a container image for linux/amd64 and linux/arm64, and examples for Docker Compose,

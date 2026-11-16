@@ -96,3 +96,17 @@ groups:
         labels: {severity: info}
         annotations:
           summary: "The nodes have run different versions for 2 hours"
+
+      - alert: SerengetiBackupLate
+        # Twice the interval: a backup that is due is written within a minute, so one missed is enough to say.
+        expr: serengeti_backup_interval_seconds > 0 and time() - serengeti_backup_last_success_time_seconds > 2 * serengeti_backup_interval_seconds
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} has written no scheduled backup for twice its backup_interval_minutes"
+
+      - alert: SerengetiBackupFailing
+        expr: increase(serengeti_backup_failures_total[1h]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.instance }} failed to write a scheduled backup in the last hour"

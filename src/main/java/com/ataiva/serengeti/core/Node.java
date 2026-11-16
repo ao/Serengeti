@@ -40,6 +40,8 @@ public final class Node implements AutoCloseable {
     private final Config config;
     private final String id;
     private final StorageEngine storage;
+    /** Scheduled backups into backup_dir; null when it is not set. */
+    private final ScheduledBackups backups;
     /** Refuses writes that add data once the data fills its share of the heap; null at memory_limit_percent 100. */
     private final MemoryGuard memory;
     private final Hlc clock;
@@ -137,6 +139,19 @@ public final class Node implements AutoCloseable {
                 Files.deleteIfExists(p);
             }
         }
+        if (config.backupDir != null) {
+            try {
+                this.backups = ScheduledBackups.open(config.backupDir, config.backupIntervalMinutes, config.backupKeep,
+                        storage::writeBackup, storage::failed, System::currentTimeMillis, true);
+            } catch (ConfigException e) {
+                storage.close();
+                throw e;
+            }
+            LOG.info("a backup every " + config.backupIntervalMinutes + " min into " + config.backupDir + ", the newest "
+                    + config.backupKeep + " kept");
+        } else {
+            this.backups = null;
+        }
         StorageEngine.OpenStats st = storage.openStats();
         LOG.info("storage opened: " + st.snapshotOps() + " snapshot ops, " + st.walBatches() + " log batches"
                 + (st.walDiscardedBytes() > 0 ? ", " + st.walDiscardedBytes() + " torn bytes discarded" : ""));
@@ -185,6 +200,9 @@ public final class Node implements AutoCloseable {
             this.api = HttpApi.start(config.bind, config.port, tls, new HttpApi.Deps(users, token, qs, this::status,
                     System::currentTimeMillis, cluster, operations()), config.httpThreads);
         } catch (IOException e) {
+            if (backups != null) {
+                backups.close();
+            }
             if (cluster != null) {
                 cluster.close();
             }
@@ -313,7 +331,9 @@ public final class Node implements AutoCloseable {
                                 cluster.caughtUp(), cluster.stale(), cluster.pulledOps());
                 return new NodeOps.Gauges(wal.bytes(), wal.fsyncs(), wal.fsyncNanos(), counts[0], counts[1],
                         counts[2], memory == null ? 0 : memory.budget(), memory != null && counts[2] >= memory.budget(),
-                        feed[0], feed[1], storage.failed(), c);
+                        feed[0], feed[1], storage.failed(), c, backups == null ? NodeOps.Backups.OFF
+                                : new NodeOps.Backups(backups.intervalSeconds(), backups.lastSuccessSeconds(),
+                                        backups.failures(), backups.lastBytes()));
             }
         };
     }
@@ -399,9 +419,17 @@ public final class Node implements AutoCloseable {
         if (maintenance != null) {
             maintenance.shutdownNow();
         }
+        if (backups != null) {
+            backups.close(); // before the storage: a backup being written stops and leaves no file
+        }
         if (cluster != null) {
             cluster.close();
         }
         storage.close();
+    }
+
+    /** Writes a scheduled backup now, for tests; empty when backup_dir is not set. */
+    Optional<Path> backupNowForTest() throws IOException {
+        return backups == null ? Optional.empty() : Optional.of(backups.runNow());
     }
 }

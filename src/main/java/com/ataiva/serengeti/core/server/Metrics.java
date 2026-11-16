@@ -100,6 +100,16 @@ final class Metrics {
         sample(b, "serengeti_cluster_stale", c.stale() ? 1 : 0);
         family(b, "serengeti_sync_ops_pulled_total", "counter", "Row versions this node pulled from its peers while syncing.");
         sample(b, "serengeti_sync_ops_pulled_total", c.syncOpsPulled());
+        NodeOps.Backups k = g.backups();
+        family(b, "serengeti_backup_interval_seconds", "gauge", "How often the node writes a backup into backup_dir; 0: never.");
+        sample(b, "serengeti_backup_interval_seconds", k.intervalSeconds());
+        family(b, "serengeti_backup_last_success_time_seconds", "gauge",
+                "Unix time of the newest backup in backup_dir; 0: none yet.");
+        sample(b, "serengeti_backup_last_success_time_seconds", k.lastSuccessSeconds());
+        family(b, "serengeti_backup_failures_total", "counter", "Scheduled backups that failed since the node started.");
+        sample(b, "serengeti_backup_failures_total", k.failures());
+        family(b, "serengeti_backup_last_bytes", "gauge", "Size of the last scheduled backup written since the node started.");
+        sample(b, "serengeti_backup_last_bytes", k.lastBytes());
         family(b, "serengeti_http_requests_total", "counter", "Requests answered, by route and status code.");
         requests.forEach((r, n) -> b.append("serengeti_http_requests_total{route=\"").append(escape(r.route()))
                 .append("\",code=\"").append(r.code()).append("\"} ").append(n).append('\n'));

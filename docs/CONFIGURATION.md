@@ -25,6 +25,9 @@ setting makes the node exit with status 2 and a one-line message.
 | `changes_buffer` | `10000` | How many recent changes the node keeps in memory for `GET /v1/changes` (see API.md, "Changes"); `0` turns the feed off. Each held change keeps its row's value alive, so a large buffer of large rows costs memory. |
 | `http_threads` | `64` | Threads that answer HTTP requests, 1 to 1024. A request holds one while it is read, run and answered, so a client that sends slowly holds one for up to 30 s; half of them at most wait on `GET /v1/changes`. |
 | `memory_limit_percent` | `60` | Writes that add data (INSERT, UPDATE, CREATE) are refused with 503 once the rows and index entries held are estimated to take this share of the maximum heap; deletes and drops are always taken and make room at once. `100` turns it off. Every database is held in memory, so this is the node's capacity. The image gives the heap 60% of the container's memory: a 512 MiB container holds an estimated 185 MiB of data with the default. |
+| `backup_dir` | none | Directory for scheduled backups, created if missing (mode 0700). Not the data directory or inside it. See [Scheduled backups](#scheduled-backups). The image has an empty `/backups` for a volume. |
+| `backup_interval_minutes` | `60` | Minutes between scheduled backups, 1 to 10080 (a week). |
+| `backup_keep` | `24` | How many scheduled backups to keep, 1 to 10000; the oldest beyond that are deleted. |
 | `cluster_plaintext` | none | `allow` lets a node with peers run without TLS, sending the cluster key and data in clear. For a private network only. |
 | `tls_truststore` | JDK CAs | PKCS#12 file with the CA certificates that peers' certificates must chain to. Needs its password below. |
 | `tls_keystore` | none | PKCS#12 file with this node's key and certificate chain. When set, the node serves HTTPS only (TLS 1.2 and 1.3) and there is no plaintext listener. Needs the keystore password below. |
@@ -88,8 +91,38 @@ are changed with `POST /v1/password` or `PUT /v1/users/NAME`.
 | `last-sync` | In a cluster: when this node last synced with a majority (Unix milliseconds), written at most once a minute. |
 | `lock` | Empty. The running node holds a lock on it, so a second node started on the same directory (in the same container, or another container on the same volume) stops with exit status 2. The operating system drops the lock when the node exits, also after a crash. |
 
-Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md#backup)). Copying the directory
+Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md#backup)), or let it write backups on a schedule (`backup_dir`, below). Copying the directory
 of a stopped node also works. A backup holds the data only: `accounts.json`, `users.json`, `node-id` and `setup-token` are not in it.
+
+## Scheduled backups
+
+With `backup_dir` set, the node writes a backup there every `backup_interval_minutes` and keeps the newest
+`backup_keep`:
+
+```sh
+docker run -d --name serengeti -p 127.0.0.1:1985:1985 -v serengeti-data:/data -v serengeti-backups:/backups \
+  -e SERENGETI_BACKUP_DIR=/backups -e SERENGETI_ADMIN_PASSWORD ataiva/serengeti
+```
+
+- Each backup is `serengeti-backup-YYYYMMDDTHHMMSSZ.jsonl` (UTC), mode 0600, in the format of `GET
+  /v1/backup`, so `serengeti restore` takes it. It is written to a hidden temporary file, forced to disk and
+  then renamed, so a file with that name is always whole; a node that stops while writing one leaves only
+  the temporary file, which the next start deletes.
+- The node checks once a minute whether the interval has passed since the newest backup in the directory,
+  also one an earlier run wrote. So a node that restarts more often than the interval still backs up, and
+  the first backup of a new directory comes about a minute after the start.
+- Only files with that name are deleted when more than `backup_keep` exist. Other files in the directory are
+  left alone.
+- A directory that cannot be made or written stops the node at start with exit status 2. A backup that fails
+  later (a full disk, say) is logged as a warning and counted in `serengeti_backup_failures_total`; the next
+  check tries again. A node whose disk failed writes none (see [Health](#health-readiness-and-logs)).
+- Writes wait while a backup is written, as they do for `GET /v1/backup`. Put the directory on a volume of its
+  own, and better on another disk than the data: each backup is a full copy, so the directory needs about
+  `backup_keep` times the size of one.
+- In a cluster, every node with `backup_dir` backs up what it holds. One node is enough when the cluster is
+  healthy; a node that was cut off backs up its own view.
+- `serengeti_backup_last_success_time_seconds` and the alert `SerengetiBackupLate` in
+  [examples/monitoring](../examples/monitoring/) tell when backups stop.
 
 ## Restore
 

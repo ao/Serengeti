@@ -29,7 +29,7 @@ trap cleanup EXIT
 echo "# the alert rules"
 out=$(docker run --rm -v "$PWD:/m:ro" -w /m --entrypoint promtool "$PROM_IMAGE" check rules alerts.yml 2>&1) && rc=0 || rc=$?
 expect "promtool accepts alerts.yml" 0 "$rc"
-contains "with every rule" "SUCCESS: 14 rules found" "$out"
+contains "with every rule" "SUCCESS: 16 rules found" "$out"
 out=$(docker run --rm -v "$PWD:/m:ro" -w /m --entrypoint promtool "$PROM_IMAGE" test rules alerts.test.yml 2>&1) && rc=0 || rc=$?
 expect "the rules pass their unit tests" 0 "$rc"
 [ "$rc" = 0 ] || echo "$out" | tail -30
@@ -89,7 +89,7 @@ expect "Prometheus scrapes all three nodes" 3 "$(printf %s "$targets" | grep -o 
 [ "$(printf %s "$targets" | grep -o '"health":"up"' | wc -l | tr -d ' ')" = 3 ] || printf '%s\n' "$targets" | head -c 2000
 contains "every node reports three reachable" '"value":[' "$(pq 'count(serengeti_cluster_reachable_nodes == 3) == 3')"
 expect "and is ready" 3 "$(pq 'sum(serengeti_ready)' | sed -n 's/.*"value":\[[0-9.]*,"\([0-9]*\)".*/\1/p')"
-expect "Prometheus loaded the 14 rules" 14 "$(prom /api/v1/rules | grep -o '"type":"alerting"' | wc -l | tr -d ' ')"
+expect "Prometheus loaded the 16 rules" 16 "$(prom /api/v1/rules | grep -o '"type":"alerting"' | wc -l | tr -d ' ')"
 expect "and no alert is active" 0 "$(prom /api/v1/alerts | grep -o '"alertname"' | wc -l | tr -d ' ')"
 
 g() { curl -s -o /tmp/sgm-body -w '%{http_code}' --max-time 10 "$@" || true; }
@@ -98,7 +98,7 @@ expect "Grafana answers" 200 "$(g http://127.0.0.1:13000/api/health)"
 expect "the dashboard needs a login" 401 "$(g http://127.0.0.1:13000/api/dashboards/uid/serengeti)"
 expect "a wrong password is refused" 401 "$(g -u admin:admin http://127.0.0.1:13000/api/dashboards/uid/serengeti)"
 expect "the dashboard is there for admin" 200 "$(g -u "admin:$GPW" http://127.0.0.1:13000/api/dashboards/uid/serengeti)"
-expect "with its 13 panels" 13 "$(grep -o '"gridPos"' /tmp/sgm-body | wc -l | tr -d ' ')"
+expect "with its 14 panels" 14 "$(grep -o '"gridPos"' /tmp/sgm-body | wc -l | tr -d ' ')"
 expect "the data source reaches Prometheus" 200 "$(g -u "admin:$GPW" http://127.0.0.1:13000/api/datasources/uid/prometheus/health)"
 contains "and says so" '"status":"OK"' "$(cat /tmp/sgm-body)"
 # Every query of the dashboard, through Grafana, at the current time: each must answer without error.

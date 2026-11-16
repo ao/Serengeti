@@ -81,6 +81,15 @@ exit_code() { # container: wait for it to stop and print its exit code
   docker wait "$RUN-$1"
 }
 
+# Scheduled backups take a minute at least: this node starts first and is checked at the end.
+sched_backups=$(volume sched-backups)
+node sched -v "$(volume sched):/data" -v "$sched_backups:/backups" -e SERENGETI_ADMIN_PASSWORD="$PW" \
+  -e SERENGETI_BACKUP_DIR=/backups -e SERENGETI_BACKUP_INTERVAL_MINUTES=1 -e SERENGETI_BACKUP_KEEP=2
+wait_up sched
+query sched "CREATE DATABASE sched" >/dev/null
+query sched "CREATE TABLE sched.t" >/dev/null
+sched_insert=$(query sched "INSERT INTO sched.t (_id, n) VALUES ('kept', 1)")
+
 echo "# first start without a password"
 node fresh -v "$(volume fresh):/data"
 wait_up fresh
@@ -304,6 +313,34 @@ contains "the request log names route and status, not the query" \
 expect "the request log holds no query text" 0 \
   "$(docker logs "$RUN-env" 2>&1 | grep -c -F 'SELECT _id, name' || true)"
 expect "the request log holds no password" 0 "$(docker logs "$RUN-env" 2>&1 | grep -c -F "$PW" || true)"
+
+echo "# scheduled backups"
+expect "insert on the node with scheduled backups, at the start" 200 "$sched_insert"
+backups() { docker exec "$RUN-sched" sh -c 'ls /backups | grep "^serengeti-backup-.*\.jsonl$"' || true; }
+# The first check is a minute after start and one runs each minute: wait for three backups' worth.
+for _ in $(seq 200); do [ "$(backups | wc -l | tr -d ' ')" -ge 2 ] && [ "$(docker logs "$RUN-sched" 2>&1 | grep -c 'backup serengeti-backup-')" -ge 3 ] && break; sleep 1; done
+expect "a backup a minute, the newest 2 kept" 2 "$(backups | wc -l | tr -d ' ')"
+expect "the backup directory is private and the node's" "700 10001" \
+  "$(docker exec "$RUN-sched" stat -c '%a %u' /backups)"
+expect "each backup is private" "600" "$(docker exec "$RUN-sched" sh -c 'stat -c %a /backups/$(ls /backups | tail -1)')"
+expect "and no temporary file is left" 0 "$(docker exec "$RUN-sched" sh -c 'ls -A /backups | grep -c "\.tmp$"' || true)"
+newest=$(backups | tail -1)
+sched_restored=$(volume sched-restored)
+rc=0
+docker run --rm --label "serengeti-it=$RUN" -v "$sched_backups:/backups:ro" -v "$sched_restored:/data" "$IMAGE" \
+  restore "/backups/$newest" >/dev/null 2>&1 || rc=$?
+expect "the newest scheduled backup restores" 0 "$rc"
+node sched-copy -v "$sched_restored:/data" -e SERENGETI_ADMIN_PASSWORD="$PW"
+wait_up sched-copy
+contains "and has the row" '"rows":[["kept",1]]' \
+  "$(body sched-copy POST /v1/query "admin:$PW" '{"query": "SELECT _id, n FROM sched.t"}')"
+metrics=$(body sched GET /metrics "admin:$PW")
+contains "metrics give the interval" 'serengeti_backup_interval_seconds 60' "$metrics"
+contains "and no failure" 'serengeti_backup_failures_total 0' "$metrics"
+not_dir=$(docker run --rm --label "serengeti-it=$RUN" -m 512m -e SERENGETI_ADMIN_PASSWORD="$PW" \
+  -e SERENGETI_BACKUP_DIR=/data/backups "$IMAGE" 2>&1) && rc=0 || rc=$?
+expect "a backup directory inside the data directory exits 2" 2 "$rc"
+contains "and says why" "must not be the data directory" "$not_dir"
 
 echo
 echo "$passed passed, $failed failed"

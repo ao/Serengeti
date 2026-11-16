@@ -68,6 +68,10 @@ Needs Basic credentials of any account. The body is Prometheus text format 0.0.4
 | `serengeti_cluster_caught_up` | gauge | 1 once this node has synced with a majority since it started; 1 without peers. |
 | `serengeti_cluster_stale` | gauge | 1 if the node was away longer than `tombstone_ttl_hours`: it neither syncs nor takes writes (see [CONSISTENCY.md](CONSISTENCY.md)). |
 | `serengeti_sync_ops_pulled_total` | counter | Row versions this node pulled from its peers while syncing. |
+| `serengeti_backup_interval_seconds` | gauge | `backup_interval_minutes` in seconds; 0 without `backup_dir` (see CONFIGURATION.md, "Scheduled backups"). |
+| `serengeti_backup_last_success_time_seconds` | gauge | Unix time of the newest scheduled backup in `backup_dir`, also one written before this start; 0 for none. |
+| `serengeti_backup_failures_total` | counter | Scheduled backups that failed since the node started. |
+| `serengeti_backup_last_bytes` | gauge | Size of the last scheduled backup written since the node started. |
 | `serengeti_build_info{version}` | gauge | Always 1. |
 | `serengeti_start_time_seconds` | gauge | Unix time at which the node started. |
 

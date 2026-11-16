@@ -94,7 +94,7 @@ docker compose up -d
 
 The comments in the Compose file say how to reach the nodes, and
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) has the settings. CI runs this example as written.
-[examples/monitoring](examples/monitoring/) adds Prometheus, 14 tested alert rules and a Grafana
+[examples/monitoring](examples/monitoring/) adds Prometheus, 16 tested alert rules and a Grafana
 dashboard to it.
 
 ## Writes in a cluster
@@ -178,9 +178,9 @@ GitHub Actions runs these on every change:
 - 329 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
   syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
   the writes no other write had seen, and others that compare index lookups and GROUP BY with scans;
-- 87 checks against the built image on amd64 and arm64, including `kill -9` during writes, account roles,
-  a second node refused on a data directory in use, and the shell and backup commands;
-- 37 checks on a 3-node TLS cluster in Docker: nodes killed and restarted, one partitioned with iptables,
+- 98 checks against the built image on amd64 and arm64, including `kill -9` during writes, account roles,
+  a second node refused on a data directory in use, the shell and backup commands, and scheduled backups;
+- 39 checks on a 3-node TLS cluster in Docker: nodes killed and restarted, one partitioned with iptables,
   one with fsync slowed by a second, local writes on both sides of a partition. Every write that was
   acknowledged must be on every node at the end;
 - 54 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster, one node at a time under writes, and

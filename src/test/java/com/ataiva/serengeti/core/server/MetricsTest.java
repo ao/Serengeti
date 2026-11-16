@@ -136,6 +136,8 @@ class MetricsTest {
         assertEquals(1, before.value("serengeti_cluster_caught_up"));
         assertEquals(0, before.value("serengeti_cluster_stale"));
         assertEquals(0, before.value("serengeti_sync_ops_pulled_total"));
+        assertEquals(0, before.value("serengeti_backup_interval_seconds"), "no scheduled backups");
+        assertEquals(0, before.value("serengeti_backup_last_success_time_seconds"));
 
         assertEquals(200, send("GET", "/health", null, null).statusCode());
         Exposition after = settled(7);
@@ -150,7 +152,7 @@ class MetricsTest {
             @Override
             public NodeOps.Gauges gauges() {
                 return new NodeOps.Gauges(0, 0, 0, 0, 0, 0, 0, false, 0, 0, true,
-                        new NodeOps.Cluster(5, 2, 3, false, true, 42));
+                        new NodeOps.Cluster(5, 2, 3, false, true, 42), new NodeOps.Backups(3600, 1_700_000_000, 2, 5678));
             }
 
             @Override
@@ -171,6 +173,10 @@ class MetricsTest {
         assertEquals(0, e.value("serengeti_cluster_caught_up"));
         assertEquals(1, e.value("serengeti_cluster_stale"));
         assertEquals(42, e.value("serengeti_sync_ops_pulled_total"));
+        assertEquals(3600, e.value("serengeti_backup_interval_seconds"));
+        assertEquals(1_700_000_000, e.value("serengeti_backup_last_success_time_seconds"));
+        assertEquals(2, e.value("serengeti_backup_failures_total"));
+        assertEquals(5678, e.value("serengeti_backup_last_bytes"));
     }
 
     @Test

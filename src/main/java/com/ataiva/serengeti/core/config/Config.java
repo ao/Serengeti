@@ -28,7 +28,7 @@ public final class Config {
             "discovery_cidr", "cluster_size", "cluster_key_file", "cluster_plaintext", "admin_password_file",
             "tls_keystore", "tls_keystore_password_file", "tls_truststore", "tls_truststore_password_file",
             "test_fsync_delay_ms", "tombstone_ttl_hours", "write_ack", "memory_limit_percent", "changes_buffer",
-            "http_threads");
+            "http_threads", "backup_dir", "backup_interval_minutes", "backup_keep");
 
     public final String bind;
     public final int port;
@@ -56,6 +56,11 @@ public final class Config {
     public final int changesBuffer;
     /** Threads that answer HTTP requests; also bounds how many change-feed requests wait (half of them). */
     public final int httpThreads;
+    /** Where the node writes a backup every {@link #backupIntervalMinutes}; null: no scheduled backups. */
+    public final Path backupDir;
+    public final int backupIntervalMinutes;
+    /** How many scheduled backups are kept in {@link #backupDir}; older ones are deleted. */
+    public final int backupKeep;
 
     private final boolean explicitSize;
 
@@ -90,6 +95,10 @@ public final class Config {
         memoryLimitPercent = parseInt(v.getOrDefault("memory_limit_percent", "60"), "memory_limit_percent", 10, 100);
         changesBuffer = parseInt(v.getOrDefault("changes_buffer", "10000"), "changes_buffer", 0, 1_000_000);
         httpThreads = parseInt(v.getOrDefault("http_threads", "64"), "http_threads", 1, 1024);
+        backupDir = pathOrNull(v.get("backup_dir"));
+        backupIntervalMinutes = parseInt(v.getOrDefault("backup_interval_minutes", "60"), "backup_interval_minutes",
+                1, 7 * 24 * 60);
+        backupKeep = parseInt(v.getOrDefault("backup_keep", "24"), "backup_keep", 1, 10_000);
         String size = v.get("cluster_size");
         clusterSize = size == null ? peers.size() + 1 : parseInt(size, "cluster_size", 1, 7);
         validate();
@@ -125,6 +134,15 @@ public final class Config {
         }
         if (adminPassword != null && adminPassword.length() < MIN_ADMIN_PASSWORD) {
             throw new ConfigException("the admin password must be at least " + MIN_ADMIN_PASSWORD + " characters");
+        }
+        if (backupDir != null) {
+            Path b = backupDir.toAbsolutePath().normalize();
+            Path d = dataDir.toAbsolutePath().normalize();
+            if (b.startsWith(d)) {
+                // A backup there would be lost with the directory it is meant to replace, and restore
+                // refuses a directory that holds data.
+                throw new ConfigException("backup_dir must not be the data directory or inside it");
+            }
         }
         if (!clustered()) {
             if (explicitSize && clusterSize != 1) {
