@@ -145,7 +145,7 @@ public final class Json {
             }
             char c = s.charAt(pos++);
             if (c == '"') {
-                return b.toString();
+                return unicode(b, start);
             }
             if (c < 0x20) {
                 throw new JsonException("control character in string", pos - 1);
@@ -186,6 +186,24 @@ public final class Json {
                     throw new JsonException("bad escape '\\" + e + "'", pos - 2);
             }
         }
+    }
+
+    /**
+     * The string, if it is Unicode text. A surrogate that is not half of a pair (from an escape such as
+     * {@code "\ud800"}) has no UTF-8 form: writing it out turns it into '?', so the value read back, from the
+     * log after a restart or in a response, would not be the value stored.
+     */
+    private static String unicode(StringBuilder b, int start) {
+        for (int i = 0; i < b.length(); i++) {
+            char c = b.charAt(i);
+            if (Character.isHighSurrogate(c) && i + 1 < b.length() && Character.isLowSurrogate(b.charAt(i + 1))) {
+                i++;
+            } else if (Character.isSurrogate(c)) {
+                throw new JsonException("unpaired surrogate U+" + Integer.toHexString(c).toUpperCase(java.util.Locale.ROOT)
+                        + " in a string", start);
+            }
+        }
+        return b.toString();
     }
 
     private Object number() {
