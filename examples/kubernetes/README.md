@@ -43,7 +43,7 @@ as the admin with the password from its secret.
   Writes need a majority of `NODES`.
 - `resources.limits.memory` sizes the node: the heap is 60% of it, and writes that add data are refused once
   the data is estimated to fill 60% of the heap. Each node holds all the data.
-- Backups: `GET /v1/backup` through the port-forward, as in [docs/API.md](../../docs/API.md#backup).
+- Backups: `kubectl exec serengeti-0 -- serengeti backup > backup.jsonl` (see [docs/API.md](../../docs/API.md#backup)).
 
 [run.sh](run.sh) runs these steps on a throwaway kind cluster and checks the result: the pods become ready, a
 write through the Service is on every pod, a deleted pod comes back with its data and the write it missed,

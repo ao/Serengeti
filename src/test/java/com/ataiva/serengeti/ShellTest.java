@@ -216,6 +216,50 @@ class ShellTest {
     }
 
     @Test
+    void aBackupGoesToStandardOutputOrAPrivateFileAndRestores() throws Exception {
+        int port = freePort();
+        try (Node n = Node.start(Config.load(null, nodeEnv(port)), Node.QUERIES)) {
+            remote(port, "", "-c", "CREATE DATABASE shop; CREATE TABLE shop.items; "
+                    + "INSERT INTO shop.items (_id, qty) VALUES ('bolt', 120), ('nut', 300)");
+            Map<String, String> pw = Map.of("SERENGETI_PASSWORD", PW);
+            String url = "http://127.0.0.1:" + port;
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            int status = Shell.backup(new String[] {"--url", url}, pw, out, new PrintStream(err, true), null);
+            assertEquals(0, status, err.toString());
+            List<com.ataiva.serengeti.core.storage.Op> ops = com.ataiva.serengeti.core.storage.Snapshot.read(
+                    new ByteArrayInputStream(out.toByteArray()), true);
+            assertTrue(ops.size() >= 4, ops.toString());
+
+            Path file = dir.resolve("b.jsonl");
+            status = Shell.backup(new String[] {"--url", url, "-o", file.toString()}, pw, new ByteArrayOutputStream(),
+                    new PrintStream(err, true), null);
+            assertEquals(0, status, err.toString());
+            assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(
+                    java.nio.file.Files.getPosixFilePermissions(file)));
+            assertFalse(java.nio.file.Files.exists(dir.resolve("b.jsonl.tmp")));
+            Path restored = dir.resolve("restored");
+            assertEquals(ops.size(), com.ataiva.serengeti.core.server.Backup.restore(file, restored));
+
+            // Backups are an admin's: a read account is refused (1), a wrong password does not get in (2).
+            java.net.http.HttpClient.newHttpClient().send(java.net.http.HttpRequest.newBuilder(
+                    java.net.URI.create(url + "/v1/users/reader")).header("Authorization", "Basic "
+                    + java.util.Base64.getEncoder().encodeToString(("admin:" + PW).getBytes(StandardCharsets.UTF_8)))
+                    .header("Content-Type", "application/json")
+                    .PUT(java.net.http.HttpRequest.BodyPublishers.ofString(
+                            "{\"password\": \"reader password 1\", \"role\": \"read\"}")).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertEquals(1, Shell.backup(new String[] {"--url", url, "--user", "reader"},
+                    Map.of("SERENGETI_PASSWORD", "reader password 1"), new ByteArrayOutputStream(),
+                    new PrintStream(new ByteArrayOutputStream(), true), null));
+            assertEquals(2, Shell.backup(new String[] {"--url", url}, Map.of("SERENGETI_PASSWORD", "wrong password!!"),
+                    new ByteArrayOutputStream(), new PrintStream(new ByteArrayOutputStream(), true), null));
+            assertEquals(2, Shell.backup(new String[] {"--bogus"}, pw, new ByteArrayOutputStream(),
+                    new PrintStream(new ByteArrayOutputStream(), true), null));
+        }
+    }
+
+    @Test
     void theSplitterKeepsQuotesAndCommentsWhole() {
         Shell.Splitter s = new Shell.Splitter();
         assertEquals(List.of(), s.add("-- only a comment"));

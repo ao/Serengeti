@@ -18,22 +18,23 @@ public final class Serengeti {
         System.setProperty("sun.net.httpserver.maxReqTime", "30");
         System.setProperty("sun.net.httpserver.maxRspTime", "60");
         if (args.length > 0 && args[0].equals("shell")) {
-            java.io.Console console = System.console();
-            Shell.Terminal terminal = console == null ? null : new Shell.Terminal() {
-                @Override
-                public String readLine(String prompt) {
-                    return console.readLine("%s", prompt);
-                }
-
-                @Override
-                public char[] readPassword(String prompt) {
-                    return console.readPassword("%s", prompt);
-                }
-            };
             java.io.PrintStream out = new java.io.PrintStream(
                     new java.io.FileOutputStream(java.io.FileDescriptor.out), true, java.nio.charset.StandardCharsets.UTF_8);
             System.exit(Shell.run(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(), System.in, out,
-                    System.err, terminal));
+                    System.err, terminal()));
+        }
+        if (args.length > 0 && args[0].equals("backup")) {
+            java.io.OutputStream out = new java.io.BufferedOutputStream(
+                    new java.io.FileOutputStream(java.io.FileDescriptor.out), 1 << 16);
+            int status = Shell.backup(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(), out,
+                    System.err, terminal());
+            try {
+                out.flush();
+            } catch (IOException e) {
+                System.err.println("serengeti backup: " + e.getMessage());
+                status = 1;
+            }
+            System.exit(status);
         }
         if (args.length > 0 && args[0].equals("restore")) {
             System.exit(restore(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(),
@@ -58,6 +59,7 @@ public final class Serengeti {
                     System.out.println("usage: serengeti [--config FILE] [--version] [--health]\n"
                             + "       serengeti restore [--config FILE] BACKUP_FILE\n"
                             + "       serengeti shell [--url URL] [--user NAME] [-c STATEMENT] ... (see shell --help)\n"
+                            + "       serengeti backup [--url URL] [--user NAME] [-o FILE] ... (see backup --help)\n"
                             + "--health asks the running node's GET /health and exits 0 if it answers 200.\n"
                             + "restore loads a backup into an empty data directory; stop the node first.\n"
                             + "Settings come from FILE (or SERENGETI_CONFIG) and SERENGETI_* environment variables.\n"
@@ -85,6 +87,22 @@ public final class Serengeti {
         } catch (IOException e) {
             fail("cannot start: " + e.getMessage());
         }
+    }
+
+    /** The terminal, if standard input and output are one: for the shell's prompt and password questions. */
+    private static Shell.Terminal terminal() {
+        java.io.Console console = System.console();
+        return console == null ? null : new Shell.Terminal() {
+            @Override
+            public String readLine(String prompt) {
+                return console.readLine("%s", prompt);
+            }
+
+            @Override
+            public char[] readPassword(String prompt) {
+                return console.readPassword("%s", prompt);
+            }
+        };
     }
 
     /** This machine's node, from its settings. A wildcard bind is reached on loopback. */

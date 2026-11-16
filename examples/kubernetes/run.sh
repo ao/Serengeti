@@ -96,6 +96,8 @@ contains "with its data and the write it missed" '"rows":[[3]]' \
 
 contains "serengeti shell in a pod, with the admin password from its secret file" "washer" \
   "$("${K[@]}" exec serengeti-0 -- serengeti shell --format tsv -c 'SELECT _id FROM shop.items ORDER BY _id' 2>&1)"
+contains "serengeti backup in a pod is complete" '"end":true' \
+  "$("${K[@]}" exec serengeti-0 -- serengeti backup 2>/dev/null | tail -c 300)"
 expect "the client Service is ClusterIP only" "ClusterIP" \
   "$("${K[@]}" get service serengeti-client -o jsonpath='{.spec.type}')"
 expect "no NodePort or LoadBalancer anywhere" "" \

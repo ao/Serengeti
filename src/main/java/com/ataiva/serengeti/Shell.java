@@ -144,6 +144,41 @@ final class Shell {
             }
         }
 
+        Target t = target("shell", url, user, ca, configPath, env, err, terminal);
+        if (t == null) {
+            return 2;
+        }
+        URI base = t.base();
+        boolean interactive = command == null && terminal != null;
+        Shell shell = new Shell(base, t.auth(), t.tls(), t.skipHostCheck(), format, out, err, interactive);
+
+        Answer status = shell.send("GET", "/v1/status", null);
+        if (status.code != 200) {
+            err.println("serengeti shell: " + base + ": " + status.message());
+            return 2;
+        }
+        if (interactive) {
+            Object version = status.json instanceof Map<?, ?> m ? m.get("version") : null;
+            out.println("Serengeti " + version + " at " + base + ", as " + user + ". Type help for help, quit to leave.");
+        }
+        if (command != null) {
+            return shell.script(new BufferedReader(new java.io.StringReader(command)));
+        }
+        if (interactive) {
+            return shell.prompt(terminal);
+        }
+        return shell.script(new BufferedReader(new java.io.InputStreamReader(in, StandardCharsets.UTF_8)));
+    }
+
+    /** A node to talk to: where, which certificates to trust, and the account's Basic credentials. */
+    record Target(URI base, SSLContext tls, boolean skipHostCheck, String auth) {}
+
+    /**
+     * The node from {@code --url} (or this machine's, from its settings), and the password from
+     * SERENGETI_PASSWORD, the node's admin password, or the terminal. Null, with the reason printed, if not.
+     */
+    static Target target(String cmd, String url, String user, String ca, String configPath, Map<String, String> env,
+            PrintStream err, Terminal terminal) {
         URI base;
         SSLContext tls = null;
         boolean skipHostCheck = false;
@@ -152,8 +187,8 @@ final class Shell {
             if (url != null) {
                 base = URI.create(url.replaceAll("/+$", ""));
                 if (!"http".equals(base.getScheme()) && !"https".equals(base.getScheme()) || base.getHost() == null) {
-                    err.println("serengeti shell: --url wants http://HOST:PORT or https://HOST:PORT, not '" + url + "'");
-                    return 2;
+                    err.println("serengeti " + cmd + ": --url wants http://HOST:PORT or https://HOST:PORT, not '" + url + "'");
+                    return null;
                 }
                 if (ca != null) {
                     tls = trusting(Path.of(ca));
@@ -173,44 +208,178 @@ final class Shell {
                 }
             }
         } catch (IllegalArgumentException | ConfigException | IOException | GeneralSecurityException e) {
-            err.println("serengeti shell: " + e.getMessage());
-            return 2;
+            err.println("serengeti " + cmd + ": " + e.getMessage());
+            return null;
         }
         if (password == null) {
             if (terminal == null) {
-                err.println("serengeti shell: set SERENGETI_PASSWORD to the password of '" + user + "'");
-                return 2;
+                err.println("serengeti " + cmd + ": set SERENGETI_PASSWORD to the password of '" + user + "'");
+                return null;
             }
             char[] typed = terminal.readPassword("password for " + user + ": ");
             if (typed == null) {
-                return 2;
+                return null;
             }
             password = new String(typed);
         }
         if ("http".equals(base.getScheme()) && !loopback(base.getHost())) {
-            err.println("serengeti shell: warning: " + base.getHost() + " is reached over plain HTTP, so the password"
-                    + " crosses the network unencrypted");
+            err.println("serengeti " + cmd + ": warning: " + base.getHost() + " is reached over plain HTTP, so the"
+                    + " password crosses the network unencrypted");
         }
         String auth = "Basic " + Base64.getEncoder().encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8));
-        boolean interactive = command == null && terminal != null;
-        Shell shell = new Shell(base, auth, tls, skipHostCheck, format, out, err, interactive);
+        return new Target(base, tls, skipHostCheck, auth);
+    }
 
-        Answer status = shell.send("GET", "/v1/status", null);
-        if (status.code != 200) {
-            err.println("serengeti shell: " + base + ": " + status.message());
+    static final String BACKUP_USAGE = """
+            usage: serengeti backup [--url URL] [--user NAME] [--ca FILE] [--config FILE] [-o FILE]
+            Takes a backup of a node (GET /v1/backup; an admin's) and writes it to FILE (mode 0600; written to
+            FILE.tmp and renamed once complete) or to standard output. The node, the account and the password are
+            found as for serengeti shell: in a node's container, "docker exec NAME serengeti backup > b.jsonl"
+            needs nothing more. Restore it with "serengeti restore FILE" into an empty data directory.
+            Exit status: 0 for a complete backup, 1 when the node refused it or it was cut short, 2 when the
+            arguments are wrong or the node cannot be reached or refuses the account.""";
+
+    /** {@code serengeti backup}: returns the exit status. */
+    static int backup(String[] args, Map<String, String> env, java.io.OutputStream stdout, PrintStream err,
+            Terminal terminal) {
+        String url = null;
+        String user = env.getOrDefault("SERENGETI_USER", "admin");
+        String ca = null;
+        String configPath = null;
+        String file = null;
+        for (int i = 0; i < args.length; i++) {
+            String a = args[i];
+            if (a.equals("--help") || a.equals("-h")) {
+                new PrintStream(stdout, true, StandardCharsets.UTF_8).println(BACKUP_USAGE);
+                return 0;
+            }
+            if (!List.of("--url", "--user", "--ca", "--config", "-o").contains(a)) {
+                err.println("serengeti backup: unknown argument '" + a + "' (try --help)");
+                return 2;
+            }
+            if (i + 1 >= args.length) {
+                err.println("serengeti backup: " + a + " needs a value");
+                return 2;
+            }
+            String v = args[++i];
+            switch (a) {
+                case "--url" -> url = v;
+                case "--user" -> user = v;
+                case "--ca" -> ca = v;
+                case "--config" -> configPath = v;
+                default -> file = v;
+            }
+        }
+        Target t = target("backup", url, user, ca, configPath, env, err, terminal);
+        if (t == null) {
             return 2;
         }
-        if (interactive) {
-            Object version = status.json instanceof Map<?, ?> m ? m.get("version") : null;
-            out.println("Serengeti " + version + " at " + base + ", as " + user + ". Type help for help, quit to leave.");
+        Path target = file == null ? null : Path.of(file);
+        Path tmp = target == null ? null : target.resolveSibling(target.getFileName() + ".tmp");
+        HttpURLConnection c = null;
+        try {
+            c = open(t, "/v1/backup");
+            int code = c.getResponseCode();
+            if (code != 200) {
+                InputStream s = c.getErrorStream();
+                String text = s == null ? "" : new String(s.readAllBytes(), StandardCharsets.UTF_8);
+                Answer a = new Answer(code, text, parseOrNull(text), null);
+                err.println("serengeti backup: " + t.base() + ": " + a.message());
+                return code == 401 ? 2 : 1;
+            }
+            java.io.OutputStream out;
+            if (tmp != null) {
+                Files.deleteIfExists(tmp);
+                out = Files.newOutputStream(Files.createFile(tmp, privateFile()));
+            } else {
+                out = stdout;
+            }
+            // The last bytes, to check that the trailer arrived: a backup cut short has none.
+            byte[] tail = new byte[256];
+            int tailLen = 0;
+            long total = 0;
+            try (InputStream in = c.getInputStream()) {
+                byte[] buf = new byte[1 << 16];
+                for (int n; (n = in.read(buf)) > 0; ) {
+                    out.write(buf, 0, n);
+                    total += n;
+                    if (n >= tail.length) {
+                        System.arraycopy(buf, n - tail.length, tail, 0, tail.length);
+                        tailLen = tail.length;
+                    } else {
+                        int keep = Math.min(tailLen, tail.length - n);
+                        System.arraycopy(tail, tailLen - keep, tail, 0, keep);
+                        System.arraycopy(buf, 0, tail, keep, n);
+                        tailLen = keep + n;
+                    }
+                }
+            } finally {
+                out.flush();
+                if (tmp != null) {
+                    out.close();
+                }
+            }
+            String end = new String(tail, 0, tailLen, StandardCharsets.UTF_8);
+            if (!end.contains("\"end\":true")) {
+                err.println("serengeti backup: the backup was cut short after " + total + " bytes; nothing was kept");
+                if (tmp != null) {
+                    Files.deleteIfExists(tmp);
+                }
+                return 1;
+            }
+            if (tmp != null) {
+                Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                err.println("serengeti backup: " + total + " bytes in " + target);
+            }
+            return 0;
+        } catch (IOException e) {
+            err.println("serengeti backup: " + t.base() + ": " + e.getMessage());
+            try {
+                if (tmp != null) {
+                    Files.deleteIfExists(tmp);
+                }
+            } catch (IOException ignored) {
+                // the message above says what went wrong
+            }
+            return 2;
+        } finally {
+            if (c != null) {
+                c.disconnect();
+            }
         }
-        if (command != null) {
-            return shell.script(new BufferedReader(new java.io.StringReader(command)));
+    }
+
+    private static java.nio.file.attribute.FileAttribute<?>[] privateFile() {
+        if (java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            return new java.nio.file.attribute.FileAttribute<?>[] {java.nio.file.attribute.PosixFilePermissions
+                    .asFileAttribute(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))};
         }
-        if (interactive) {
-            return shell.prompt(terminal);
+        return new java.nio.file.attribute.FileAttribute<?>[0];
+    }
+
+    private static Object parseOrNull(String text) {
+        try {
+            return text.isBlank() ? null : Json.parse(text);
+        } catch (JsonException e) {
+            return null;
         }
-        return shell.script(new BufferedReader(new java.io.InputStreamReader(in, StandardCharsets.UTF_8)));
+    }
+
+    private static HttpURLConnection open(Target t, String path) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) t.base().resolve(path).toURL().openConnection();
+        if (c instanceof HttpsURLConnection https) {
+            if (t.tls() != null) {
+                https.setSSLSocketFactory(t.tls().getSocketFactory());
+            }
+            if (t.skipHostCheck()) {
+                https.setHostnameVerifier((h, s) -> true);
+            }
+        }
+        c.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        c.setReadTimeout(READ_TIMEOUT_MS);
+        c.setRequestProperty("Authorization", t.auth());
+        return c;
     }
 
     // ---- reading statements ----

@@ -88,11 +88,16 @@ Needs an admin account: 401 without credentials, 403 for any other account. The 
 Restore it with `serengeti restore`, described in [CONFIGURATION.md](CONFIGURATION.md#restore).
 
 The body is the snapshot format: one JSON header line, one line per change, and a trailer that holds the
-number of changes and their SHA-256. The state is copied under the storage lock, so the backup is consistent:
+number of changes and their SHA-256. The state is written to a file in the data directory under the storage
+lock (writes wait meanwhile, as for a checkpoint), then sent with its length, so the backup is consistent:
 every write acknowledged before the request is in it, and no write is partly in it. A response that stops early
 has no trailer, and restore refuses it.
 
 Accounts (`accounts.json`, `users.json`) and the node id are not part of a backup.
+
+`serengeti backup` does the same from the command line, and checks the trailer arrived: in a node's
+container, `docker exec NAME serengeti backup > backup.jsonl` (or `-o FILE`, written with mode 0600 and
+renamed once complete), and on Kubernetes `kubectl exec serengeti-0 -- serengeti backup > backup.jsonl`.
 
 ## Setup
 

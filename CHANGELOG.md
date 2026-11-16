@@ -44,7 +44,9 @@ GitHub release notes and tags.
   script or given with `-c`, with results as a table, tab-separated values or JSON. A statement runs at
   `;`, or at the end of a line once it is complete. In a node's container, `docker exec -it NAME serengeti
   shell` reaches that node, trusting its own certificate, and signs in as admin with
-  `SERENGETI_ADMIN_PASSWORD` when it is set.
+  `SERENGETI_ADMIN_PASSWORD` when it is set. `serengeti backup` takes a backup the same way, to standard
+  output or a 0600 file, and checks that it is complete: `kubectl exec serengeti-0 -- serengeti backup >
+  backup.jsonl`.
 - `tests/edge/run.sh`, a conformance and limits suite for the HTTP API and the query language: about 900
   checks plus 5,000 generated statements per run, concurrency, kill -9 and backup cases. It found the bugs
   listed under Fixed; CI runs it.

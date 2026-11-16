@@ -288,6 +288,8 @@ expect "the key store password is in no command line" "seen=0" "$(echo "$certs" 
 expect "serengeti shell in the node's container, with its admin password" "$(printf 'name\nbolt\nnut')" \
   "$(docker exec "$RUN-copy" serengeti shell --format tsv -c 'SELECT name FROM shop.items ORDER BY name' 2>&1)"
 contains "serengeti with no command prints its usage" "usage: serengeti" "$(docker exec "$RUN-copy" serengeti 2>&1)"
+contains "serengeti backup in the node's container ends with the backup's trailer" '"end":true' \
+  "$(docker exec "$RUN-copy" sh -c 'serengeti backup > /tmp/b.jsonl && tail -c 300 /tmp/b.jsonl' 2>&1)"
 second=$(docker exec -e SERENGETI_PORT=1986 "$RUN-copy" java -jar /opt/serengeti/serengeti.jar 2>&1) && rc=0 || rc=$?
 expect "a second node in the container on the same data exits 2" 2 "$rc"
 contains "and says the directory is in use" "in use by another node" "$second"
