@@ -278,6 +278,9 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
 
     @Override
     public void before() {
+        if (closed) {
+            throw new UnavailableException("this node is stopping");
+        }
         if (stale) {
             throw new UnavailableException("this node has been away from its cluster for longer than "
                     + "tombstone_ttl_hours and must be emptied and resynced");
@@ -303,7 +306,13 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
      */
     private CompletableFuture<?> send(Peer p, List<Op> ops) {
         List<Op> batch = p.protocol1 ? Op.legacyOnly(ops) : ops;
-        return batch.isEmpty() ? CompletableFuture.completedFuture(null) : client.apply(p.address, batch);
+        try {
+            return batch.isEmpty() ? CompletableFuture.completedFuture(null) : client.apply(p.address, batch);
+        } catch (RuntimeException e) {
+            // The node is stopping and its I/O pool refuses work: this peer did not get it, like one that is
+            // down. The write is in this node's log; the answer is the usual 503 for a majority write.
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
     @Override
@@ -366,13 +375,20 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
      * acknowledged before this call is then visible locally.
      */
     public void syncForRead() {
+        if (closed) {
+            throw new UnavailableException("this node is stopping");
+        }
         int needed = quorum - 1;
         if (needed <= 0) {
             return;
         }
         List<CompletableFuture<Boolean>> runs = new ArrayList<>();
         for (Peer p : peers) {
-            runs.add(syncWith(p));
+            try {
+                runs.add(syncWith(p));
+            } catch (RuntimeException e) {
+                runs.add(CompletableFuture.completedFuture(false)); // stopping: counted as not synced
+            }
         }
         long deadline = System.currentTimeMillis() + WRITE_TIMEOUT_MILLIS;
         int ok = 0;

@@ -113,6 +113,42 @@ class NodeTest {
     }
 
     @Test
+    void aStoppingNodeAnswers503OnAKeptAliveConnection() throws Exception {
+        Node n = Node.start(config(tmp.resolve("data"), "SERENGETI_ADMIN_PASSWORD", PW), Node.QUERIES);
+        assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+        String cursor = (String) changes(n, "db=shop&after=now").get("cursor");
+        HttpClient kept = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
+        HttpRequest health = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + n.address().getPort() + "/health")).build();
+        assertEquals(200, kept.send(health, HttpResponse.BodyHandlers.ofString()).statusCode()); // opens the connection
+        // A long poll stays in flight, so close() waits up to a second for it, and meanwhile the JDK server
+        // still dispatches requests on connections it has.
+        Thread poll = new Thread(() -> {
+            try {
+                changes(n, "db=shop&wait=5&after=" + cursor);
+            } catch (Exception e) {
+                // cut off by the stop: expected
+            }
+        });
+        poll.start();
+        Thread.sleep(300);
+        Thread closer = new Thread(() -> {
+            try {
+                n.close();
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        });
+        closer.start();
+        Thread.sleep(200);
+        HttpResponse<String> r = kept.send(health, HttpResponse.BodyHandlers.ofString());
+        closer.join();
+        poll.join();
+        assertEquals(503, r.statusCode(), r.body());
+        assertTrue(r.body().contains("stopping"), r.body());
+        assertEquals("close", r.headers().firstValue("Connection").orElse(""));
+    }
+
+    @Test
     void requestsOnAKeptAliveConnectionDoNotWaitForDelayedAcks() throws Exception {
         // With Nagle's algorithm on (the JDK server's default), each response on a kept-alive connection
         // waited about 40 ms for the client's delayed ACK: 40 requests took about 1.6 s.
