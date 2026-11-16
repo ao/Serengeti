@@ -104,6 +104,12 @@ GitHub release notes and tags.
   connections while requests in flight finish. It now stops the HTTP server first, answers what still
   arrives with 503 "this node is stopping" and closes the connection, and only then closes the cluster
   and the storage. Found by `tests/soak`, in every run with graceful stops.
+- A running node sometimes answered nothing for 20 to 83 s (2.0.0 has this too). It set the JDK server's
+  60 s limit on reading a response; the server closes an overdue connection while holding the set that
+  every request passes through, and closing a TLS connection waits for a write blocked on a peer that
+  stopped reading (one cut off by a partition), so every request thread waited. There is no response limit
+  now: a client that stops reading holds only its own thread. The 30 s limit on sending a request stays.
+  Found by `tests/soak` (thread dumps of the stalls).
 
 ### Changed
 - A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past

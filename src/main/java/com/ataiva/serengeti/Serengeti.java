@@ -14,9 +14,12 @@ public final class Serengeti {
         // One line per log record, to stdout's companion stderr, before any logger exists.
         System.setProperty("java.util.logging.SimpleFormatter.format",
                 "%1$tY-%1$tm-%1$tdT%1$tH:%1$tM:%1$tS.%1$tL%1$tz %4$s %3$s: %5$s%6$s%n");
-        // Drop clients that hold a request open: 30 s to send a request, 60 s to read a response.
+        // Drop clients that take more than 30 s to send a request. There is no limit on reading a response: the
+        // JDK closes a connection whose response is overdue while it holds the set every request passes
+        // through, and closing a TLS connection waits for a write blocked on a peer that stopped reading, so one
+        // such peer stopped the whole node for up to 83 s (found by tests/soak). A slow reader now holds only its
+        // own thread.
         System.setProperty("sun.net.httpserver.maxReqTime", "30");
-        System.setProperty("sun.net.httpserver.maxRspTime", "60");
         if (args.length > 0 && args[0].equals("shell")) {
             java.io.PrintStream out = new java.io.PrintStream(
                     new java.io.FileOutputStream(java.io.FileDescriptor.out), true, java.nio.charset.StandardCharsets.UTF_8);
