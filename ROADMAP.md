@@ -13,8 +13,8 @@ here has a date.
   (comparisons, IN, LIKE, IS NULL), ORDER BY on one or more keys and LIMIT, COUNT, COUNT(DISTINCT), SUM,
   MIN, MAX and AVG with GROUP BY and HAVING, UPDATE and DELETE.
 - An HTTP API ([docs/API.md](docs/API.md)) in which every route except `GET /health` and `GET /ready`
-  needs HTTP Basic credentials. Accounts have a role (metrics, read, write or admin) and replicate across the
-  cluster. The first admin password comes from the environment, a file or a one-time setup token.
+  needs HTTP Basic credentials. Accounts have a role (metrics, read, write or admin), read and write accounts
+  can be limited to some databases, and accounts replicate across the cluster. The first admin password comes from the environment, a file or a one-time setup token.
   Failed logins are limited per address.
 - A change feed: `GET /v1/changes` follows a table's changes with a cursor and a long poll.
 - A memory limit: writes that add data are refused with 503 before the data fills the heap.
@@ -38,13 +38,14 @@ here has a date.
 - every node keeps every database in memory;
 - indexes cover one column each; a WHERE without an indexed comparison scans its table;
 - no joins and no transactions across statements; nothing is linearizable;
-- a role applies to every database: there are no permissions per database or table;
+- an account has one role, for every table of every database it may use: there are no permissions per
+  table;
 - the HTTP server serves 64 requests at a time and is not hardened against slow clients: put a buffering
   proxy in front of a node that untrusted networks reach.
 
 ## Possible next steps
 
-Not committed to, and in no particular order: permissions per database; indexes on more than one column;
+Not committed to, and in no particular order: indexes on more than one column;
 clients published as packages; a change feed that survives a restart.
 
 ## Not planned

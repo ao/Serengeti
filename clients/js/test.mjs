@@ -41,6 +41,28 @@ test("a read account reads and is refused writes", async () => {
   assert.equal((await db.users())["js-reader"], undefined);
 });
 
+test("an account limited to some databases", async () => {
+  const made = await db.setUser("js-shop", { password: "shop password 1", role: "write", databases: ["JS"] });
+  try {
+    assert.deepEqual(made, { user: "js-shop", role: "write", databases: ["js"] });
+    const shop = new Client({ urls: URL, user: "js-shop", password: "shop password 1" });
+    assert.equal((await shop.query("INSERT INTO js.items (_id) VALUES ('js-shop')")).affected, 1);
+    assert.deepEqual([...(await shop.query("SHOW DATABASES"))], [["js"]]);
+    for (const q of ["SELECT * FROM py.items", "SELECT * FROM nowhere.items", "CREATE DATABASE js2"]) {
+      await assert.rejects(shop.query(q), (e) => e.status === 403 && /may not use database/.test(e.serverMessage), q);
+    }
+    await assert.rejects(shop.changes("py", "now"), (e) => e.status === 403);
+    // Left out, the list stays; null removes it.
+    assert.deepEqual((await db.setUser("js-shop", { role: "read" })).databases, ["js"]);
+    assert.deepEqual(await db.setUser("js-shop", { databases: null }), { user: "js-shop", role: "read" });
+    assert.throws(() => db.setUser("js-shop", { databases: "js" }), TypeError);
+    await assert.rejects(db.setUser("js-shop", { role: "admin", databases: ["js"] }), (e) => e.status === 400);
+  } finally {
+    await db.deleteUser("js-shop");
+    await db.query("DELETE FROM js.items WHERE _id = 'js-shop'");
+  }
+});
+
 test("an unreachable first node is skipped for reads", async () => {
   const two = new Client({ urls: ["http://127.0.0.1:7998", URL], user: "admin", password: PW, timeoutMs: 5000 });
   assert.ok((await two.query("SHOW DATABASES")).rows.length >= 1);

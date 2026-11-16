@@ -9,14 +9,14 @@ credentials of an account; see [Accounts](#accounts) for the roles.
 | `GET /health` | none | `{"status":"ok"}` while the process serves HTTP. |
 | `GET /ready` | none | `{"status":"ready"}`, or 503 `{"status":"not ready"}` while a readiness check fails. |
 | `POST /v1/setup` | setup token | Sets the first admin password. |
-| `POST /v1/query` | Basic | Runs one statement from [QUERY.md](QUERY.md). The read role can run SELECT and SHOW only. |
+| `POST /v1/query` | Basic | Runs one statement from [QUERY.md](QUERY.md). The read role can run SELECT and SHOW only, and an account limited to some databases can name only those. |
 | `POST /post` | Basic | The 1.x route name, still served. Same body and result as `/v1/query`. |
 | `GET /v1/status` | Basic | Node id, version, uptime in seconds, number of databases, fsync policy, and in a cluster a `cluster` object: size, quorum, peers reachable, whether the node is caught up or stale, and each peer. |
 | `POST /v1/password` | Basic | Changes the caller's password. |
 | `GET /v1/changes` | Basic | The changes this node applied after a cursor, waiting for one. See [Changes](#changes). |
 | `GET /v1/backup` | Basic, admin | Streams a snapshot of the data. See [Backup](#backup). |
-| `GET /v1/users` | Basic, admin | The accounts and their roles. See [Accounts](#accounts). |
-| `PUT /v1/users/NAME` | Basic, admin | Creates an account, or changes its password or role. |
+| `GET /v1/users` | Basic, admin | The accounts, their roles and their databases. See [Accounts](#accounts). |
+| `PUT /v1/users/NAME` | Basic, admin | Creates an account, or changes its password, role or databases. |
 | `DELETE /v1/users/NAME` | Basic, admin | Deletes an account. |
 | `GET /metrics` | Basic | Prometheus text format. See [Metrics](#metrics). |
 | `GET /` | Basic | The console. |
@@ -178,7 +178,9 @@ change is made, and an account deleted meanwhile gets 401.
 (and table `T`, if given) that this node applied after the cursor, in the order it applied them: rows
 written here, rows merged from other nodes, and tables and databases dropped or created. With nothing new it waits up
 to `wait` seconds (0 to 60, default 0) for a change; `limit` is 1 to 10,000 (default 1,000). Any role may
-follow changes, except `metrics`.
+follow changes, except `metrics`. An account limited to some databases gets 403 for any other `db`; `db` is
+matched exactly here, so it must be written as the database's name is (lowercase). A long poll checks the
+account again when it returns, so a change to the account made meanwhile applies to its answer.
 
 ```
 GET /v1/changes?db=shop&table=items&after=3f9a1c22e07b:41&wait=30
@@ -218,9 +220,7 @@ An account has one of four roles:
 | `write` | Also INSERT, UPDATE, DELETE, and CREATE and DROP of databases, tables and indexes. |
 | `admin` | Also manage accounts (`/v1/users`) and take backups. |
 
-`metrics` is for a monitoring system, which then holds a password that cannot read the data. Read and
-metrics accounts are not in the `users.json` that 2.0 and 2.1 read, so after a rollback to either they do
-not exist.
+`metrics` is for a monitoring system, which then holds a password that cannot read the data.
 
 The first admin comes from `SERENGETI_ADMIN_PASSWORD` or the setup token. An admin then makes the others:
 
@@ -229,16 +229,42 @@ PUT /v1/users/dashboard
 {"password": "a long password for it", "role": "read"}
 ```
 
-201 `{"user":"dashboard","role":"read"}` for a new account, 200 for a change. Give `role` alone to change the
-role, `password` alone to change the password (the role is kept; a new account without a role gets
-`write`). `GET /v1/users` returns `{"users": [{"user": "admin", "role": "admin"}, ...]}`; no response ever
+201 `{"user":"dashboard","role":"read"}` for a new account, 200 for a change. Give any of `password`, `role`
+and `databases` (below); what a change leaves out stays as it is, and a new account without a role gets
+`write`. `GET /v1/users` returns `{"users": [{"user": "admin", "role": "admin"}, ...]}`; no response ever
 contains a password hash. `DELETE /v1/users/NAME` deletes the account (404 if there is none). A name is 1
 to 64 ASCII letters, digits, `.`, `_` or `-`; a password is at least 12 characters and at most 72 bytes in
 UTF-8. The last admin cannot be deleted or given another role (409).
 
+A read or write account can be limited to some databases:
+
+```
+PUT /v1/users/shop-app
+{"password": "a long password for it", "role": "write", "databases": ["shop", "shop_archive"]}
+```
+
+201 `{"user":"shop-app","role":"write","databases":["shop","shop_archive"]}`. Such an account can run only
+statements that name one of its databases. Any other statement that names a database gets 403 `this
+account may not use database D`, whether or not `D` exists, before anything is read or written; `SHOW
+DATABASES` lists the account's databases that exist, and the change feed is limited the same way. The role
+still applies: a limited read account only reads its databases, and creating one of them needs a write
+account. The list has 1 to 100 database names, none twice; names are folded to lowercase, as in queries,
+and the list comes back sorted. `GET /v1/users` and the answers to `PUT` show it. `"databases": null`
+removes the limit. A change that leaves `databases` out keeps the list, and so does the account's own
+password change. Admin accounts (accounts and backups reach every database) and metrics accounts (no data)
+cannot have a list: that is a 400, and so is giving a limited account one of those roles, unless the same
+change has `"databases": null`. A limited account still sees the number of databases on the node in
+`/v1/status` and `/metrics`.
+
+Read, metrics and limited accounts are not in the `users.json` that 2.0 and 2.1 read (they would let a
+limited account reach every database), so after a rollback to either they do not exist. A write account
+that is given a list leaves `users.json` with that change, and returns to it when the list is removed.
+
 In a cluster, account changes made on one node reach the others within seconds: each change carries a
 version, the newest change to a name wins on every node, and a node that was down catches up when it
-returns. Accounts travel between nodes as bcrypt hashes, over the cluster's TLS and behind its cluster key.
+returns. A list of databases is part of the account and travels with it, ordered like a role change; a node
+refuses an account whose list it cannot read rather than take it without one. Accounts travel between nodes
+as bcrypt hashes, over the cluster's TLS and behind its cluster key.
 Nodes older than 2.2 do not take part: in a cluster being upgraded, an account made on a 2.2 node works on
 the 2.2 nodes only.
 
@@ -267,9 +293,9 @@ Serengeti's code.
 
 | Status | When |
 |---|---|
-| 400 | The body is not the expected JSON, or the query is invalid. Query errors give the position: `expected FROM at position 9`. |
+| 400 | The body is not the expected JSON, the query is invalid, or an account change the rules in [Accounts](#accounts) refuse. Query errors give the position: `expected FROM at position 9`. |
 | 401 | Missing or wrong credentials. The response has `WWW-Authenticate: Basic realm="serengeti", charset="UTF-8"`. |
-| 403 | Wrong setup token, a request other than GET whose `Origin` header does not match its `Host` header, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin, anything but `/metrics`, `/v1/status` and `/v1/password` by a metrics account). |
+| 403 | Wrong setup token, a request other than GET whose `Origin` header does not match its `Host` header, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin, anything but `/metrics`, `/v1/status` and `/v1/password` by a metrics account), or a statement or `GET /v1/changes` that names a database a limited account does not have (`this account may not use database D`). |
 | 404 | No such route, whatever the method; no such account (`DELETE /v1/users/NAME`); the change feed on a node with `changes_buffer` 0. |
 | 405 | Wrong method for the route. `Allow` names the methods it takes. |
 | 409 | Setup when an admin password exists, or deleting or demoting the last admin. |

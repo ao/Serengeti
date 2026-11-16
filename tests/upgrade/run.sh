@@ -147,6 +147,13 @@ if [ "$(acct 1 admin "$PW" GET /v1/users)" = 200 ]; then # this build has accoun
   expect "make a write account" 201 "$(acct 1 admin "$PW" PUT /v1/users/writer '{"password": "writer password 1", "role": "write"}')"
   expect "make a read account" 201 "$(acct 1 admin "$PW" PUT /v1/users/reader '{"password": "reader password 1", "role": "read"}')"
   expect "make and delete one" 200 "$(acct 1 admin "$PW" PUT /v1/users/gone '{"password": "gone password 1"}' >/dev/null; acct 1 admin "$PW" DELETE /v1/users/gone)"
+  if [ "$(acct 1 admin "$PW" PUT /v1/users/limited '{"password": "limited password 1", "role": "write", "databases": ["d"]}')" = 201 ]; then
+    ok "make a write account limited to database d"
+    expect "and limit a write account that 2.1 knows" 200 "$(acct 1 admin "$PW" PUT /v1/users/moved '{"password": "moved password 1", "role": "write"}' >/dev/null
+      acct 1 admin "$PW" PUT /v1/users/moved '{"databases": ["d"]}')"
+    expect "a limited account reaches its database" 200 "$(acct 1 limited 'limited password 1' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')"
+    limits=1
+  fi
   accounts=1
 fi
 replace 1 "$OLD_IMAGE" -
@@ -161,12 +168,21 @@ if [ "${accounts:-0}" = 1 ]; then
   expect "the read account cannot log in to $OLD_IMAGE (it fails closed)" 401 "$(acct 1 reader 'reader password 1' GET /v1/status)"
   expect "nor the deleted one" 401 "$(acct 1 gone 'gone password 1' GET /v1/status)"
 fi
+if [ "${limits:-0}" = 1 ]; then
+  # $OLD_IMAGE would ignore the list and let these accounts reach every database: they must not exist there.
+  expect "the limited account cannot log in to $OLD_IMAGE" 401 "$(acct 1 limited 'limited password 1' GET /v1/status)"
+  expect "nor the write account that was given a list" 401 "$(acct 1 moved 'moved password 1' GET /v1/status)"
+fi
 replace 1 "$IMAGE" -
 wait_up 1
 if [ "${accounts:-0}" = 1 ]; then
   expect "upgraded again, the read account is back" 200 "$(acct 1 reader 'reader password 1' GET /v1/status)"
   expect "and may still only read" 403 "$(acct 1 reader 'reader password 1' POST /v1/query '{"query": "INSERT INTO d.t (n) VALUES (1)"}')"
   expect "the deleted one stays deleted" 401 "$(acct 1 gone 'gone password 1' GET /v1/status)"
+fi
+if [ "${limits:-0}" = 1 ]; then
+  expect "upgraded again, the limited accounts are back" 200 "$(acct 1 moved 'moved password 1' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')"
+  expect "with their lists" 403 "$(acct 1 limited 'limited password 1' POST /v1/query '{"query": "CREATE DATABASE other"}')"
 fi
 q 1 'SHOW INDEXES IN d.t' >/dev/null
 case "$(body)" in *'"rows":[["n"]]'*) ok "upgraded again, the index is back" ;; *) bad "index after rollback" "$(body)" ;; esac

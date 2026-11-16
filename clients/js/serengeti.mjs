@@ -97,10 +97,18 @@ export class Client {
     return Object.fromEntries(out.users.map((u) => [u.user, u.role]));
   }
 
-  setUser(name, { password, role } = {}) {
+  // Creates or changes an account; what is left out stays as it is. `databases` limits a read or write
+  // account to a list of database names, and null removes the limit.
+  setUser(name, { password, role, databases } = {}) {
     const body = {};
     if (password !== undefined) body.password = password;
     if (role !== undefined) body.role = role;
+    if (databases !== undefined) {
+      if (databases !== null && !Array.isArray(databases)) {
+        throw new TypeError("databases is an array of database names, or null");
+      }
+      body.databases = databases;
+    }
     return this.#call("PUT", "/v1/users/" + encodeURIComponent(name), body, false);
   }
 

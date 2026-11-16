@@ -27,6 +27,14 @@ import urllib.request
 __all__ = ["Client", "Result", "Error", "Unavailable", "CursorGone"]
 
 
+class _Keep:
+    def __repr__(self):
+        return "<keep>"
+
+
+_KEEP = _Keep()  # set_user leaves an account's databases as they are
+
+
 class Error(Exception):
     """A request the node refused. ``status`` is the HTTP status; the message is the node's."""
 
@@ -129,12 +137,21 @@ class Client:
     def users(self):
         return {u["user"]: u["role"] for u in self._call("GET", "/v1/users", None, retry=True)["users"]}
 
-    def set_user(self, name, password=None, role=None):
+    def set_user(self, name, password=None, role=None, databases=_KEEP):
+        """Create or change an account; what is left out stays as it is.
+
+        ``databases`` limits a read or write account to a list of database names; ``None`` removes the limit.
+        Returns the account as the node has it now: ``{"user": ..., "role": ..., "databases": [...]}``.
+        """
         body = {}
         if password is not None:
             body["password"] = password
         if role is not None:
             body["role"] = role
+        if databases is not _KEEP:
+            if isinstance(databases, (str, bytes)):
+                raise TypeError("databases is a list of database names, or None")
+            body["databases"] = None if databases is None else list(databases)
         return self._call("PUT", "/v1/users/" + urllib.parse.quote(name, safe=""), body, retry=False)
 
     def delete_user(self, name):

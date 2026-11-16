@@ -51,6 +51,33 @@ class ClientTest(unittest.TestCase):
             self.db.delete_user("py-reader")
         self.assertNotIn("py-reader", self.db.users())
 
+    def test_an_account_limited_to_some_databases(self):
+        made = self.db.set_user("py-shop", password="shop password 1", role="write", databases=["PY"])
+        try:
+            self.assertEqual(made, {"user": "py-shop", "role": "write", "databases": ["py"]})
+            shop = serengeti.Client(URL, "py-shop", "shop password 1")
+            self.assertEqual(shop.query("INSERT INTO py.items (_id) VALUES ('py-shop')")["affected"], 1)
+            self.assertEqual(list(shop.query("SHOW DATABASES")), [("py",)])
+            for q in ("SELECT * FROM js.items", "SELECT * FROM nowhere.items", "CREATE DATABASE py2"):
+                with self.assertRaises(serengeti.Error) as e:
+                    shop.query(q)
+                self.assertEqual(e.exception.status, 403)
+                self.assertIn("this account may not use database", e.exception.message)
+            with self.assertRaises(serengeti.Error) as e:
+                shop.changes("js", "now")
+            self.assertEqual(e.exception.status, 403)
+            # Left out, the list stays; None removes it.
+            self.assertEqual(self.db.set_user("py-shop", role="read")["databases"], ["py"])
+            self.assertEqual(self.db.set_user("py-shop", databases=None), {"user": "py-shop", "role": "read"})
+            with self.assertRaises(TypeError):
+                self.db.set_user("py-shop", databases="py")
+            with self.assertRaises(serengeti.Error) as e:
+                self.db.set_user("py-shop", role="admin", databases=["py"])
+            self.assertEqual(e.exception.status, 400)
+        finally:
+            self.db.delete_user("py-shop")
+            self.db.query("DELETE FROM py.items WHERE _id = 'py-shop'")
+
     def test_an_unreachable_first_node_is_skipped(self):
         db = serengeti.Client(["http://no-such-node.invalid:1985", URL], "admin", PW, timeout=5)
         self.assertEqual(db.status()["version"], self.db.status()["version"])

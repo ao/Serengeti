@@ -138,8 +138,24 @@ expect "no hash in it" 0 "$(body env GET /v1/users "admin:$PW" | grep -c '\$2' |
 expect "delete the write account and its row" 200 "$(status env DELETE /v1/users/writer "admin:$PW")"
 expect "it cannot log in any more" 401 "$(status env GET /v1/status "writer:$WPW")"
 expect "remove its row" 200 "$(query env "DELETE FROM shop.items WHERE _id = 'w'")"
+LPW='limited password 1'
+expect "an account limited to one database" 201 "$(status env PUT /v1/users/limited "admin:$PW" \
+  "{\"password\": \"$LPW\", \"role\": \"write\", \"databases\": [\"shop\"]}")"
+expect "a second database it may not use" 200 "$(query env "CREATE DATABASE blog")"
+expect "it writes in its database" 200 "$(status env POST /v1/query "limited:$LPW" "{\"query\": \"INSERT INTO shop.items (_id, name) VALUES ('l', 'lock')\"}")"
+contains "it sees only its database" '"rows":[["shop"]]' "$(body env POST /v1/query "limited:$LPW" '{"query": "SHOW DATABASES"}')"
+contains "another database is 403 with the reason" 'this account may not use database blog' \
+  "$(req env POST /v1/query "limited:$LPW" '{"query": "DROP DATABASE blog"}')"
+expect "so is one that does not exist" 403 "$(status env POST /v1/query "limited:$LPW" '{"query": "SELECT * FROM nowhere.t"}')"
+expect "and the change feed of another" 403 "$(status env GET '/v1/changes?db=blog&after=now' "limited:$LPW")"
+expect "the other database is still there" 200 "$(query env "SHOW TABLES IN blog")"
+expect "a list on an admin account is 400" 400 "$(status env PUT /v1/users/limited "admin:$PW" '{"role": "admin"}')"
+expect "it is left out of users.json, which 2.1 reads" 0 "$(docker exec "$RUN-env" grep -c limited /data/users.json || true)"
+expect "remove its row" 200 "$(query env "DELETE FROM shop.items WHERE _id = 'l'")"
 docker restart "$RUN-env" >/dev/null
 wait_up env
+expect "the list holds after a restart" 403 "$(status env POST /v1/query "limited:$LPW" '{"query": "SHOW TABLES IN blog"}')"
+contains "and is listed" '"user":"limited","role":"write","databases":["shop"]' "$(body env GET /v1/users "admin:$PW")"
 contains "rows are there after a restart" '"rows":[["a","bolt"],["b","nut"]]' \
   "$(body env POST /v1/query "admin:$PW" '{"query": "SELECT _id, name FROM shop.items"}')"
 expect "accounts are there after a restart" 200 "$(status env GET /v1/status "reader:$RPW")"

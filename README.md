@@ -146,9 +146,18 @@ curl -s -u "admin:$SERENGETI_PASSWORD" -X PUT -H 'Content-Type: application/json
 # {"user":"dashboard","role":"read"}
 ```
 
-A write by a read account gets 403. In a cluster, accounts replicate like rows: the newest change to a
-name wins on every node, and a node that was down catches up. [docs/API.md](docs/API.md#accounts) has the
-rest.
+A write by a read account gets 403. A read or write account can also be limited to some databases; it then
+gets 403 for any statement or change feed that names another one, and `SHOW DATABASES` lists only its own:
+
+```sh
+curl -s -u "admin:$SERENGETI_PASSWORD" -X PUT -H 'Content-Type: application/json' \
+  --data '{"password": "a long password for the shop", "role": "write", "databases": ["shop"]}' \
+  http://127.0.0.1:1985/v1/users/shop-app; echo
+# {"user":"shop-app","role":"write","databases":["shop"]}
+```
+
+In a cluster, accounts replicate like rows: the newest change to a name wins on every node, and a node that
+was down catches up. [docs/API.md](docs/API.md#accounts) has the rest.
 
 ## Following changes
 
@@ -245,8 +254,8 @@ kept-alive connection, and 2.1 sets it itself.
   an indexed comparison scans its table.
 - You need every write serialised, such as a balance that must never go below zero across nodes.
 - You need more than 7 nodes, or nodes that hold only part of the data.
-- You need permissions per database or table: an account's role (read, write or admin) applies to all of
-  them.
+- You need permissions per table, or another role in each database: an account has one role, for every
+  table of every database it may use.
 - Clients you do not trust can reach the node directly. It serves 64 requests at a time (`http_threads`). A
   client that sends its request slowly holds one of them for up to 30 s, so 64 such connections, renewed,
   stall it, and a signed-in client that stops reading a large answer holds one until the connection drops.

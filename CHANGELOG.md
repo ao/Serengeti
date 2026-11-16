@@ -40,6 +40,15 @@ GitHub release notes and tags.
   admin and write accounts readable by 2.0 and 2.1, and a password one of them changed there is taken back
   on the next start as the account's own change, so it does not undo a 2.2 admin's delete or role change.
   See docs/API.md, "Accounts".
+- Accounts limited to some databases: `PUT /v1/users/NAME` with `"databases": ["shop", ...]` (1 to 100
+  names) limits a read or write account to those, and `"databases": null` removes the limit. Any statement
+  that names another database, whether or not it exists, and the change feed for one, get 403 `this account
+  may not use database D` before anything is read or written; `SHOW DATABASES` lists only the account's
+  databases. The role still applies. Admin and metrics accounts cannot have a list (400). The list
+  replicates with the account like a role change, and a node refuses an account whose list is malformed. A
+  limited account is not written to `users.json`, so it does not exist after a rollback to 2.0 or 2.1.
+  Each statement type states which database it names in one place, so a statement added later does not
+  compile until that is decided.
 - A memory limit: once the rows and index entries held are estimated to take `memory_limit_percent`
   (default 60) of the heap, writes that add data get 503 instead of the node running out of memory and
   exiting. Reads, deletes and drops are still served, and a delete makes room at once. The estimate is kept

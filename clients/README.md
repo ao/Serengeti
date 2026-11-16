@@ -36,7 +36,9 @@ in an object, `query(statement, { ack, consistency })`, and ignores anything els
 - `changes(db, after, table, wait, limit)` for one page of the change feed (Python returns `(changes,
   cursor)`, JavaScript `{ changes, cursor }`), and `follow(db, table)`, which yields changes as they come,
   from now on. Cursors belong to one node, so both use the first URL.
-- `users()`, `set_user` / `setUser`, `delete_user` / `deleteUser` (an admin's) and `status()`.
+- `users()`, `set_user` / `setUser` (password, role and `databases`: a list limits the account to those
+  databases, None or null removes the limit, left out keeps it), `delete_user` / `deleteUser` (an
+  admin's) and `status()`.
 - Errors carry the HTTP status and the node's message (Python `serengeti.Error`, JavaScript
   `SerengetiError`). `Unavailable` is 503, or no answer (status 0, also for a TLS failure); `CursorGone`
   is 410 from the change feed: read the table again and follow from now.
