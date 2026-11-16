@@ -658,4 +658,29 @@ class ClusterTest {
                 + "/internal/v2/rows?db=x&table=t&buckets=9999")).header(InternalRoutes.KEY_HEADER, KEY).build(),
                 HttpResponse.BodyHandlers.ofString()).statusCode());
     }
+
+    /**
+     * Found by tests/soak: Node.close() closed the cluster first and the HTTP server after it, and the server
+     * went on answering for up to a second, so a local write already in the log, and a majority read, got
+     * 500. A node whose cluster layer is closed answers 503 (or 200 for a write it has logged).
+     */
+    @Test
+    void aStoppingNodeDoesNotAnswerInternalError() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        for (int i = 0; i < 3; i++) {
+            waitWritable(i);
+        }
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        eventually("n1 has the table", () -> has(1, "SHOW TABLES IN d", List.of(List.of("t"))));
+        nodes[1].cluster().close();
+        HttpResponse<String> w = write(1, "INSERT INTO d.t (_id) VALUES ('x')", "local");
+        HttpResponse<String> m = write(1, "INSERT INTO d.t (_id) VALUES ('y')", "majority");
+        HttpResponse<String> r = query(1, "SELECT COUNT(*) FROM d.t", "majority");
+        assertTrue(w.statusCode() == 200 || w.statusCode() == 503, "local write: " + w.statusCode() + " " + w.body());
+        assertTrue(m.statusCode() == 200 || m.statusCode() == 503, "majority write: " + m.statusCode() + " " + m.body());
+        assertEquals(503, r.statusCode(), "majority read: " + r.body());
+    }
 }

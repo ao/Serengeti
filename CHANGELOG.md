@@ -71,6 +71,11 @@ GitHub release notes and tags.
 - A statement that changed a few hundred thousand rows built its log record in memory several times over
   (a JSON tree, a string, bytes and a buffer): deleting 286,000 rows from a full 512 MiB node ran it out of
   memory.
+- A node that was stopping (SIGTERM, `docker stop`) answered 500 for about a second, also to writes it had
+  already logged: it closed its cluster layer before its HTTP server, which goes on serving kept-alive
+  connections while requests in flight finish. It now stops the HTTP server first, answers what still
+  arrives with 503 "this node is stopping" and closes the connection, and only then closes the cluster
+  and the storage. Found by `tests/soak`, in every run with graceful stops.
 
 ### Changed
 - The image sets `MALLOC_ARENA_MAX=2`. glibc otherwise keeps a malloc arena per thread: filling a node in a

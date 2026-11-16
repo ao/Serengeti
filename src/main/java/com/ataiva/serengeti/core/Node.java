@@ -322,14 +322,19 @@ public final class Node implements AutoCloseable {
     }
 
     @Override
+    /**
+     * Stops in the order requests depend on things: first the HTTP server (requests in flight finish against
+     * a working cluster layer, later ones get 503 "stopping"), then the cluster, then the storage. Closing the
+     * cluster first made a stopping node answer 500 for about a second, also to writes already in its log.
+     */
     public void close() throws IOException {
+        api.close();
         if (maintenance != null) {
             maintenance.shutdownNow();
         }
         if (cluster != null) {
             cluster.close();
         }
-        api.close();
         storage.close();
     }
 }

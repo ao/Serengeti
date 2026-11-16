@@ -139,10 +139,18 @@ public final class HttpApi implements AutoCloseable {
     }
 
     @Override
+    /**
+     * Stops taking requests. Those in flight get up to a second to finish; the JDK server goes on
+     * dispatching requests on kept-alive connections meanwhile, and those get 503 "stopping" and the
+     * connection closed, instead of reaching parts of the node that are shutting down.
+     */
     public void close() {
+        stopping = true;
         server.stop(1);
         pool.shutdownNow();
     }
+
+    private volatile boolean stopping;
 
     private void handle(HttpExchange ex) throws IOException {
         long started = System.nanoTime();
@@ -155,6 +163,10 @@ public final class HttpApi implements AutoCloseable {
             h.set("X-Frame-Options", "DENY");
             h.set("Referrer-Policy", "no-referrer");
             try {
+                if (stopping) {
+                    h.set("Connection", "close");
+                    throw new HttpError(503, "this node is stopping");
+                }
                 route(ex, caller);
             } catch (HttpError e) {
                 if (e.status == 401) {
