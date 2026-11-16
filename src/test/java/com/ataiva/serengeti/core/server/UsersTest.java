@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -262,18 +263,170 @@ class UsersTest {
         var root = com.ataiva.serengeti.core.json.Json.parseObject(Files.readString(dir.resolve("a").resolve(Users.FILE)));
         @SuppressWarnings("unchecked")
         var users = (java.util.Map<String, java.util.Map<String, Object>>) root.get("users");
-        // 2.0 and 2.1 read "users" and know only the roles admin and user.
+        // 2.0 and 2.1 read "users" and know only the roles admin and user; read accounts and tombstones are
+        // only in accounts.json, which they do not read.
         assertEquals(java.util.Set.of("admin", "writer"), users.keySet());
         assertEquals("user", users.get("writer").get("role"));
-        assertTrue(((java.util.Map<?, ?>) root.get("read_users")).containsKey("reader"));
-        assertTrue(((java.util.Map<?, ?>) root.get("deleted")).containsKey("gone"));
+        assertEquals(java.util.Set.of("_v", "users"), root.keySet());
+        assertEquals("rw-------", PosixFilePermissions.toString(
+                Files.getPosixFilePermissions(dir.resolve("a").resolve(Users.ACCOUNTS_FILE))));
         Users again = Users.open(dir.resolve("a"), 4, now::get);
         assertEquals(a.list(), again.list());
         assertEquals(a.digest(), again.digest());
-        // A 2.1 file: no stamps.
+        // 2.1 rewrites users.json with what it knows: no save count, no read accounts.
         PrivateFiles.writeAtomically(dir.resolve("a").resolve(Users.FILE), "{\"users\": {\"admin\": {\"hash\": \""
-                + users.get("admin").get("hash") + "\", \"role\": \"admin\"}}}");
+                + users.get("admin").get("hash") + "\", \"role\": \"admin\"}, \"writer\": {\"hash\": \""
+                + users.get("writer").get("hash") + "\", \"role\": \"user\"}}}");
         Users old = Users.open(dir.resolve("a"), 4, now::get);
         assertEquals(Optional.of(Users.Role.ADMIN), old.verify("admin", PW));
+        assertEquals(a.digest(), old.digest(), "nothing changed there: every stamp and the read account are kept");
+        assertEquals(Users.Role.READ, old.list().get("reader"));
+        assertFalse(old.list().containsKey("gone"));
+    }
+
+    @Test
+    void aPasswordChangedByAnOlderVersionWinsWithTheFilesTime() throws IOException {
+        now.set(System.currentTimeMillis()); // stamps from the file's time must not look like the future
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.setPassword("svc", PW, Users.Role.WRITE);
+        b.merge(a.entries());
+        // a is rolled back to 2.1, svc changes its password there (2.1 writes users.json alone), and a is
+        // upgraded again.
+        var root = com.ataiva.serengeti.core.json.Json.parseObject(Files.readString(dir.resolve("a").resolve(Users.FILE)));
+        @SuppressWarnings("unchecked")
+        var users = (java.util.Map<String, java.util.Map<String, Object>>) root.get("users");
+        String rotated = org.mindrot.jbcrypt.BCrypt.hashpw("rotated password 1", org.mindrot.jbcrypt.BCrypt.gensalt(4));
+        PrivateFiles.writeAtomically(dir.resolve("a").resolve(Users.FILE), "{\"users\": {\"admin\": {\"hash\": \""
+                + users.get("admin").get("hash") + "\", \"role\": \"admin\"}, \"svc\": {\"hash\": \"" + rotated
+                + "\", \"role\": \"user\"}}}");
+        Users upgraded = Users.open(dir.resolve("a"), 4, now::get);
+        assertEquals(Optional.of(Users.Role.WRITE), upgraded.verify("svc", "rotated password 1"));
+        b.merge(upgraded.entries());
+        assertEquals(Optional.of(Users.Role.WRITE), b.verify("svc", "rotated password 1"), "the newer change wins");
+        assertEquals(Optional.empty(), b.verify("svc", PW));
+        upgraded.merge(b.entries());
+        assertEquals(upgraded.digest(), b.digest());
+        // A node made from the environment later does not undo it either: its bootstrap stamp is older.
+        Users c = node("c");
+        c.bootstrapAdmin("from the environment 1");
+        c.merge(b.entries());
+        assertEquals(Optional.of(Users.Role.ADMIN), c.verify("admin", PW));
+    }
+
+    @Test
+    void aStopBetweenTheTwoFilesKeepsTheNewerOne() throws IOException {
+        Users a = node("a");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        String oldUsers = Files.readString(dir.resolve("a").resolve(Users.FILE));
+        a.setPassword("reader", PW, Users.Role.READ);
+        a.delete("reader");
+        // As if the node stopped after writing accounts.json and before users.json, two saves ago.
+        String digest = a.digest();
+        PrivateFiles.writeAtomically(dir.resolve("a").resolve(Users.FILE), oldUsers.replaceFirst("\"_v\":\\d+",
+                "\"_v\":" + (versionIn(dir.resolve("a")) - 1)));
+        assertEquals(digest, Users.open(dir.resolve("a"), 4, now::get).digest());
+    }
+
+    private static long versionIn(Path d) throws IOException {
+        return ((Number) com.ataiva.serengeti.core.json.Json.parseObject(
+                Files.readString(d.resolve(Users.ACCOUNTS_FILE))).get("v")).longValue();
+    }
+
+    @Test
+    void anAccountsOwnPasswordChangeNeverUndoesAnAdminsDeleteOrDemotion() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.setPassword("mallory", PW, Users.Role.WRITE);
+        a.setPassword("eve", PW, Users.Role.WRITE);
+        b.merge(a.entries());
+        // On a: mallory deleted, eve made read-only. b has not heard, and both change their passwords there.
+        assertTrue(a.delete("mallory"));
+        assertTrue(a.setRole("eve", Users.Role.READ));
+        assertTrue(b.changeOwnPassword("mallory", PW, "a new password 1"));
+        assertTrue(b.changeOwnPassword("eve", PW, "a new password 2"));
+        a.merge(b.entries());
+        b.merge(a.entries());
+        assertEquals(a.digest(), b.digest());
+        for (Users u : List.of(a, b)) {
+            assertFalse(u.list().containsKey("mallory"), "the delete stands");
+            assertEquals(Users.Role.READ, u.list().get("eve"), "the demotion stands");
+            assertEquals(Optional.empty(), u.verify("mallory", "a new password 1"));
+        }
+        // The own change is checked against the account as it is: a wrong current password, or a deleted
+        // account, changes nothing.
+        assertFalse(a.changeOwnPassword("eve", "not her password", "a new password 3"));
+        assertFalse(a.changeOwnPassword("mallory", PW, "a new password 3"));
+        // And it keeps the role it has now.
+        assertTrue(a.changeOwnPassword("eve", PW, "a new password 4"));
+        assertEquals(Users.Role.READ, a.list().get("eve"));
+        assertEquals(Optional.of(Users.Role.READ), a.verify("eve", "a new password 4"));
+        // Two own changes on two nodes: the later one wins on both.
+        b.merge(a.entries());
+        assertTrue(b.changeOwnPassword("eve", "a new password 4", "a new password 5"));
+        a.merge(b.entries());
+        assertEquals(Optional.of(Users.Role.READ), a.verify("eve", "a new password 5"));
+    }
+
+    @Test
+    void aChangeOnANodeWhoseClockIsBehindStillComesAfterWhatItChanges() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        b.setStamps(() -> new com.ataiva.serengeti.core.storage.Stamp(1_000_000, 0, "b")); // ten minutes ahead
+        b.setPassword("admin", PW, Users.Role.ADMIN);
+        b.setPassword("temp", PW, Users.Role.WRITE);
+        a.merge(b.entries());
+        assertTrue(a.delete("temp")); // a's clock reads about 100
+        b.merge(a.entries());
+        assertFalse(b.list().containsKey("temp"), "the delete is after the create although a's clock is behind");
+        assertEquals(a.digest(), b.digest());
+        java.util.List<com.ataiva.serengeti.core.storage.Stamp> seen = new java.util.ArrayList<>();
+        Users c = node("c");
+        c.setObserver(seen::add);
+        c.merge(b.entries());
+        assertTrue(seen.stream().anyMatch(s -> s.wall() >= 1_000_000), "merged stamps reach the node's clock");
+    }
+
+    @Test
+    void withNoAdminLeftOtherAccountsWorkAndTheEnvironmentMakesItAgain() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.setPassword("ops", PW, Users.Role.ADMIN);
+        a.setPassword("app", PW, Users.Role.WRITE);
+        b.merge(a.entries());
+        assertTrue(a.delete("admin")); // each node still sees another admin
+        assertTrue(b.delete("ops"));
+        a.merge(b.entries());
+        b.merge(a.entries());
+        assertFalse(a.isSetUp(), "no admin is left");
+        assertTrue(a.hasAccounts());
+        assertEquals(Optional.of(Users.Role.WRITE), a.verify("app", PW), "the other accounts still log in");
+        // A restart with SERENGETI_ADMIN_PASSWORD: stamped after the tombstone, so it wins on every node.
+        Users again = Users.open(dir.resolve("a"), 4, now::get);
+        again.setStamps(() -> new com.ataiva.serengeti.core.storage.Stamp(tick++, 0, "a"));
+        assertTrue(again.bootstrapAdmin("the admin again 1"));
+        b.merge(again.entries());
+        assertEquals(Optional.of(Users.Role.ADMIN), b.verify("admin", "the admin again 1"));
+        // At first start, the bootstrap admin is older than anything.
+        assertFalse(node("fresh").bootstrapAdmin(PW));
+    }
+
+    @Test
+    void aPeerCannotSendACostlyHashOrAStampFromTheFuture() throws IOException {
+        Users a = node("a");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        String before = a.digest();
+        String costly = "$2a$31$" + "a".repeat(53);
+        for (var bad : java.util.List.<java.util.Map<String, Object>>of(
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", costly, "role", "write"),
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2a$12$" + "!".repeat(53), "role", "write"),
+                java.util.Map.of("user", "x", "at", "9999999999999.0.evil", "deleted", true),
+                java.util.Map.of("user", "admin", "at", "5.0.n", "pw_at", "9999999999999.0.evil", "deleted", true))) {
+            assertThrows(IllegalArgumentException.class, () -> a.merge(java.util.List.of(bad)), bad.toString());
+        }
+        assertEquals(before, a.digest());
     }
 }

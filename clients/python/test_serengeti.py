@@ -69,6 +69,22 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(len(self.db.query("SELECT _id FROM py.items WHERE _id = 'maybe'")), 0)
         self.assertGreaterEqual(len(db.query("SHOW DATABASES")), 1)  # a read moves on after the timeout
 
+    def test_an_answer_cut_short(self):
+        db = serengeti.Client([os.environ["SERENGETI_CUT_URL"], URL], "admin", PW, timeout=5)
+        # A read moves on to the next node; a write may have been applied, so it is not sent again.
+        self.assertGreaterEqual(len(db.query("SHOW DATABASES")), 1)
+        with self.assertRaises(serengeti.Unavailable):
+            db.query("INSERT INTO py.items (_id) VALUES ('cut')")
+        self.assertEqual(len(self.db.query("SELECT _id FROM py.items WHERE _id = 'cut'")), 0)
+
+    def test_a_password_beyond_latin1(self):
+        self.db.set_user("py-utf8", password="pässwörd-über-12 密码", role="read")
+        try:
+            self.assertEqual(serengeti.Client(URL, "py-utf8", "pässwörd-über-12 密码").status()["version"],
+                             self.db.status()["version"])
+        finally:
+            self.db.delete_user("py-utf8")
+
     def test_tls_with_the_clusters_ca(self):
         tls = os.environ["SERENGETI_TLS_URL"]
         db = serengeti.Client(tls, "admin", PW, ca_file=os.environ["SERENGETI_CA"])

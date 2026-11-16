@@ -2,6 +2,7 @@ package com.ataiva.serengeti.core.storage;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -51,28 +52,28 @@ public final class StorageEngine implements AutoCloseable {
         this.dir = dir;
         this.checkpointBytes = checkpointBytes;
         Files.createDirectories(dir);
+        // Recovery applies each op as it is read, so a node whose data is near its memory limit needs no more
+        // memory to start than to run. If anything fails, the half-built store is dropped with this object.
         long snapOps = 0;
         Path snap = dir.resolve(SNAPSHOT_FILE);
         if (Files.exists(snap)) {
-            try (InputStream in = Files.newInputStream(snap)) {
-                List<Op> ops = Snapshot.read(in);
-                store.applyAll(ops);
-                snapOps = ops.size();
+            try (InputStream in = new java.io.BufferedInputStream(Files.newInputStream(snap), 1 << 16)) {
+                snapOps = Snapshot.read(in, false, store::apply);
             }
         }
-        List<List<Op>> batches = new ArrayList<>();
+        long[] batches = {0};
         long before = Files.exists(dir.resolve(WAL_FILE)) ? Files.size(dir.resolve(WAL_FILE)) : 0;
-        this.wal = Wal.open(dir.resolve(WAL_FILE), policy, testFsyncDelayMs, batches);
-        for (List<Op> b : batches) {
+        this.wal = Wal.open(dir.resolve(WAL_FILE), policy, testFsyncDelayMs, (java.util.function.Consumer<List<Op>>) b -> {
             store.applyAll(b);
-        }
+            batches[0]++;
+        });
         Path indexes = dir.resolve(INDEX_FILE);
         if (Files.exists(indexes)) {
             try (InputStream in = Files.newInputStream(indexes)) {
-                store.applyAll(Snapshot.read(in));
+                Snapshot.read(in, false, store::apply);
             }
         }
-        this.openStats = new OpenStats(snapOps, batches.size(), before - wal.size());
+        this.openStats = new OpenStats(snapOps, batches[0], before - wal.size());
         if (policy == FsyncPolicy.INTERVAL) {
             flusher = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "wal-flush");
@@ -124,15 +125,18 @@ public final class StorageEngine implements AutoCloseable {
             return;
         }
         long pos;
+        long upto = 0;
         lock.writeLock().lock();
         try {
             ensureOpen();
             pos = commitLocked(batch);
+            upto = lastChange();
         } finally {
             lock.writeLock().unlock();
         }
         if (pos >= 0) {
             wal.awaitDurable(pos);
+            publish(upto);
         }
     }
 
@@ -147,6 +151,7 @@ public final class StorageEngine implements AutoCloseable {
         Planned<T> p;
         List<Op> ops;
         long pos = -1;
+        long upto = 0;
         lock.writeLock().lock();
         try {
             ensureOpen();
@@ -157,6 +162,7 @@ public final class StorageEngine implements AutoCloseable {
             ops = store.withContext(p.ops());
             if (!ops.isEmpty()) {
                 pos = commitLocked(ops);
+                upto = lastChange();
             }
         } finally {
             lock.writeLock().unlock();
@@ -164,6 +170,7 @@ public final class StorageEngine implements AutoCloseable {
         if (pos >= 0) {
             // Outside the lock: writers that arrive during one fsync share the next (group commit).
             wal.awaitDurable(pos);
+            publish(upto);
         }
         if (!ops.isEmpty()) {
             h.after(ops);
@@ -203,6 +210,7 @@ public final class StorageEngine implements AutoCloseable {
      */
     public int merge(List<Op> ops) throws IOException {
         long pos = -1;
+        long upto = 0;
         int count;
         lock.writeLock().lock();
         try {
@@ -215,6 +223,7 @@ public final class StorageEngine implements AutoCloseable {
             }
             if (!fresh.isEmpty()) {
                 pos = commitLocked(fresh);
+                upto = lastChange();
             }
             count = fresh.size();
         } finally {
@@ -222,6 +231,7 @@ public final class StorageEngine implements AutoCloseable {
         }
         if (pos >= 0) {
             wal.awaitDurable(pos);
+            publish(upto);
         }
         return count;
     }
@@ -241,7 +251,9 @@ public final class StorageEngine implements AutoCloseable {
     public void enableChanges(int capacity) {
         lock.writeLock().lock();
         try {
-            changes = new ChangeFeed(capacity);
+            // At most a sixteenth of the heap: the feed holds row values the memory limit does not count.
+            // Changes are published once on disk (see publish), not as they are applied.
+            changes = new ChangeFeed(capacity, Runtime.getRuntime().maxMemory() / 16, false);
             store.setFeed(changes);
         } finally {
             lock.writeLock().unlock();
@@ -312,6 +324,23 @@ public final class StorageEngine implements AutoCloseable {
         }
     }
 
+
+    /** The feed's newest change, read under the write lock right after a commit. */
+    private long lastChange() {
+        ChangeFeed f = changes;
+        return f == null ? 0 : f.last();
+    }
+
+    /**
+     * After the log is on disk up to a commit, its changes (and every earlier one, as the log is written in
+     * order) may be shown to feed readers. A commit whose fsync fails never gets here.
+     */
+    private void publish(long upto) {
+        ChangeFeed f = changes;
+        if (f != null) {
+            f.publish(upto);
+        }
+    }
     /**
      * Logs the batch's ops except index definitions, applies all of it, and rewrites the index file when the
      * batch holds index ops. Returns the log position to wait for, or -1 if nothing was logged. Under the
@@ -322,7 +351,7 @@ public final class StorageEngine implements AutoCloseable {
         long pos = logged.isEmpty() ? -1 : wal.write(logged);
         store.applyAll(ops);
         if (logged.size() != ops.size()) {
-            Snapshot.writeAtomically(Op.indexOnly(store.toOps()), dir.resolve(INDEX_FILE));
+            Snapshot.writeAtomically(store::forEachIndexOp, dir.resolve(INDEX_FILE));
         }
         if (wal.size() >= checkpointBytes) {
             checkpointLocked();
@@ -332,14 +361,35 @@ public final class StorageEngine implements AutoCloseable {
 
     private void checkpointLocked() throws IOException {
         // If the process dies between these two steps, the log is replayed over the new snapshot on the
-        // next start; that is harmless because applying an op twice changes nothing.
-        Snapshot.writeAtomically(Op.legacyOnly(store.toOps()), dir.resolve(SNAPSHOT_FILE));
+        // next start; that is harmless because applying an op twice changes nothing. The ops are written one
+        // at a time: a list of them all would need memory a node near its limit does not have.
+        Snapshot.writeAtomically(sink -> store.forEachOp(op -> {
+            if (Op.legacy(op)) {
+                sink.accept(op);
+            }
+        }), dir.resolve(SNAPSHOT_FILE));
         wal.reset();
     }
 
-    /** A consistent copy of the whole state, for backups and for peers catching up. */
+    /** A consistent copy of the whole state, as a list. For tests; backups use {@link #writeBackup}. */
     public List<Op> snapshotOps() {
         return read(Store::toOps);
+    }
+
+    /**
+     * Writes a consistent copy of the whole state to {@code file} in the backup format, one op at a time, under
+     * the read lock: writes wait while it is written, as they do for a checkpoint.
+     */
+    public void writeBackup(Path file) throws IOException {
+        lock.readLock().lock();
+        try {
+            ensureOpen();
+            try (OutputStream out = new java.io.BufferedOutputStream(Files.newOutputStream(file), 1 << 16)) {
+                Snapshot.write(store::forEachOp, out);
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     public long walBytes() {

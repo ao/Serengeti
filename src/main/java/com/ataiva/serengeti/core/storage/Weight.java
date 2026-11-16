@@ -70,8 +70,15 @@ public final class Weight {
         return 40 + 16 + 24 + of(id);
     }
 
-    /** One id in one index key's set. */
+    /** One id in one index key's set: the set's tree entry. */
     static final long INDEX_ENTRY = 40;
+
+    /**
+     * One distinct key of an index: its entry in the index's tree, and the set of ids (a TreeSet and the
+     * TreeMap inside it). The key itself is the row's value, which the row already counts. On a column whose
+     * values are all different, this is most of what the index takes.
+     */
+    static final long INDEX_KEY = 104;
 
     private static long align(long n) {
         return (n + 7) & ~7L;

@@ -49,7 +49,9 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 P=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | cut -c1-24)
 printf '%s' "$P" > password
-k() { keytool "$@" -storepass "$P" >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; exit 1; }; }
+# The password goes to keytool as a file (in the current directory, $dir), never on its command line, which
+# every user of the host can read with ps.
+k() { keytool "$@" -storepass:file password >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; exit 1; }; }
 
 k -genkeypair -alias ca -keyalg EC -groupname secp256r1 -dname "CN=Serengeti cluster CA" -ext bc:c \
   -validity "$days" -storetype PKCS12 -keystore "$tmp/ca.p12"
@@ -62,6 +64,7 @@ for n in "${nodes[@]}"; do
     IFS=, read -ra extra <<< "${n#*=}"
     for h in "${extra[@]}"; do
       case $h in
+        *:*) san="$san,ip:$h" ;; # an IPv6 address
         *[!0-9.]*|'') san="$san,dns:$h" ;;
         *) san="$san,ip:$h" ;;
       esac

@@ -58,11 +58,11 @@ on a node whose every peer has synced with it by buckets since it started: a 2.0
 from yet (down, or restored from a backup), could otherwise bring a deleted row back.
 
 A node that has not synced with a majority for longer than the TTL might hold rows deleted meanwhile whose
-tombstones are already gone. It starts, or carries on, as stale: it neither syncs nor takes writes, and
+tombstones are already gone. It starts, or carries on, as stale: it neither syncs rows nor takes writes, and
 its own data is not served to peers. It does hand on, once to each peer, the changes stamped after its
 last sync with a majority, which are newer than any tombstone the cluster can have dropped, so writes it
 acknowledged with `"ack": "local"` while cut off are not lost. Then stop it, empty its data directory
-except `users.json` and `node-id`, and start it; it resyncs from its peers. The time of its last sync is
+except `accounts.json`, `users.json` and `node-id`, and start it; it resyncs from its peers. The time of its last sync is
 kept in `last-sync`; `serengeti restore` sets it to the backup's newest change, so a node restored from
 a backup older than the TTL starts stale too.
 

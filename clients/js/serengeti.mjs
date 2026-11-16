@@ -58,7 +58,10 @@ export class Client {
   constructor({ urls, user, password, timeoutMs = 30000 }) {
     this.urls = Array.isArray(urls) ? [...urls] : [urls];
     if (this.urls.length === 0 || !this.urls[0]) throw new Error("give at least one URL");
-    this.auth = "Basic " + btoa(`${user}:${password}`);
+    // The node reads credentials as UTF-8; btoa alone takes Latin-1 and refuses anything beyond it.
+    let latin1 = "";
+    for (const b of new TextEncoder().encode(`${user}:${password}`)) latin1 += String.fromCharCode(b);
+    this.auth = "Basic " + btoa(latin1);
     this.timeoutMs = timeoutMs;
   }
 
@@ -132,7 +135,13 @@ export class Client {
       let out;
       try {
         out = await res.json();
-      } catch {
+      } catch (e) {
+        if (res.ok) {
+          // A 2xx whose body was cut short: the request reached the node, so a write may have been applied.
+          last = new Unavailable(0, `${base}: the answer was cut short (${e.cause?.code ?? e.message})`);
+          if (!retry) throw last;
+          continue;
+        }
         out = { error: res.statusText };
       }
       if (res.ok) return out;

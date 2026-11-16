@@ -158,7 +158,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             LOG.severe("this node last synced with a majority of its cluster at " + java.time.Instant.ofEpochMilli(last)
                     + ", longer ago than tombstone_ttl_hours (" + tombstoneTtl / 3_600_000 + "). Rows deleted since then"
                     + " could come back through it, so it does not sync or take writes. It hands the changes it made"
-                    + " since then to its peers; then stop it, empty its data directory except users.json and node-id,"
+                    + " since then to its peers; then stop it, empty its data directory except accounts.json, users.json and node-id,"
                     + " and start it again to resync.");
         }
         this.lastMajoritySync = last > 0 ? last : clock.getAsLong();
@@ -450,7 +450,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             } else if (!stale && clock.getAsLong() - lastMajoritySync > tombstoneTtl) {
                 stale = true;
                 LOG.severe("no sync with a majority for longer than tombstone_ttl_hours; this node now refuses "
-                        + "writes and syncing. Stop it, empty its data directory except users.json and node-id, "
+                        + "writes and syncing. Stop it, empty its data directory except accounts.json, users.json and node-id, "
                         + "and start it again.");
             }
         } catch (RuntimeException e) {
@@ -527,7 +527,8 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
 
     private CompletableFuture<Void> syncAccounts(Peer p) {
         Users users = accounts;
-        if (users == null || stale || p.protocol1
+        // Also while stale: accounts are never collected, so the reason rows wait does not apply to them.
+        if (users == null || p.protocol1
                 || p.noAccounts && clock.getAsLong() - p.noAccountsSince < PROBE_MILLIS) {
             return CompletableFuture.completedFuture(null);
         }
@@ -814,7 +815,7 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             // Its memory may hold writes the disk does not: peers must not copy them.
             throw new QueryService.Rejected(503, "this node's write-ahead log failed to fsync; it serves nothing until restarted");
         }
-        if (stale && !path.equals("/internal/hello")) {
+        if (stale && !path.equals("/internal/hello") && !path.equals("/internal/v3/users")) {
             // Its rows may include ones the cluster deleted and has since forgotten the tombstones of.
             throw new QueryService.Rejected(503, "this node is out of date: it must be emptied and resynced");
         }

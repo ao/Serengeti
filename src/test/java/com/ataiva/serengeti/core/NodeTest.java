@@ -9,6 +9,7 @@ import com.ataiva.serengeti.core.config.Config;
 import com.ataiva.serengeti.core.config.ConfigException;
 import com.ataiva.serengeti.core.server.SetupToken;
 import com.ataiva.serengeti.core.server.Users;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -165,6 +166,40 @@ class NodeTest {
             Map<String, Object> gone = changes(n, "db=shop&after=" + old);
             assertEquals(410L, gone.get("status"), "a cursor from before the restart");
             assertTrue(((String) gone.get("error")).contains("after=now"), gone.toString());
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theFeedShowsAWriteOnlyOnceItIsOnDiskAndNothingAfterAFailedFsync() throws Exception {
+        Config c = config(tmp.resolve("data"), "SERENGETI_ADMIN_PASSWORD", PW, "SERENGETI_TEST_FSYNC_DELAY_MS", "1500");
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+            assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
+            String cursor = (String) changes(n, "db=shop&after=now").get("cursor");
+            Thread writer = new Thread(() -> {
+                try {
+                    query(n, "INSERT INTO shop.items (_id) VALUES ('slow')");
+                } catch (Exception e) {
+                    // the checks below then fail
+                }
+            });
+            writer.start();
+            Thread.sleep(500); // the insert is applied, its fsync still running
+            Map<String, Object> during = changes(n, "db=shop&after=" + cursor);
+            assertEquals(List.of(), during.get("changes"), "not yet on disk: " + during);
+            writer.join();
+            List<Map<String, Object>> after = (List<Map<String, Object>>) changes(n, "db=shop&after=" + cursor).get("changes");
+            assertEquals("slow", after.get(0).get("_id"));
+        }
+        Path data2 = tmp.resolve("data2");
+        try (Node n = Node.start(config(data2, "SERENGETI_ADMIN_PASSWORD", PW), Node.QUERIES)) {
+            assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+            assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
+            String cursor = (String) changes(n, "db=shop&after=now").get("cursor");
+            n.storageForTest().failNextFsyncForTest(new IOException("injected EIO"));
+            assertEquals(500, query(n, "INSERT INTO shop.items (_id) VALUES ('lost')").statusCode());
+            assertEquals(503L, changes(n, "db=shop&after=" + cursor).get("status"), "the feed stops serving too");
         }
     }
 

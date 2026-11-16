@@ -34,6 +34,8 @@ import java.util.logging.Logger;
 public final class Node implements AutoCloseable {
     private static final Logger LOG = Logger.getLogger(Node.class.getName());
     public static final String NODE_ID_FILE = "node-id";
+    /** Backups are written to a file named like this in the data directory while they are sent. */
+    static final String BACKUP_PREFIX = "backup-";
 
     private final Config config;
     private final String id;
@@ -129,6 +131,12 @@ public final class Node implements AutoCloseable {
         }
         this.id = nodeId(dir);
         this.storage = StorageEngine.open(dir, config.fsync, 64L * 1024 * 1024, config.testFsyncDelayMs);
+        // Backups left behind by a node that stopped while sending one. The data directory is locked now.
+        try (java.nio.file.DirectoryStream<Path> old = Files.newDirectoryStream(dir, BACKUP_PREFIX + "*.tmp")) {
+            for (Path p : old) {
+                Files.deleteIfExists(p);
+            }
+        }
         StorageEngine.OpenStats st = storage.openStats();
         LOG.info("storage opened: " + st.snapshotOps() + " snapshot ops, " + st.walBatches() + " log batches"
                 + (st.walDiscardedBytes() > 0 ? ", " + st.walDiscardedBytes() + " torn bytes discarded" : ""));
@@ -141,15 +149,22 @@ public final class Node implements AutoCloseable {
         }
         this.users = Users.open(dir);
         users.setStamps(clock::now);
+        users.setObserver(clock::observe);
         AtomicReference<SetupToken> token = new AtomicReference<>();
         if (!users.isSetUp()) {
             if (config.adminPassword != null) {
-                users.bootstrapAdmin(config.adminPassword);
+                if (users.bootstrapAdmin(config.adminPassword)) {
+                    LOG.warning("no admin account was left (admins deleted, perhaps on two nodes at once); the admin "
+                            + "is made again from SERENGETI_ADMIN_PASSWORD and replaces the deletion on every node");
+                } else {
+                    LOG.info("admin password set from the configuration");
+                }
                 Files.deleteIfExists(dir.resolve(SetupToken.FILE));
-                LOG.info("admin password set from the configuration");
             } else {
                 token.set(SetupToken.create(dir));
-                LOG.warning("no admin password yet. Every request except /health is refused until it is set: "
+                LOG.warning((users.hasAccounts()
+                        ? "no admin account is left; the other accounts still work. To make the admin again, "
+                        : "no admin password yet. Every request except /health is refused until it is set: ")
                         + "POST /v1/setup with {\"token\": ..., \"password\": ...}, using the token in "
                         + token.get().file().toAbsolutePath());
             }
@@ -250,6 +265,24 @@ public final class Node implements AutoCloseable {
             @Override
             public Optional<List<Op>> snapshot() {
                 return Optional.of(storage.snapshotOps());
+            }
+
+            @Override
+            public boolean diskFailed() {
+                return storage.failed();
+            }
+
+            @Override
+            public Optional<Path> backup() throws IOException {
+                // In the data directory: private, and on a disk that holds the data already.
+                Path f = Files.createTempFile(storage.dir(), BACKUP_PREFIX, ".tmp");
+                try {
+                    storage.writeBackup(f);
+                } catch (IOException | RuntimeException e) {
+                    Files.deleteIfExists(f);
+                    throw e;
+                }
+                return Optional.of(f);
             }
 
             @Override

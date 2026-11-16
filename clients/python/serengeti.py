@@ -15,6 +15,7 @@ been written (see docs/CONSISTENCY.md), so retrying it is the caller's decision.
 """
 
 import base64
+import http.client
 import json
 import socket
 import ssl
@@ -150,10 +151,12 @@ class Client:
         for i, base in enumerate(urls):
             try:
                 return self._send(base, method, path, body, timeout or self._timeout)
-            except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
+            except (urllib.error.URLError, ConnectionError, TimeoutError, OSError, http.client.HTTPException,
+                    ValueError) as e:
+                # HTTPException: the answer was cut short (IncompleteRead) or malformed; ValueError: its JSON was.
                 if isinstance(e, Error):
                     raise
-                last = Unavailable(0, "%s: %s" % (base, getattr(e, "reason", e)))
+                last = Unavailable(0, "%s: %s" % (base, getattr(e, "reason", None) or e.__class__.__name__))
                 # A write that may have reached the node is not sent again.
                 if not retry and not _never_sent(e):
                     raise last

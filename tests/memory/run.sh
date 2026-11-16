@@ -28,6 +28,7 @@ if [ "${SKIP_BUILD:-0}" != 1 ]; then
 fi
 docker network create "${L[@]}" "$RUN" >/dev/null
 docker run -d "${L[@]}" --name "$RUN-client" --network "$RUN" --entrypoint sleep curlimages/curl:8.11.1 3600 >/dev/null
+docker cp tests/memory/small-rows.awk "$RUN-client:/tmp/small-rows.awk" >/dev/null
 docker run -d -m 512m "${L[@]}" --name "$RUN-node" --network "$RUN" --network-alias node \
   -e SERENGETI_ADMIN_PASSWORD="$PW" "$IMAGE" >/dev/null
 
@@ -71,12 +72,58 @@ expect "the serengeti_memory_full metric is 1" 1 "$full"
 m=$(docker exec "$RUN-client" curl -s -u "admin:$PW" http://node:1985/metrics)
 echo "  estimated data $(echo "$m" | sed -n 's/^serengeti_data_bytes \(.*\)$/\1/p') of a budget of $(echo "$m" | sed -n 's/^serengeti_data_budget_bytes \(.*\)$/\1/p') bytes; container memory $(docker stats --no-stream --format '{{.MemUsage}}' "$RUN-node")"
 
+echo "# a backup and a restart while full"
+bk=$(docker exec "$RUN-client" curl -s -o /tmp/backup.jsonl -w '%{http_code} %{size_download}' --max-time 120 \
+  -u "admin:$PW" http://node:1985/v1/backup || echo 000)
+expect "a backup is taken while full" 200 "${bk%% *}"
+echo "  backup of ${bk#* } bytes"
+expect "and the node is still running" true "$(docker inspect -f '{{.State.Running}}' "$RUN-node")"
+restart_and_count() { # table expected-rows
+  docker restart -t 30 "$RUN-node" >/dev/null
+  local up=0
+  for _ in $(seq 120); do [ "$(q 'SHOW DATABASES')" = 200 ] && { up=1; break; }; sleep 1; done
+  expect "it starts again with its data" 1 "$up"
+  expect "and was not killed for memory" false "$(docker inspect -f '{{.State.OOMKilled}}' "$RUN-node")"
+  q "SELECT COUNT(*) FROM $1" >/dev/null
+  expect "with every row" "$2" "$(body | sed -n 's/.*"rows":\[\[\([0-9]*\)\]\].*/\1/p')"
+}
+restart_and_count d.t "$((n * 200))"
+
 echo "# make room"
 expect "deleting every row is taken while full" 200 "$(q 'DELETE FROM d.t')"
 expect "the node is still running after it" true "$(docker inspect -f '{{.State.Running}}' "$RUN-node")"
 expect "and the table is empty" 200 "$(q 'SELECT COUNT(*) FROM d.t')"
 case "$(body)" in *'"rows":[[0]]'*) ok "with no rows left" ;; *) bad "rows left" "$(body)" ;; esac
 expect "a write is taken again at once" 200 "$(q "INSERT INTO d.t (p) VALUES ('after')")"
+expect "and the node is still running" true "$(docker inspect -f '{{.State.Running}}' "$RUN-node")"
+expect "dropping the table" 200 "$(q 'DROP TABLE d.t')"
+
+# Small rows with two indexes: per row, the overhead of the maps, the version and the index entries is most of
+# what a row takes, so this checks the estimate where it is least exact.
+echo "# small rows with two indexes, until the node refuses"
+expect "create the table" 200 "$(q 'CREATE TABLE d.small')"
+expect "index one column" 200 "$(q 'CREATE INDEX ON d.small (n)')"
+expect "index another" 200 "$(q 'CREATE INDEX ON d.small (s)')"
+code=200; batches=0; start=$SECONDS
+while [ "$code" = 200 ] && [ "$batches" -lt 2000 ]; do
+  docker exec "$RUN-client" sh -c 'awk -v b="$1" -f /tmp/small-rows.awk > /tmp/small.json' sh "$batches"
+  code=$(docker exec "$RUN-client" curl -s -o /tmp/body -w '%{http_code}' --max-time 60 -u "admin:$PW" \
+    -H 'Content-Type: application/json' --data-binary @/tmp/small.json http://node:1985/v1/query || echo 000)
+  [ "$code" = 200 ] && batches=$((batches + 1))
+  if [ $((batches % 50)) = 0 ] && [ "$code" = 200 ]; then
+    echo "  after $((batches * 2000)) rows: $(docker exec "$RUN-client" curl -s -u "admin:$PW" http://node:1985/metrics | grep -E '^serengeti_(data_bytes|heap_bytes)' | tr '\n' ' ') container $(docker stats --no-stream --format '{{.MemUsage}}' "$RUN-node")"
+  fi
+done
+echo "  $((batches * 2000)) rows in $((SECONDS - start)) s, then $code: $(body | cut -c1-160)"
+expect "a write that adds data is refused with 503" 503 "$code"
+expect "the node is still running" true "$(docker inspect -f '{{.State.Running}}' "$RUN-node")"
+expect "and was not killed for memory" false "$(docker inspect -f '{{.State.OOMKilled}}' "$RUN-node")"
+expect "an indexed read works while full" 200 "$(q 'SELECT COUNT(*) FROM d.small WHERE n = 7')"
+expect "and finds its row" '"rows":[[1]]' "$(body | grep -o '"rows":\[\[[0-9]*\]\]')"
+m=$(docker exec "$RUN-client" curl -s -u "admin:$PW" http://node:1985/metrics)
+echo "  estimated data $(echo "$m" | sed -n 's/^serengeti_data_bytes \(.*\)$/\1/p') of $(echo "$m" | sed -n 's/^serengeti_data_budget_bytes \(.*\)$/\1/p'); heap $(echo "$m" | grep '^serengeti_heap_bytes' | tr '\n' ' ')"
+restart_and_count d.small "$((batches * 2000))"
+expect "deleting them is taken" 200 "$(q 'DELETE FROM d.small')"
 expect "and the node is still running" true "$(docker inspect -f '{{.State.Running}}' "$RUN-node")"
 
 echo

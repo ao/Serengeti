@@ -1,6 +1,8 @@
 package com.ataiva.serengeti.core.storage;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -45,6 +47,34 @@ class WalTest {
         for (int i = 0; i < 20; i++) {
             assertEquals(batch(i), got.get(i));
         }
+    }
+
+    @Test
+    void aRecordIsWrittenOpByOpAsEncodeWouldAndAnOversizedOneLeavesNothing() throws IOException {
+        Path p = dir.resolve("wal.log");
+        List<Op> many = new ArrayList<>();
+        for (int i = 0; i < 5000; i++) {
+            many.add(new Op.Delete("d", "t", "row-" + i, new Stamp(100 + i, 0, "n1")));
+        }
+        // Over the record limit: three values of 25 MiB.
+        String huge = "y".repeat(25 * 1024 * 1024);
+        List<Op> tooBig = List.of(new Op.Put("d", "t", "a", Map.of("v", (Object) huge), new Stamp(1, 0, "n1")),
+                new Op.Put("d", "t", "b", Map.of("v", (Object) huge), new Stamp(2, 0, "n1")),
+                new Op.Put("d", "t", "c", Map.of("v", (Object) huge), new Stamp(3, 0, "n1")));
+        try (Wal w = Wal.open(p, FsyncPolicy.ALWAYS, 0, new ArrayList<>())) {
+            w.append(batch(0));
+            w.append(many);
+            long before = Files.size(p);
+            assertThrows(IllegalArgumentException.class, () -> w.append(tooBig));
+            assertEquals(before, Files.size(p), "nothing of the refused batch is left");
+            w.append(batch(1));
+        }
+        java.io.ByteArrayOutputStream want = new java.io.ByteArrayOutputStream();
+        want.write(Wal.encode(batch(0)));
+        want.write(Wal.encode(many));
+        want.write(Wal.encode(batch(1)));
+        assertArrayEquals(want.toByteArray(), Files.readAllBytes(p));
+        assertEquals(List.of(batch(0), many, batch(1)), reopen(p));
     }
 
     @Test

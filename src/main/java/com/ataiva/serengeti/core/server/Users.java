@@ -23,20 +23,31 @@ import java.util.regex.Pattern;
 import org.mindrot.jbcrypt.BCrypt;
 
 /**
- * Accounts, stored as bcrypt hashes in {@code users.json} in the data directory (mode 0600).
+ * Accounts, stored as bcrypt hashes in the data directory: {@code accounts.json} holds them all with the
+ * stamps that order their changes, and {@code users.json} holds the admin and write accounts in the form 2.0
+ * and 2.1 read, so a node can be rolled back. Both are mode 0600.
  *
- * <p>Each account carries the stamp of its last change, and a deleted account stays as a tombstone with the
- * stamp of its deletion, so the accounts of a cluster merge like its rows: the newest change to a name wins on
- * every node, in any order (see {@link #merge}). An account created from {@code SERENGETI_ADMIN_PASSWORD} at
- * first start has the oldest possible stamp, so any later change wins over it; two such accounts on different
- * nodes resolve the same way everywhere (by hash), which is why every node should get the same password.
+ * <p>Accounts merge across a cluster like rows: the newest change to a name wins on every node, in any order
+ * (see {@link #merge}), and a deleted account stays as a tombstone. Two stamps order an account's changes.
+ * {@code at} is the stamp of its last admin change: creating it, a password or role set by an admin, deleting
+ * it. {@code pw_at} is the stamp of its own last password change on top of that version. A newer {@code at}
+ * always wins, so an account cannot undo its deletion or demotion by changing its password on a node that
+ * has not heard of it yet; that password change is lost instead.
+ *
+ * <p>The admin made at first start from {@code SERENGETI_ADMIN_PASSWORD} has the oldest possible stamp, so
+ * any later change wins over it and a new node does not reset a cluster's admin password. If no admin is left
+ * (two deleted on two nodes at once, which no node can stop alone), the next start with that setting makes
+ * the admin again with a current stamp, and a start without it writes a setup token.
  *
  * <p>bcrypt at cost 12 takes a few hundred milliseconds per check, so a successful check is remembered
  * for 60 seconds under the SHA-256 of the user name and password. Only the digest is kept in memory,
  * never the password, and any change to the accounts clears the cache.
  */
 public final class Users {
+    /** The accounts in the form 2.0 and 2.1 read: admin and write accounts only. */
     public static final String FILE = "users.json";
+    /** Every account and tombstone with its stamps. 2.0 and 2.1 do not know this file. */
+    public static final String ACCOUNTS_FILE = "accounts.json";
     public static final String ADMIN = "admin";
     public static final int MIN_PASSWORD = 12;
     /** bcrypt ignores everything after 72 bytes, so longer passwords are refused instead. */
@@ -44,6 +55,10 @@ public final class Users {
     static final long CACHE_MILLIS = 60_000;
     private static final int CACHE_MAX = 10_000;
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    /** A bcrypt hash at cost 4 to 14: a peer cannot make each login here cost hours. */
+    private static final Pattern HASH = Pattern.compile("\\$2[aby]\\$(0[4-9]|1[0-4])\\$[./A-Za-z0-9]{53}");
+    /** A peer's stamp may be ahead of this node's clock by at most this. */
+    static final long MAX_AHEAD_MILLIS = 24L * 60 * 60 * 1000;
     /** The stamp of an account made at first start from the environment: older than any change. */
     static final Stamp BOOTSTRAP = new Stamp(0, 0, "bootstrap");
 
@@ -75,15 +90,26 @@ public final class Users {
         }
     }
 
-    /** One account, or the tombstone of a deleted one ({@code hash} and {@code role} null). */
-    private record Account(String hash, Role role, Stamp at) {
+    /**
+     * One account, or the tombstone of a deleted one ({@code hash} and {@code role} null). {@code at} is the
+     * stamp of the last admin change, {@code pwAt} of the account's own last password change after it
+     * ({@link Stamp#ZERO} if none).
+     */
+    private record Account(String hash, Role role, Stamp at, Stamp pwAt) {
+        Account {
+            pwAt = pwAt == null ? Stamp.ZERO : pwAt;
+        }
+
         boolean deleted() {
             return hash == null;
         }
 
-        /** The newer of two versions of a name, the same on every node: by stamp, then by hash. */
+        /** The newer of two versions of a name, the same on every node: by at, then pw_at, then hash. */
         static Account newer(Account a, Account b) {
             int c = a.at.compareTo(b.at);
+            if (c == 0) {
+                c = a.pwAt.compareTo(b.pwAt);
+            }
             if (c != 0) {
                 return c > 0 ? a : b;
             }
@@ -95,16 +121,19 @@ public final class Users {
 
     private record Cached(String user, Role role, long expires) {}
 
-    private final Path file;
+    private final Path dir;
     private final int cost;
     private final LongSupplier clock;
     private final Map<String, Account> accounts = new TreeMap<>();
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
+    /** Counts saves; both files carry it, so a load can tell whether an older version rewrote users.json. */
+    private long version;
     private volatile Supplier<Stamp> stamps;
     private volatile Consumer<List<Map<String, Object>>> listener = changed -> { };
+    private volatile Consumer<Stamp> observer = s -> { };
 
-    private Users(Path file, int cost, LongSupplier clock) {
-        this.file = file;
+    private Users(Path dir, int cost, LongSupplier clock) {
+        this.dir = dir;
         this.cost = cost;
         this.clock = clock;
         this.stamps = () -> new Stamp(clock.getAsLong(), 0, "local");
@@ -115,42 +144,87 @@ public final class Users {
     }
 
     static Users open(Path dataDir, int cost, LongSupplier clock) throws IOException {
-        Users u = new Users(dataDir.resolve(FILE), cost, clock);
-        if (Files.exists(u.file)) {
-            if (!PrivateFiles.isPrivate(u.file)) {
-                throw new IOException(u.file + " must be readable by its owner only (chmod 600)");
+        Users u = new Users(dataDir, cost, clock);
+        u.load();
+        return u;
+    }
+
+    private void load() throws IOException {
+        Path accountsFile = dir.resolve(ACCOUNTS_FILE);
+        Path usersFile = dir.resolve(FILE);
+        Map<String, Account> base = new TreeMap<>();
+        long v = -1;
+        if (Files.exists(accountsFile)) {
+            Map<String, Object> root = readPrivate(accountsFile);
+            if (!(root.get("v") instanceof Number n) || !(root.get("accounts") instanceof List<?> list)) {
+                throw new IOException(accountsFile + ": no \"v\" and \"accounts\"");
             }
-            Map<String, Object> root = Json.parseObject(Files.readString(u.file, StandardCharsets.UTF_8));
-            if (!(root.get("users") instanceof Map<?, ?> m)) {
-                throw new IOException(u.file + ": no \"users\" object");
-            }
-            for (Map.Entry<?, ?> e : m.entrySet()) {
-                if (!(e.getValue() instanceof Map<?, ?> a) || !(a.get("hash") instanceof String h)
-                        || !(a.get("role") instanceof String r)) {
-                    throw new IOException(u.file + ": malformed entry for " + e.getKey());
-                }
-                Stamp at = a.get("at") instanceof String s ? Stamp.parse(s) : Stamp.ZERO; // 2.0 and 2.1 files have none
-                u.accounts.put((String) e.getKey(), new Account(h, Role.parse(r), at));
-            }
-            if (root.get("read_users") instanceof Map<?, ?> r) {
-                for (Map.Entry<?, ?> e : r.entrySet()) {
-                    if (!(e.getValue() instanceof Map<?, ?> a) || !(a.get("hash") instanceof String h)) {
-                        throw new IOException(u.file + ": malformed entry for " + e.getKey());
-                    }
-                    Stamp at = a.get("at") instanceof String s ? Stamp.parse(s) : Stamp.ZERO;
-                    u.accounts.put((String) e.getKey(), new Account(h, Role.READ, at));
-                }
-            }
-            if (root.get("deleted") instanceof Map<?, ?> d) {
-                for (Map.Entry<?, ?> e : d.entrySet()) {
-                    if (!(e.getValue() instanceof String s)) {
-                        throw new IOException(u.file + ": malformed deletion of " + e.getKey());
-                    }
-                    u.accounts.putIfAbsent((String) e.getKey(), new Account(null, null, Stamp.parse(s)));
+            v = n.longValue();
+            for (Object o : list) {
+                try {
+                    Map.Entry<String, Account> e = parse(o, false);
+                    base.put(e.getKey(), e.getValue());
+                } catch (IllegalArgumentException e) {
+                    throw new IOException(accountsFile + ": " + e.getMessage());
                 }
             }
         }
-        return u;
+        version = Math.max(v, 0);
+        if (!Files.exists(usersFile)) {
+            accounts.putAll(base);
+            return;
+        }
+        Map<String, Object> root = readPrivate(usersFile);
+        if (!(root.get("users") instanceof Map<?, ?> m)) {
+            throw new IOException(usersFile + ": no \"users\" object");
+        }
+        long uv = root.get("_v") instanceof Number n ? n.longValue() : -1;
+        // Written by this version at the same save as accounts.json, or one save behind it: accounts.json is
+        // written first, so a stop between the two leaves users.json one behind, and accounts.json is right.
+        if (v >= 0 && (uv == v || uv == v - 1)) {
+            accounts.putAll(base);
+            return;
+        }
+        // Written or rewritten by 2.0 or 2.1, which know no stamps: an entry that differs from accounts.json
+        // was changed there, so it is stamped with the file's time (after the BOOTSTRAP stamp, and after what
+        // accounts.json had for it). Read accounts and tombstones are not in users.json and stay as they were.
+        Stamp legacy = new Stamp(Math.max(1, Files.getLastModifiedTime(usersFile).toMillis()), 0, "legacy");
+        accounts.putAll(base);
+        boolean changed = false;
+        for (Map.Entry<?, ?> e : m.entrySet()) {
+            if (!(e.getKey() instanceof String name) || nameProblem(name) != null
+                    || !(e.getValue() instanceof Map<?, ?> a) || !(a.get("hash") instanceof String h)
+                    || !(a.get("role") instanceof String r)) {
+                throw new IOException(usersFile + ": malformed entry for " + e.getKey());
+            }
+            Role role;
+            try {
+                role = Role.parse(r);
+            } catch (IllegalArgumentException ex) {
+                throw new IOException(usersFile + ": " + ex.getMessage() + " for " + name);
+            }
+            Account b = base.get(name);
+            if (b != null && !b.deleted() && b.hash().equals(h) && b.role() == role) {
+                continue;
+            }
+            Stamp at = b == null ? legacy : Stamp.max(legacy, after(b.at(), b.pwAt(), legacy));
+            accounts.put(name, new Account(h, role, at, Stamp.ZERO));
+            changed = true;
+        }
+        if (changed || v < 0) {
+            save(new TreeMap<>(accounts));
+        }
+    }
+
+    private static Map<String, Object> readPrivate(Path f) throws IOException {
+        if (!PrivateFiles.isPrivate(f)) {
+            throw new IOException(f + " must be readable by its owner only (chmod 600)");
+        }
+        try {
+            return Json.parseObject(Files.readString(f, StandardCharsets.UTF_8));
+        } catch (RuntimeException e) {
+            throw new IOException(f + " is not valid JSON: " + e.getMessage());
+        }
     }
 
     /** Where the stamps of account changes come from: the node's clock, so they order with its writes. */
@@ -163,8 +237,19 @@ public final class Users {
         this.listener = listener == null ? changed -> { } : listener;
     }
 
+    /** Called with the stamps of accounts merged from peers, so the node's clock moves past them. */
+    public void setObserver(Consumer<Stamp> observer) {
+        this.observer = observer == null ? s -> { } : observer;
+    }
+
+    /** True while an admin exists: /v1/setup is refused then. */
     public synchronized boolean isSetUp() {
         return accounts.values().stream().anyMatch(a -> !a.deleted() && a.role() == Role.ADMIN);
+    }
+
+    /** True while any account exists: until then every route but /health, /ready and /v1/setup is refused. */
+    public synchronized boolean hasAccounts() {
+        return accounts.values().stream().anyMatch(a -> !a.deleted());
     }
 
     /** Checks a password against the rules. Returns an error message, or null if it is acceptable. */
@@ -186,17 +271,26 @@ public final class Users {
         return null;
     }
 
-    /** Creates or replaces an account and writes the file before returning. */
+    /** Creates or replaces an account (an admin change) and writes the files before returning. */
     public void setPassword(String user, String password, Role role) throws IOException {
-        set(user, password, role, null);
+        set(user, password, role, false);
     }
 
-    /** The admin account made at first start from the environment, stamped older than any change. */
-    public void bootstrapAdmin(String password) throws IOException {
-        set(ADMIN, password, Role.ADMIN, BOOTSTRAP);
+    /**
+     * Makes the admin from the environment when no admin exists. At first start (no accounts at all) it gets the
+     * oldest stamp, so the cluster's own admin wins over it; when the admins were deleted, it gets a current
+     * stamp, so it wins over their tombstones. Returns true in that second case.
+     */
+    public boolean bootstrapAdmin(String password) throws IOException {
+        boolean recovering;
+        synchronized (this) {
+            recovering = !accounts.isEmpty();
+        }
+        set(ADMIN, password, Role.ADMIN, !recovering);
+        return recovering;
     }
 
-    private void set(String user, String password, Role role, Stamp at) throws IOException {
+    private void set(String user, String password, Role role, boolean bootstrap) throws IOException {
         String problem = nameProblem(user);
         if (problem == null) {
             problem = passwordProblem(password);
@@ -207,19 +301,49 @@ public final class Users {
         String hash = BCrypt.hashpw(password, BCrypt.gensalt(cost)); // slow: outside the lock
         Map<String, Object> entry;
         synchronized (this) {
-            Account a = new Account(hash, role, at != null ? at : stamps.get());
             Account old = accounts.get(user);
             if (role != Role.ADMIN && old != null && !old.deleted() && old.role() == Role.ADMIN && admins() == 1) {
                 throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
             }
-            Map<String, Account> next = new TreeMap<>(accounts);
-            next.put(user, a);
-            save(next);
-            accounts.put(user, a);
-            cache.clear();
-            entry = entry(user, a);
+            Account a = new Account(hash, role, bootstrap ? BOOTSTRAP : next(old), Stamp.ZERO);
+            entry = commit(user, a);
         }
         listener.accept(List.of(entry));
+    }
+
+    /**
+     * An account changes its own password: {@code current} must still be its password. The role stays what it
+     * is now (not what it was when the request was authenticated), and the change is stamped as the account's
+     * own, so it never undoes an admin's delete or role change, here or on another node.
+     *
+     * @return false if the account does not exist (any more) or {@code current} is not its password
+     */
+    public boolean changeOwnPassword(String user, String current, String password) throws IOException {
+        String problem = passwordProblem(password);
+        if (problem != null) {
+            throw new IllegalArgumentException(problem);
+        }
+        String hash = BCrypt.hashpw(password, BCrypt.gensalt(cost)); // slow: outside the lock
+        for (int attempt = 0; attempt < 3; attempt++) {
+            Account was;
+            synchronized (this) {
+                was = accounts.get(user);
+            }
+            if (was == null || was.deleted() || current == null || !BCrypt.checkpw(current, was.hash())) {
+                return false;
+            }
+            Map<String, Object> entry;
+            synchronized (this) {
+                if (!was.equals(accounts.get(user))) {
+                    continue; // changed while bcrypt ran: check against what it is now
+                }
+                Account a = new Account(hash, was.role(), was.at(), after(was.at(), was.pwAt(), stamps.get()));
+                entry = commit(user, a);
+            }
+            listener.accept(List.of(entry));
+            return true;
+        }
+        return false;
     }
 
     /** Changes the role of an existing account. False if there is no such account. */
@@ -233,13 +357,7 @@ public final class Users {
             if (role != Role.ADMIN && old.role() == Role.ADMIN && admins() == 1) {
                 throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
             }
-            Account a = new Account(old.hash(), role, stamps.get());
-            Map<String, Account> next = new TreeMap<>(accounts);
-            next.put(user, a);
-            save(next);
-            accounts.put(user, a);
-            cache.clear();
-            entry = entry(user, a);
+            entry = commit(user, new Account(old.hash(), role, next(old), Stamp.ZERO));
         }
         listener.accept(List.of(entry));
         return true;
@@ -256,16 +374,32 @@ public final class Users {
             if (old.role() == Role.ADMIN && admins() == 1) {
                 throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
             }
-            Account a = new Account(null, null, stamps.get());
-            Map<String, Account> next = new TreeMap<>(accounts);
-            next.put(user, a);
-            save(next);
-            accounts.put(user, a);
-            cache.clear();
-            entry = entry(user, a);
+            entry = commit(user, new Account(null, null, next(old), Stamp.ZERO));
         }
         listener.accept(List.of(entry));
         return true;
+    }
+
+    /** Under the lock: writes the files with {@code a} for {@code user}, then takes it. Returns its entry. */
+    private Map<String, Object> commit(String user, Account a) throws IOException {
+        Map<String, Account> next = new TreeMap<>(accounts);
+        next.put(user, a);
+        save(next);
+        accounts.put(user, a);
+        cache.clear();
+        return entry(user, a);
+    }
+
+    /** A stamp for an admin change to a name: after every stamp it has, even if this node's clock is behind. */
+    private Stamp next(Account old) {
+        Stamp now = stamps.get();
+        return old == null ? now : after(old.at(), old.pwAt(), now);
+    }
+
+    /** {@code now}, or just after the later of {@code a} and {@code b} if {@code now} is not after both. */
+    private static Stamp after(Stamp a, Stamp b, Stamp now) {
+        Stamp last = Stamp.max(a, b);
+        return now.after(last) ? now : new Stamp(last.wall(), Math.addExact(last.counter(), 1), now.node());
     }
 
     private int admins() {
@@ -289,7 +423,7 @@ public final class Users {
         return out;
     }
 
-    /** Every account and tombstone, as sent to peers: name, stamp, and hash and role or {@code deleted}. */
+    /** Every account and tombstone, as sent to peers: name, stamps, and hash and role or {@code deleted}. */
     public synchronized List<Map<String, Object>> entries() {
         List<Map<String, Object>> out = new ArrayList<>();
         accounts.forEach((name, a) -> out.add(entry(name, a)));
@@ -300,6 +434,9 @@ public final class Users {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("user", name);
         m.put("at", a.at().toString());
+        if (a.pwAt().after(Stamp.ZERO)) {
+            m.put("pw_at", a.pwAt().toString());
+        }
         if (a.deleted()) {
             m.put("deleted", true);
         } else {
@@ -309,12 +446,37 @@ public final class Users {
         return m;
     }
 
+    /** One entry, from a peer ({@code fromPeer}: its stamps must not be far ahead of this node's clock). */
+    private Map.Entry<String, Account> parse(Object o, boolean fromPeer) {
+        if (!(o instanceof Map<?, ?> m) || !(m.get("user") instanceof String user) || nameProblem(user) != null
+                || !(m.get("at") instanceof String at)) {
+            throw new IllegalArgumentException("malformed account entry");
+        }
+        Stamp stamp = Stamp.parse(at);
+        Stamp pwStamp = m.get("pw_at") instanceof String p ? Stamp.parse(p) : Stamp.ZERO;
+        if (fromPeer) {
+            long limit = clock.getAsLong() + MAX_AHEAD_MILLIS;
+            if (stamp.wall() > limit || pwStamp.wall() > limit) {
+                throw new IllegalArgumentException("account entry for " + user + " is stamped more than a day ahead");
+            }
+        }
+        Account a;
+        if (Boolean.TRUE.equals(m.get("deleted"))) {
+            a = new Account(null, null, stamp, pwStamp);
+        } else if (m.get("hash") instanceof String h && HASH.matcher(h).matches() && m.get("role") instanceof String r) {
+            a = new Account(h, Role.parse(r), stamp, pwStamp);
+        } else {
+            throw new IllegalArgumentException("malformed account entry for " + user);
+        }
+        return Map.entry(user, a);
+    }
+
     /** Most entries taken in one merge, to bound what a peer can make a node hold. */
     static final int MAX_ENTRIES = 10_000;
 
     /**
      * Merges accounts from a peer: for each name the newer version wins (see {@link Account#newer}), so merging
-     * is idempotent and order-independent. Returns how many names changed; writes the file when any did.
+     * is idempotent and order-independent. Returns how many names changed; writes the files when any did.
      *
      * @throws IllegalArgumentException if an entry is malformed; nothing is merged then
      */
@@ -324,24 +486,12 @@ public final class Users {
         }
         Map<String, Account> in = new HashMap<>();
         for (Object o : entries) {
-            if (!(o instanceof Map<?, ?> m) || !(m.get("user") instanceof String user) || nameProblem(user) != null
-                    || !(m.get("at") instanceof String at)) {
-                throw new IllegalArgumentException("malformed account entry");
-            }
-            Account a;
-            if (Boolean.TRUE.equals(m.get("deleted"))) {
-                a = new Account(null, null, Stamp.parse(at));
-            } else if (m.get("hash") instanceof String h && h.startsWith("$2") && h.length() == 60
-                    && m.get("role") instanceof String r) {
-                a = new Account(h, Role.parse(r), Stamp.parse(at));
-            } else {
-                throw new IllegalArgumentException("malformed account entry for " + user);
-            }
-            in.merge(user, a, Account::newer);
+            Map.Entry<String, Account> e = parse(o, true);
+            in.merge(e.getKey(), e.getValue(), Account::newer);
         }
+        int changed = 0;
         synchronized (this) {
             Map<String, Account> next = new TreeMap<>(accounts);
-            int changed = 0;
             for (Map.Entry<String, Account> e : in.entrySet()) {
                 Account old = next.get(e.getKey());
                 Account won = old == null ? e.getValue() : Account.newer(old, e.getValue());
@@ -356,8 +506,11 @@ public final class Users {
                 accounts.putAll(next);
                 cache.clear();
             }
-            return changed;
         }
+        for (Account a : in.values()) {
+            observer.accept(Stamp.max(a.at(), a.pwAt()));
+        }
+        return changed;
     }
 
     /** SHA-256 over the entries, to compare with a peer's cheaply. */
@@ -375,35 +528,33 @@ public final class Users {
     }
 
     /**
-     * Writes the file so that 2.0 and 2.1 can still open it after a rollback: they know the roles "admin" and
-     * "user" in {@code users} and ignore other keys, so write accounts are written as "user" (2.0's name for
-     * them), read accounts go in {@code read_users}, and tombstones in {@code deleted}. After a rollback the
-     * read accounts cannot log in, which is the safe way round.
+     * Writes accounts.json, then users.json, both with the next save count. users.json is what 2.0 and 2.1
+     * read: they know the roles "admin" and "user" and ignore other keys, so write accounts are written as
+     * "user" (2.0's name for them), and read accounts and tombstones are left out. After a rollback the read
+     * accounts cannot log in, which is the safe way round.
      */
     private void save(Map<String, Account> next) throws IOException {
+        long v = version + 1;
+        List<Object> all = new ArrayList<>();
         Map<String, Object> users = new LinkedHashMap<>();
-        Map<String, Object> readers = new LinkedHashMap<>();
-        Map<String, Object> deleted = new LinkedHashMap<>();
         next.forEach((name, a) -> {
-            if (a.deleted()) {
-                deleted.put(name, a.at().toString());
-                return;
+            all.add(entry(name, a));
+            if (!a.deleted() && a.role() != Role.READ) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("hash", a.hash());
+                m.put("role", a.role() == Role.WRITE ? "user" : a.role().label());
+                users.put(name, m);
             }
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("hash", a.hash());
-            m.put("role", a.role() == Role.WRITE ? "user" : a.role().label());
-            m.put("at", a.at().toString());
-            (a.role() == Role.READ ? readers : users).put(name, m);
         });
         Map<String, Object> root = new LinkedHashMap<>();
-        root.put("users", users);
-        if (!readers.isEmpty()) {
-            root.put("read_users", readers);
-        }
-        if (!deleted.isEmpty()) {
-            root.put("deleted", deleted);
-        }
-        PrivateFiles.writeAtomically(file, Json.write(root) + "\n");
+        root.put("v", v);
+        root.put("accounts", all);
+        PrivateFiles.writeAtomically(dir.resolve(ACCOUNTS_FILE), Json.write(root) + "\n");
+        Map<String, Object> legacy = new LinkedHashMap<>();
+        legacy.put("_v", v);
+        legacy.put("users", users);
+        PrivateFiles.writeAtomically(dir.resolve(FILE), Json.write(legacy) + "\n");
+        version = v;
     }
 
     /** The role of a user whose password matches, or empty. Unknown users cost the same as wrong passwords. */
@@ -422,9 +573,15 @@ public final class Users {
             Account current;
             synchronized (this) {
                 current = accounts.get(user);
-            }
-            if (a != null && a.equals(current)) {
-                break; // checked against the account as it still is
+                if (a != null && a.equals(current)) {
+                    // Checked against the account as it still is. Cached under the lock, which every change
+                    // also takes to clear the cache, so a change cannot fall between the check and the put.
+                    if (cache.size() >= CACHE_MAX) {
+                        cache.clear();
+                    }
+                    cache.put(key, new Cached(user, a.role(), now + CACHE_MILLIS));
+                    return Optional.of(a.role());
+                }
             }
             if (current != null && current.deleted()) {
                 current = null;
@@ -440,11 +597,6 @@ public final class Users {
             // The account may change while bcrypt runs (a new password, a merge from a peer): look again.
             a = current;
         }
-        if (cache.size() >= CACHE_MAX) {
-            cache.clear();
-        }
-        cache.put(key, new Cached(user, a.role(), now + CACHE_MILLIS));
-        return Optional.of(a.role());
     }
 
     private String dummy;

@@ -2,11 +2,16 @@
 # serengeti: the command line next to a running node in the image, for example
 #   docker exec -it NAME serengeti shell
 #   docker exec NAME serengeti --version
-# The node's own JVM settings (JAVA_TOOL_OPTIONS) size a server; a command needs little memory.
 # With no command it prints the usage instead of starting a second node in the container.
 if [ $# -eq 0 ]; then
   set -- --help
 fi
-unset JAVA_TOOL_OPTIONS
-exec java -Xmx96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xshare:auto \
-  -jar /opt/serengeti/serengeti.jar "$@"
+case $1 in
+  shell|--version|--help|-h|--health)
+    # The node's own JVM settings (JAVA_TOOL_OPTIONS) size a server; these need little memory.
+    unset JAVA_TOOL_OPTIONS
+    exec java -Xmx96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xshare:auto -jar /opt/serengeti/serengeti.jar "$@"
+    ;;
+esac
+# restore, and the node itself, hold the whole data set: they keep the image's settings.
+exec java -jar /opt/serengeti/serengeti.jar "$@"

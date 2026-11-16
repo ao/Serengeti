@@ -282,7 +282,9 @@ def run(host, n=None, seed=None):
     check("valid statements were mostly accepted", counts["valid-200"] > counts["valid-400"], repr(counts))
     expect("the node answers afterwards", 200, once(host, "GET", "/health", auth=False).status)
     # The writes left every table in a state where index lookups and scans agree, before and after the
-    # indexes are built again from the rows.
+    # indexes are built again from the rows. The run may have dropped the database or a table (seed
+    # 715849882 did): make whatever is missing again first.
+    setup(c)
     for stage in ("as the run left them", "after DROP and CREATE INDEX"):
         mism = []
         for t in ("t", "u", "on"):

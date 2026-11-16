@@ -95,6 +95,7 @@ expect "setup token is deleted" "gone" "$(docker exec "$RUN-fresh" sh -c 'test -
 expect "setup a second time is 409" 409 "$(status fresh POST /v1/setup "" '{"token": "'"$token"'", "password": "another password 2"}')"
 expect "query with the new password is 200" 200 "$(query fresh "SHOW DATABASES")"
 expect "users file is mode 600" "600" "$(docker exec "$RUN-fresh" stat -c %a /data/users.json)"
+expect "accounts file is mode 600" "600" "$(docker exec "$RUN-fresh" stat -c %a /data/accounts.json)"
 expect "health probe command exits 0" 0 "$(docker exec "$RUN-fresh" java -jar /opt/serengeti/serengeti.jar --health >/dev/null 2>&1; echo $?)"
 expect "runs as a non-root user" 10001 "$(docker exec "$RUN-fresh" id -u)"
 
@@ -262,6 +263,26 @@ node copy -v "$restored:/data" -e SERENGETI_ADMIN_PASSWORD="$PW"
 wait_up copy
 contains "a node on the restored volume has the rows" '"rows":[["a","bolt"],["b","nut"]]' \
   "$(body copy POST /v1/query "admin:$PW" '{"query": "SELECT _id, name FROM shop.items"}')"
+
+# serengeti-certs: names become the right kind of SAN, and the key store password never appears in a
+# command line, which any user of the host can read. /proc is sampled while the tool runs.
+certs=$(docker run --rm --label "serengeti-it=$RUN" --user 0 --entrypoint sh "$IMAGE" -c '
+  serengeti-certs -o /tmp/c "n1=fd00::5,db.example,10.0.0.7" >/dev/null 2>&1 & pid=$!
+  : > /tmp/args
+  while kill -0 $pid 2>/dev/null; do
+    for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline 2>/dev/null; echo; done >> /tmp/args
+  done
+  wait $pid; echo "exit=$?"
+  echo "seen=$(grep -c -F "$(cat /tmp/c/password)" /tmp/args)"
+  echo "sampled=$(grep -c keytool /tmp/args)"
+  keytool -list -v -keystore /tmp/c/n1.p12 -storepass:file /tmp/c/password -alias node 2>/dev/null \
+    | grep -E "IPAddress|DNSName" | tr -d " " | sort | tr "\n" " "')
+expect "serengeti-certs with an IPv6 name exits 0" "exit=0" "$(echo "$certs" | grep '^exit=')"
+contains "the IPv6 name is an IP address in the certificate" "IPAddress:fd00:0:0:0:0:0:0:5" "$certs"
+contains "the IPv4 one too" "IPAddress:10.0.0.7" "$certs"
+contains "and the host name a DNS name" "DNSName:db.example" "$certs"
+expect "keytool ran while sampled" 1 "$(echo "$certs" | sed -n 's/^sampled=\([0-9]*\)$/\1/p' | awk '{print ($1 > 0)}')"
+expect "the key store password is in no command line" "seen=0" "$(echo "$certs" | grep '^seen=')"
 
 # The command line beside a running node, and no second node on its data directory.
 expect "serengeti shell in the node's container, with its admin password" "$(printf 'name\nbolt\nnut')" \

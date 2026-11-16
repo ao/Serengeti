@@ -155,8 +155,9 @@ public final class Store {
         final TreeMap<Boolean, java.util.TreeSet<String>> bools = new TreeMap<>();
         final TreeMap<Number, java.util.TreeSet<String>> numbers = new TreeMap<>(ScalarOrder::compareNumbers);
         final TreeMap<String, java.util.TreeSet<String>> strings = new TreeMap<>();
-        /** Ids held across all keys, for the weight estimate. */
+        /** Ids held across all keys, and distinct keys, for the weight estimate. */
         long entries;
+        long keys;
 
         IndexState(String column, Stamp dropped) {
             this.column = column;
@@ -183,6 +184,7 @@ public final class Store {
                 numbers.clear();
                 strings.clear();
                 entries = 0;
+                keys = 0;
             }
         }
 
@@ -195,7 +197,16 @@ public final class Store {
         void add(String id, Map<String, Object> row) {
             Object v = row == null ? null : row.get(column);
             TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
-            if (m != null && m.computeIfAbsent(v, k -> new java.util.TreeSet<>()).add(id)) {
+            if (m == null) {
+                return;
+            }
+            java.util.TreeSet<String> ids = m.get(v);
+            if (ids == null) {
+                ids = new java.util.TreeSet<>();
+                m.put(v, ids);
+                keys++;
+            }
+            if (ids.add(id)) {
                 entries++;
             }
         }
@@ -211,6 +222,7 @@ public final class Store {
                 entries--;
                 if (ids.isEmpty()) {
                     m.remove(v);
+                    keys--;
                 }
             }
         }
@@ -486,7 +498,12 @@ public final class Store {
         maxStamp = Stamp.max(maxStamp, op.stamp());
         DbState d = dbs.computeIfAbsent(op.db(), DbState::new);
         if (op instanceof Op.CreateDb o) {
+            boolean existed = d.exists();
             d.created = Stamp.max(d.created, o.stamp());
+            // Rows a cut-off peer wrote after a drop become visible again: followers must read the db again.
+            if (feed != null && !existed && d.exists()) {
+                feed.add("create_db", op.db(), null, null, null, o.stamp());
+            }
         } else if (op instanceof Op.DropDb o) {
             boolean existed = d.exists();
             d.dropped = Stamp.max(d.dropped, o.stamp());
@@ -498,7 +515,11 @@ public final class Store {
             }
         } else if (op instanceof Op.CreateTable o) {
             TableState t = d.table(o.table());
+            boolean existed = d.exists() && t.exists();
             t.created = Stamp.max(t.created, o.stamp());
+            if (feed != null && !existed && d.exists() && t.exists()) {
+                feed.add("create_table", op.db(), o.table(), null, null, o.stamp());
+            }
         } else if (op instanceof Op.DropTable o) {
             TableState t = d.table(o.table());
             boolean existed = d.exists() && t.exists();
@@ -673,18 +694,18 @@ public final class Store {
             if (t.dropped.after(d.dropped)) {
                 out.add(new Op.DropTable(db, name, t.dropped));
             }
-            indexOps(db, name, t, out);
+            indexOps(db, name, t, out::add);
         });
         return out;
     }
 
-    private static void indexOps(String db, String table, TableState t, List<Op> out) {
+    private static void indexOps(String db, String table, TableState t, java.util.function.Consumer<Op> out) {
         t.indexes.forEach((column, ix) -> {
             if (ix.created.after(Stamp.ZERO)) {
-                out.add(new Op.CreateIndex(db, table, column, ix.created));
+                out.accept(new Op.CreateIndex(db, table, column, ix.created));
             }
             if (ix.dropped.after(t.dropped)) {
-                out.add(new Op.DropIndex(db, table, column, ix.dropped));
+                out.accept(new Op.DropIndex(db, table, column, ix.dropped));
             }
         });
     }
@@ -741,7 +762,7 @@ public final class Store {
             for (TableState t : d.tables.values()) {
                 n += t.weight;
                 for (IndexState ix : t.indexes.values()) {
-                    n += ix.entries * Weight.INDEX_ENTRY;
+                    n += ix.entries * Weight.INDEX_ENTRY + ix.keys * Weight.INDEX_KEY;
                 }
             }
         }
@@ -1020,39 +1041,52 @@ public final class Store {
     /** The whole state as ops; applying them to an empty store rebuilds it exactly. */
     public List<Op> toOps() {
         List<Op> out = new ArrayList<>();
-        for (String db : dbs.keySet()) {
-            appendOps(db, out);
-        }
+        forEachOp(out::add);
         return out;
     }
 
     public List<Op> toOps(String db) {
         List<Op> out = new ArrayList<>();
         if (dbs.containsKey(db)) {
-            appendOps(db, out);
+            appendOps(db, out::add);
         }
         return out;
     }
 
-    private void appendOps(String db, List<Op> out) {
+    /**
+     * Hands every op of {@link #toOps()} to {@code sink}, one at a time, without building the list: a
+     * checkpoint or backup of a store near its memory limit must not need as much memory again.
+     */
+    public void forEachOp(java.util.function.Consumer<Op> sink) {
+        for (String db : dbs.keySet()) {
+            appendOps(db, sink);
+        }
+    }
+
+    /** The index definitions alone (what {@link Op#indexOnly} keeps of {@link #toOps()}), without the rows. */
+    public void forEachIndexOp(java.util.function.Consumer<Op> sink) {
+        dbs.forEach((db, d) -> d.tables.forEach((name, t) -> indexOps(db, name, t, sink)));
+    }
+
+    private void appendOps(String db, java.util.function.Consumer<Op> out) {
         DbState d = dbs.get(db);
         if (d.created.after(Stamp.ZERO)) {
-            out.add(new Op.CreateDb(db, d.created));
+            out.accept(new Op.CreateDb(db, d.created));
         }
         if (d.dropped.after(Stamp.ZERO)) {
-            out.add(new Op.DropDb(db, d.dropped));
+            out.accept(new Op.DropDb(db, d.dropped));
         }
         d.tables.forEach((name, t) -> {
             if (t.created.after(Stamp.ZERO)) {
-                out.add(new Op.CreateTable(db, name, t.created));
+                out.accept(new Op.CreateTable(db, name, t.created));
             }
             if (t.dropped.after(d.dropped)) {
-                out.add(new Op.DropTable(db, name, t.dropped));
+                out.accept(new Op.DropTable(db, name, t.dropped));
             }
             indexOps(db, name, t, out);
             t.rows.forEach((id, r) -> {
                 for (Version v : r.versions()) {
-                    out.add(v.toOp(db, name, id));
+                    out.accept(v.toOp(db, name, id));
                 }
             });
         });
@@ -1064,11 +1098,11 @@ public final class Store {
      */
     public List<Op> opsSince(long wallMillis) {
         List<Op> out = new ArrayList<>();
-        for (Op op : toOps()) {
+        forEachOp(op -> {
             if (!(op instanceof Op.RowOp) || op.stamp().wall() > wallMillis) {
                 out.add(op);
             }
-        }
+        });
         return out;
     }
 

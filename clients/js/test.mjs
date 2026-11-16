@@ -58,6 +58,23 @@ test("a write that may have reached a node is not sent again", async () => {
   assert.ok((await two.query("SHOW DATABASES")).rows.length >= 1); // a read moves on after the timeout
 });
 
+test("an answer cut short", async () => {
+  const two = new Client({ urls: [process.env.SERENGETI_CUT_URL, URL], user: "admin", password: PW, timeoutMs: 5000 });
+  assert.ok((await two.query("SHOW DATABASES")).rows.length >= 1); // a read moves on
+  await assert.rejects(two.query("INSERT INTO js.items (_id) VALUES ('cut')"), (e) => e instanceof Unavailable);
+  assert.equal((await db.query("SELECT _id FROM js.items WHERE _id = 'cut'")).rows.length, 0, "not sent again");
+});
+
+test("a password beyond Latin-1", async () => {
+  await db.setUser("js-utf8", { password: "pässwörd-über-12 密码", role: "read" });
+  try {
+    const u = new Client({ urls: URL, user: "js-utf8", password: "pässwörd-über-12 密码" });
+    assert.equal((await u.status()).version, (await db.status()).version);
+  } finally {
+    await db.deleteUser("js-utf8");
+  }
+});
+
 test("TLS with the cluster's CA", async () => {
   const tls = new Client({ urls: process.env.SERENGETI_TLS_URL, user: "admin", password: PW });
   assert.equal((await tls.status()).version, (await db.status()).version);

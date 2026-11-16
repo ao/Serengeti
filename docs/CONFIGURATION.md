@@ -69,8 +69,9 @@ newline in the file is ignored.
 | trust store password | `SERENGETI_TLS_TRUSTSTORE_PASSWORD` | `tls_truststore_password_file` |
 | cluster key (32+ characters) | `SERENGETI_CLUSTER_KEY` | `cluster_key_file` |
 
-The admin password is only used when there is no account yet. Once `users.json` exists, it is ignored
-(the node logs that), and the password is changed with `POST /v1/password`.
+The admin password is used when no admin account exists: at first start, and after every admin was
+deleted (see API.md, "Accounts"). While an admin exists it is ignored (the node logs that), and passwords
+are changed with `POST /v1/password` or `PUT /v1/users/NAME`.
 
 ## Data directory
 
@@ -79,14 +80,15 @@ The admin password is only used when there is no account yet. Once `users.json` 
 | `wal.log` | Write-ahead log: length, CRC32C and JSON per batch. |
 | `snapshot.jsonl` | The state at the last checkpoint. The log is folded into it after 64 MiB. |
 | `indexes.jsonl` | Index definitions, rewritten whenever an index is created or dropped. Kept out of the log so a 2.0 binary can still open the directory. Present once an index has been created. |
-| `users.json` | Accounts as bcrypt hashes (cost 12) with their roles, the version of each change, and the tombstones of deleted accounts. Mode 0600; a node refuses to start if others can read it. 2.0 and 2.1 can still read it: read accounts are kept where they do not look. |
+| `accounts.json` | Every account as a bcrypt hash (cost 12) with its role, the versions of its changes, and the tombstones of deleted accounts. Mode 0600; a node refuses to start if others can read it. |
+| `users.json` | The admin and write accounts again, in the form 2.0 and 2.1 read, so a node can be rolled back (read accounts cannot log in on those). If an older version changed a password here, the next start takes that change, dated by the file's time. Mode 0600. |
 | `setup-token` | One-time setup token (mode 0600), present only until the first admin password is set. |
 | `node-id` | A random id for this node, kept across restarts. |
 | `last-sync` | In a cluster: when this node last synced with a majority (Unix milliseconds), written at most once a minute. |
 | `lock` | Empty. The running node holds a lock on it, so a second node started on the same directory (in the same container, or another container on the same volume) stops with exit status 2. The operating system drops the lock when the node exits, also after a crash. |
 
 Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md#backup)). Copying the directory
-of a stopped node also works. A backup holds the data only: `users.json`, `node-id` and `setup-token` are not in it.
+of a stopped node also works. A backup holds the data only: `accounts.json`, `users.json`, `node-id` and `setup-token` are not in it.
 
 ## Restore
 
@@ -98,7 +100,7 @@ Loads a backup into the data directory that the settings name (`data_dir`, or `S
 node first. Restore does not lock the directory, and running it beside a node that writes to the same files
 is not supported.
 
-- The directory must not hold `wal.log` or `snapshot.jsonl`. An existing `users.json` is kept, so the restored
+- The directory must not hold `wal.log` or `snapshot.jsonl`. Existing account files are kept, so the restored
   node keeps its accounts. Without one, the node asks for the setup token or `SERENGETI_ADMIN_PASSWORD` again.
 - The whole file is checked before anything is written: the format, every change, the count, the SHA-256 and
   that the changes apply. A truncated or altered file is refused, and nothing is written.

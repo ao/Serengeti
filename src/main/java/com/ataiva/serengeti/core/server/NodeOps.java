@@ -29,6 +29,28 @@ public interface NodeOps {
         return Optional.empty();
     }
 
+    /** True once a write to disk has failed: the node then stops serving its data (StorageEngine.failed). */
+    default boolean diskFailed() {
+        return false;
+    }
+
+    /**
+     * Writes a backup for {@code GET /v1/backup} to a new temporary file and returns it; the caller deletes it.
+     * Empty if this node cannot be backed up. The default writes {@link #snapshot()}; a node streams its store
+     * instead, so a backup needs no memory for a copy of the data.
+     */
+    default Optional<java.nio.file.Path> backup() throws java.io.IOException {
+        Optional<List<Op>> ops = snapshot();
+        if (ops.isEmpty()) {
+            return Optional.empty();
+        }
+        java.nio.file.Path f = java.nio.file.Files.createTempFile("serengeti-backup-", ".jsonl");
+        try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(f)) {
+            com.ataiva.serengeti.core.storage.Snapshot.write(ops.get(), out);
+        }
+        return Optional.of(f);
+    }
+
     /** Values read on each scrape of {@code GET /metrics}. */
     /** The change feed for GET /v1/changes, or null when the node keeps none. */
     default com.ataiva.serengeti.core.storage.ChangeFeed changes() {

@@ -215,7 +215,8 @@ public final class HttpApi implements AutoCloseable {
             setup(ex);
             return;
         }
-        if (!deps.users().isSetUp()) {
+        // Once any account exists, every route authenticates as usual, also when no admin is left (see Users).
+        if (!deps.users().hasAccounts()) {
             throw new HttpError(503, "not set up: set SERENGETI_ADMIN_PASSWORD, or POST /v1/setup with the token "
                     + "from the data directory");
         }
@@ -245,8 +246,13 @@ public final class HttpApi implements AutoCloseable {
                 if (role != Users.Role.ADMIN) {
                     throw new HttpError(403, "backups need the admin role");
                 }
-                Backup.send(ex, deps.ops().snapshot()
-                        .orElseThrow(() -> new HttpError(501, "backups are not available in this build")));
+                java.nio.file.Path file = deps.ops().backup()
+                        .orElseThrow(() -> new HttpError(501, "backups are not available in this build"));
+                try {
+                    Backup.send(ex, file);
+                } finally {
+                    java.nio.file.Files.deleteIfExists(file);
+                }
             }
             case "/v1/password" -> {
                 requireMethod(method, "POST");
@@ -420,6 +426,9 @@ public final class HttpApi implements AutoCloseable {
         if (feed == null) {
             throw new HttpError(404, "this node keeps no change feed (changes_buffer is 0)");
         }
+        if (deps.ops().diskFailed()) {
+            throw new HttpError(503, "a write to this node's disk failed, so it no longer serves its data; see its log");
+        }
         Map<String, String> q = queryParams(ex);
         String db = q.get("db");
         String after = q.get("after");
@@ -506,7 +515,7 @@ public final class HttpApi implements AutoCloseable {
     }
 
     private void changePassword(HttpExchange ex, Users.Role role) throws IOException {
-        String user = basic(ex).orElseThrow()[0];
+        String[] creds = basic(ex).orElseThrow();
         Map<String, Object> body = jsonBody(ex);
         if (!(body.get("password") instanceof String pw)) {
             throw new HttpError(400, "password is required");
@@ -515,8 +524,12 @@ public final class HttpApi implements AutoCloseable {
         if (problem != null) {
             throw new HttpError(400, problem);
         }
-        deps.users().setPassword(user, pw, role);
-        sendJson(ex, 200, Map.of("user", user));
+        // The account's own change: checked again against the account as it is now, and it keeps the current
+        // role, so it cannot bring back an account an admin deleted or demoted meanwhile.
+        if (!deps.users().changeOwnPassword(creds[0], creds[1], pw)) {
+            throw new HttpError(401, "wrong user name or password");
+        }
+        sendJson(ex, 200, Map.of("user", creds[0]));
     }
 
     private void query(HttpExchange ex, Users.Role role) throws IOException {

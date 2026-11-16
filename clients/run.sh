@@ -3,6 +3,7 @@
 #   node    a plain-HTTP node of the image
 #   tls     a node serving HTTPS with a certificate from serengeti-certs (the tests trust its ca.pem)
 #   silent  a socket that accepts connections and never answers, to show writes are not sent twice
+#   cut     a server whose 200 answers stop part way
 # Nothing is published to this machine.
 #
 #   clients/run.sh        (IMAGE=serengeti:clients; builds the image unless SKIP_BUILD=1)
@@ -32,6 +33,12 @@ docker run -d -m 512m "${L[@]}" --name "$RUN-tls" --network "$RUN" --network-ali
   -e SERENGETI_TLS_KEYSTORE=/certs/tls.p12 -e SERENGETI_TLS_KEYSTORE_PASSWORD_FILE=/certs/password "$IMAGE" >/dev/null
 docker run -d -m 64m "${L[@]}" --name "$RUN-silent" --network "$RUN" --network-alias silent python:3.12-alpine \
   python -c 'import socket, time; s = socket.socket(); s.bind(("", 7999)); s.listen(64); time.sleep(3600)' >/dev/null
+docker run -d -m 64m "${L[@]}" --name "$RUN-cut" --network "$RUN" --network-alias cut python:3.12-alpine \
+  python -c 'import socket
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("", 7997)); s.listen(64)
+while True:
+    c, _ = s.accept(); c.recv(65536)
+    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"type\":"); c.close()' >/dev/null
 
 up() {
   for _ in $(seq 60); do
@@ -46,7 +53,7 @@ up http://node:1985
 up https://tls:1985
 
 env=(-e SERENGETI_URL=http://node:1985 -e SERENGETI_TLS_URL=https://tls:1985 -e SERENGETI_CA=/certs/ca.pem
-  -e SERENGETI_SILENT_URL=http://silent:7999 -e SERENGETI_PASSWORD="$PW")
+  -e SERENGETI_SILENT_URL=http://silent:7999 -e SERENGETI_CUT_URL=http://cut:7997 -e SERENGETI_PASSWORD="$PW")
 common=(--rm -m 256m "${L[@]}" --network "$RUN" "${env[@]}" -v "$RUN-certs:/certs:ro")
 rc=0
 echo "# Python"

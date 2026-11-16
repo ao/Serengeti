@@ -23,8 +23,12 @@ COPY --chmod=755 docker/serengeti-certs docker/serengeti /usr/local/bin/
 USER 10001:10001
 # All interfaces inside the container's own network namespace. Nothing is published unless the operator
 # passes -p; publish to 127.0.0.1 unless other machines need to reach the node.
+# MALLOC_ARENA_MAX: glibc otherwise keeps a malloc arena per thread; filling a node in a 512 MiB container,
+# that held about 150 MB the JVM does not count (measured with Native Memory Tracking against the cgroup's
+# anonymous memory), and the kernel killed the node before its memory limit refused a write.
 ENV SERENGETI_BIND=0.0.0.0 \
     SERENGETI_DATA_DIR=/data \
+    MALLOC_ARENA_MAX=2 \
     JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
 VOLUME /data
 EXPOSE 1985

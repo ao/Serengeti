@@ -28,7 +28,7 @@ public sealed interface Op {
 
     record DropIndex(String db, String table, String column, Stamp stamp) implements Op {}
 
-    /** True for ops a 2.0 node can read: everything but the index ops added in 2.2. */
+    /** True for ops a 2.0 node can read: everything but the index ops added in 2.1. */
     static boolean legacy(Op op) {
         return !(op instanceof CreateIndex || op instanceof DropIndex);
     }
@@ -175,10 +175,12 @@ public sealed interface Op {
                 throw new IllegalArgumentException("'seen' values must be stamps");
             }
             Stamp st = Stamp.parse(s);
-            if (!e.getKey().equals("~") && !e.getKey().equals(FLOOR) && !e.getKey().equals(st.node())) {
+            String key = e.getKey().equals("~") ? "~" : e.getKey().equals(FLOOR) ? FLOOR : st.node();
+            if (!key.equals(e.getKey())) {
                 throw new IllegalArgumentException("'seen' entry " + e.getKey() + " names another node's stamp");
             }
-            out.put(e.getKey(), st);
+            out.put(key, st); // the shared copy of the id (see Stamp.node), not the parser's
+
         }
         return out;
     }

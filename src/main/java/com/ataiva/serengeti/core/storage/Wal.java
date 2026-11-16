@@ -55,10 +55,25 @@ public final class Wal implements AutoCloseable {
      */
     public static Wal open(Path path, FsyncPolicy policy, long testFsyncDelayMs, List<List<Op>> out)
             throws IOException {
+        return open(path, policy, testFsyncDelayMs, (java.util.function.Consumer<List<Op>>) out::add);
+    }
+
+    /**
+     * As {@link #open(Path, FsyncPolicy, long, List)}, handing each batch to {@code sink} as it is read, so the
+     * log is never held in memory whole. If opening then fails, the batches already handed over are not
+     * known to be the whole log: the caller must discard what it built from them.
+     */
+    public static Wal open(Path path, FsyncPolicy policy, long testFsyncDelayMs,
+            java.util.function.Consumer<List<Op>> sink) throws IOException {
         FileChannel ch = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ,
                 StandardOpenOption.WRITE);
-        Recovered r = read(ch);
-        out.addAll(r.batches());
+        Recovered r;
+        try {
+            r = read(ch, sink);
+        } catch (IOException | RuntimeException e) {
+            ch.close();
+            throw e;
+        }
         if (r.discardedBytes() > 0) {
             LOG.warning("write-ahead log " + path + ": discarded " + r.discardedBytes()
                     + " bytes of incomplete or corrupt tail after " + r.validBytes() + " good bytes");
@@ -70,8 +85,14 @@ public final class Wal implements AutoCloseable {
     }
 
     static Recovered read(FileChannel ch) throws IOException {
-        long total = ch.size();
         List<List<Op>> batches = new ArrayList<>();
+        Recovered r = read(ch, batches::add);
+        return new Recovered(batches, r.validBytes(), r.discardedBytes());
+    }
+
+    /** Reads the log, handing each batch to {@code sink}; the result's batch list is empty. */
+    static Recovered read(FileChannel ch, java.util.function.Consumer<List<Op>> sink) throws IOException {
+        long total = ch.size();
         long pos = 0;
         ByteBuffer header = ByteBuffer.allocate(HEADER);
         while (pos + HEADER <= total) {
@@ -103,10 +124,10 @@ public final class Wal implements AutoCloseable {
                         + " read (" + e.getMessage() + "). It may have been written by a newer version of"
                         + " Serengeti. Nothing was discarded; start that version, or move the data directory aside.", e);
             }
-            batches.add(batch);
+            sink.accept(batch);
             pos += HEADER + len;
         }
-        return new Recovered(batches, pos, total - pos);
+        return new Recovered(List.of(), pos, total - pos);
     }
 
     private static void readFully(FileChannel ch, ByteBuffer buf, long at) throws IOException {
@@ -142,14 +163,72 @@ public final class Wal implements AutoCloseable {
      */
     public synchronized long write(List<Op> batch) throws IOException {
         checkHealthy();
-        ByteBuffer b = ByteBuffer.wrap(encode(batch));
-        while (b.hasRemaining()) {
-            ch.write(b);
+        // The payload is encoded and written one op at a time, with its checksum computed as it goes, and the
+        // header goes in front of it last: a statement that deletes a few hundred thousand rows must not need
+        // its whole record in memory several times over. Until the header is written, the record reads as a
+        // torn tail (length 0), so a crash part way leaves nothing that recovery would take.
+        long start = ch.position();
+        ByteBuffer buf = ByteBuffer.allocate(1 << 16);
+        CRC32C crc = new CRC32C();
+        long len = 0;
+        try {
+            ch.write(ByteBuffer.allocate(HEADER));
+            byte[] open = {'['};
+            len += put(buf, crc, open);
+            for (int i = 0; i < batch.size(); i++) {
+                if (i > 0) {
+                    len += put(buf, crc, COMMA);
+                }
+                len += put(buf, crc, Json.write(Op.toJson(batch.get(i))).getBytes(StandardCharsets.UTF_8));
+                if (len > MAX_RECORD) {
+                    throw new IllegalArgumentException("batch larger than " + MAX_RECORD + " bytes");
+                }
+            }
+            len += put(buf, crc, new byte[] {']'});
+            drain(buf);
+            ByteBuffer header = ByteBuffer.allocate(HEADER);
+            header.putInt((int) len).putInt((int) crc.getValue()).flip();
+            while (header.hasRemaining()) {
+                ch.write(header, start + header.position());
+            }
+        } catch (IOException | RuntimeException e) {
+            // Nothing of this batch may stay: the next write goes where it began.
+            try {
+                ch.truncate(start);
+                ch.position(start);
+            } catch (IOException suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
         }
         size = ch.position();
-        written += b.capacity();
+        written += HEADER + len;
         dirty = true;
         return written;
+    }
+
+    private static final byte[] COMMA = {','};
+
+    private int put(ByteBuffer buf, CRC32C crc, byte[] bytes) throws IOException {
+        crc.update(bytes, 0, bytes.length);
+        int off = 0;
+        while (off < bytes.length) {
+            if (!buf.hasRemaining()) {
+                drain(buf);
+            }
+            int n = Math.min(buf.remaining(), bytes.length - off);
+            buf.put(bytes, off, n);
+            off += n;
+        }
+        return bytes.length;
+    }
+
+    private void drain(ByteBuffer buf) throws IOException {
+        buf.flip();
+        while (buf.hasRemaining()) {
+            ch.write(buf);
+        }
+        buf.clear();
     }
 
     /**

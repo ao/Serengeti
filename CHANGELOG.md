@@ -11,20 +11,29 @@ GitHub release notes and tags.
   keytool, and deletes the CA key afterwards unless asked to keep it. `examples/cluster/compose.yaml` runs
   three TLS nodes with Docker Compose, publishing to 127.0.0.1 only; CI runs it.
 - A change feed: `GET /v1/changes?db=&table=&after=&wait=` returns the changes a node applied after a
-  cursor (rows written there or merged from peers, drops), long-polling up to 60 s. A node keeps the last
-  `changes_buffer` (10,000) changes; an older cursor, or one from before a restart, gets 410. See
+  cursor (rows written there or merged from peers, tables and databases dropped or created), long-polling
+  up to 60 s. A change is listed once the node has it on disk, and the feed answers 503 after a write to
+  the disk fails. A node keeps the last `changes_buffer` (10,000) changes, fewer when together they would
+  take more than a sixteenth of the heap; an older cursor, or one from before a restart, gets 410. See
   docs/API.md, "Changes".
 - Accounts and roles. An admin creates, changes and deletes accounts over `/v1/users`; each account is
   `read` (SELECT and SHOW), `write` (also writes and schema changes) or `admin` (also accounts and backups),
   and a write by a read account is refused with 403. In a cluster, accounts replicate: the newest change
-  to a name wins on every node, deletions spread, and a node that was down catches up. `users.json` stays
-  readable by 2.0 and 2.1. See docs/API.md, "Accounts".
+  to a name wins on every node, deletions spread, and a node that was down, or is out of date, catches up.
+  An admin's change always wins over an account's own password change on an earlier version, so a deleted
+  or demoted account cannot undo that from another node. If two admins deleted on two nodes at once leave
+  none, the other accounts keep working, and a restart with `SERENGETI_ADMIN_PASSWORD` (or a setup token)
+  makes the admin again. Accounts are kept in `accounts.json`; `users.json` keeps the admin and write
+  accounts readable by 2.0 and 2.1, and a password an older version changed there is taken back on the
+  next start. See docs/API.md, "Accounts".
 - A memory limit: once the rows and index entries held are estimated to take `memory_limit_percent`
   (default 60) of the heap, writes that add data get 503 instead of the node running out of memory and
   exiting. Reads, deletes and drops are still served, and a delete makes room at once. The estimate is kept
   in step with every change, so it needs no garbage collection to be current. Metrics
   `serengeti_data_bytes`, `serengeti_data_budget_bytes`, `serengeti_memory_full` and `serengeti_heap_bytes`.
-  `tests/memory/run.sh` fills a node in a 512 MiB container through its API.
+  `tests/memory/run.sh` fills a node in a 512 MiB container through its API, with large rows and with small
+  rows under two indexes, and checks that a full node takes a backup, restarts and takes a delete of every
+  row.
 - Clients for Python (standard library only) and JavaScript (`fetch`), one file each, in `clients/`:
   queries, reads that move on to the next node, writes that are never sent twice, the change feed,
   accounts and TLS with a cluster's own CA. `clients/run.sh` tests both against the image; CI runs it.
@@ -54,7 +63,20 @@ GitHub release notes and tags.
 - The node served 16 requests at a time, so 16 clients sending slowly held every thread; it now serves 64,
   and threads stop when idle. A client that stalls is still dropped after 30 s. README, "When not to use
   it", says to put a buffering proxy in front of a node that untrusted networks reach.
+- Starting, checkpointing and taking a backup each held a second copy of all the data in memory (the
+  whole snapshot as a list, the log's batches, every row as an operation), so a node near its memory limit
+  could run out of memory while doing them. They now read and write one operation at a time, a backup is
+  written to a file in the data directory and then sent with its length, and a log record is encoded as
+  it is written. Node ids read from disk or from peers are shared instead of copied into every version.
+- A statement that changed a few hundred thousand rows built its log record in memory several times over
+  (a JSON tree, a string, bytes and a buffer): deleting 286,000 rows from a full 512 MiB node ran it out of
+  memory.
+
 ### Changed
+- The image sets `MALLOC_ARENA_MAX=2`. glibc otherwise keeps a malloc arena per thread: filling a node in a
+  512 MiB container, that memory reached about 150 MB the JVM does not count (measured with Native Memory
+  Tracking against the container's anonymous memory), and the kernel killed the node before its memory
+  limit refused a write.
 - The image uses G1 and gives the heap 60% of the container's memory (was 75%), leaving room for the log's
   page cache: at 75% a container filling with data was killed by the kernel before the heap was full.
 

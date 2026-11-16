@@ -92,7 +92,7 @@ number of changes and their SHA-256. The state is copied under the storage lock,
 every write acknowledged before the request is in it, and no write is partly in it. A response that stops early
 has no trailer, and restore refuses it.
 
-Accounts (`users.json`) and the node id are not part of a backup.
+Accounts (`accounts.json`, `users.json`) and the node id are not part of a backup.
 
 ## Setup
 
@@ -145,13 +145,14 @@ POST /v1/password
 {"password": "the new password"}
 ```
 
-200 `{"user":"admin"}`. The old password stops working at once.
+200 `{"user":"admin"}`. The old password stops working at once. The account keeps the role it has when the
+change is made, and an account deleted meanwhile gets 401.
 
 ## Changes
 
 `GET /v1/changes?db=D&table=T&after=CURSOR&wait=SECONDS&limit=N` returns the changes to database `D`
 (and table `T`, if given) that this node applied after the cursor, in the order it applied them: rows
-written here, rows merged from other nodes, and tables and databases dropped. With nothing new it waits up
+written here, rows merged from other nodes, and tables and databases dropped or created. With nothing new it waits up
 to `wait` seconds (0 to 60, default 0) for a change; `limit` is 1 to 10,000 (default 1,000). Any role may
 follow changes.
 
@@ -163,8 +164,11 @@ GET /v1/changes?db=shop&table=items&after=3f9a1c22e07b:41&wait=30
 ```
 
 Pass the returned `cursor` as `after` next time. `kind` is `row` (with `deleted` and the row's new value),
-`drop_table` or `drop_db`. A row appears when its value changes; a conflicting version that does not
-become the value is not a change (see CONSISTENCY.md).
+`drop_table`, `drop_db`, `create_table` or `create_db`. A row appears when its value changes; a conflicting
+version that does not become the value is not a change (see CONSISTENCY.md). After `create_table` or
+`create_db`, read the table or database again: when one is created again after a drop, rows that another
+node wrote after the drop can become visible, and they are not listed one by one. A change is listed once
+this node has it on disk, and not at all after a write to its disk fails (the feed then answers 503).
 
 To follow a table from the start: take a cursor with `after=now`, read the table with SELECT, then follow
 from the cursor. A change can then arrive for a row the SELECT already showed; apply changes by `_id`.
@@ -202,6 +206,17 @@ version, the newest change to a name wins on every node, and a node that was dow
 returns. Accounts travel between nodes as bcrypt hashes, over the cluster's TLS and behind its cluster key.
 Nodes older than 2.2 do not take part: in a cluster being upgraded, an account made on a 2.2 node works on
 the 2.2 nodes only.
+
+An admin's change always wins over an account's own password change (`POST /v1/password`) made on the
+version before it. So an account that is deleted or given another role cannot undo that by changing its
+password on a node that has not heard of it yet; its password change is lost instead, and it signs in with
+the password the admin's version has. A node that is out of date (see CONSISTENCY.md) still takes and
+passes on account changes.
+
+The last-admin rule holds on each node, but two admins deleted on two nodes at once can leave none. The
+other accounts keep working. Restart one node with `SERENGETI_ADMIN_PASSWORD` set: it makes the admin again
+with a current version, which replaces the deletions on every node. Or restart it without that setting:
+it writes a setup token, and `POST /v1/setup` makes the admin.
 
 ## Errors
 

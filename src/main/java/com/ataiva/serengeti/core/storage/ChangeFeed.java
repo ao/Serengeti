@@ -35,10 +35,37 @@ public final class ChangeFeed {
 
     private final String epoch;
     private final Change[] ring;
+    private final long[] weights;
+    /** The most the changes held may weigh (estimated as {@link Weight} does): old ones go first. */
+    private final long maxBytes;
+    private long bytes;
     /** Sequence number of the next change; the first is 1. */
     private long next = 1;
+    /** Sequence number of the oldest change still held. */
+    private long oldest = 1;
+    /**
+     * Readers see changes up to this one. A node publishes a change once the log holds it on disk, so no
+     * reader sees a write that a failed fsync then loses; without a node (tests), every change is published
+     * as it is added.
+     */
+    private long published;
+    private final boolean publishOnAdd;
 
     public ChangeFeed(int capacity) {
+        this(capacity, Long.MAX_VALUE, true);
+    }
+
+    /**
+     * Keeps the last {@code capacity} changes, and fewer when together they would weigh more than
+     * {@code maxBytes}: a change holds its row's value, which the store may no longer hold, so a feed of
+     * large rows could otherwise outgrow the heap.
+     */
+    public ChangeFeed(int capacity, long maxBytes) {
+        this(capacity, maxBytes, true);
+    }
+
+    /** As above; with {@code publishOnAdd} false, changes are seen only once {@link #publish} reaches them. */
+    public ChangeFeed(int capacity, long maxBytes, boolean publishOnAdd) {
         if (capacity < 1) {
             throw new IllegalArgumentException("capacity must be at least 1");
         }
@@ -46,17 +73,52 @@ public final class ChangeFeed {
         new SecureRandom().nextBytes(b);
         this.epoch = HexFormat.of().formatHex(b);
         this.ring = new Change[capacity];
+        this.weights = new long[capacity];
+        this.maxBytes = maxBytes;
+        this.publishOnAdd = publishOnAdd;
     }
 
     synchronized void add(String kind, String db, String table, String id, Map<String, Object> row, Stamp stamp) {
-        ring[(int) (next % ring.length)] = new Change(next, kind, db, table, id, row, stamp);
+        long w = 64 + Weight.of(db) + (table == null ? 0 : Weight.of(table)) + (id == null ? 0 : Weight.of(id))
+                + (row == null ? 0 : Weight.ofMap(row));
+        while (oldest < next && (next - oldest >= ring.length || bytes + w > maxBytes)) {
+            int at = (int) (oldest % ring.length);
+            bytes -= weights[at];
+            ring[at] = null;
+            weights[at] = 0;
+            oldest++;
+        }
+        int at = (int) (next % ring.length);
+        ring[at] = new Change(next, kind, db, table, id, row, stamp);
+        weights[at] = w;
+        bytes += w;
         next++;
-        notifyAll();
+        if (publishOnAdd) {
+            published = next - 1;
+            notifyAll();
+        }
+    }
+
+    /** The newest change added so far, published or not. */
+    public synchronized long last() {
+        return next - 1;
+    }
+
+    /** Makes the changes up to {@code seq} visible to readers, and wakes the ones waiting. */
+    public synchronized void publish(long seq) {
+        if (seq > published) {
+            published = Math.min(seq, next - 1);
+            notifyAll();
+        }
+    }
+    /** How many changes are held, and their estimated weight in bytes. */
+    synchronized long[] held() {
+        return new long[] {next - oldest, bytes};
     }
 
     /** The cursor of the newest change: following from it returns only changes made after now. */
     public synchronized String now() {
-        return epoch + ":" + (next - 1);
+        return epoch + ":" + published;
     }
 
     /**
@@ -70,17 +132,17 @@ public final class ChangeFeed {
         long deadline = System.currentTimeMillis() + Math.max(0, waitMillis);
         synchronized (this) {
             while (true) {
-                long oldest = Math.max(1, next - ring.length);
                 if (after + 1 < oldest) {
                     throw new Gone("the changes after this cursor are no longer held (this node keeps the last "
-                            + ring.length + "); read the table again and follow from after=now");
+                            + ring.length + ", fewer when they are large); read the table again and follow from"
+                            + " after=now");
                 }
-                if (after >= next) {
+                if (after > published) {
                     throw new Gone("this cursor is ahead of this node; it may come from another node");
                 }
                 List<Change> out = new ArrayList<>();
                 long seen = after;
-                for (long s = after + 1; s < next && out.size() < limit; s++) {
+                for (long s = after + 1; s <= published && out.size() < limit; s++) {
                     Change c = ring[(int) (s % ring.length)];
                     seen = s;
                     if (c.db().equals(db) && (table == null || c.table() == null || c.table().equals(table))) {
