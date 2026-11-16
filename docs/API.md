@@ -263,30 +263,25 @@ Read, metrics and limited accounts are not in the `users.json` that 2.0 and 2.1 
 limited account reach every database), so after a rollback to either they do not exist. A write account
 that is given a list leaves `users.json` with that change, and returns to it when the list is removed.
 
-In a cluster, account changes made on one node reach the others within seconds, and a node that was down
-catches up when it returns. A list of databases travels with the account; a node refuses an account whose
-list it cannot read rather than take it without one. Accounts travel between nodes as bcrypt hashes, over
-the cluster's TLS and behind its cluster key. A node that is out of date (see CONSISTENCY.md) still takes
-and passes on account changes. Nodes older than 2.2 do not take part: in a cluster being upgraded, an
-account made on a 2.2 node works on the 2.2 nodes only.
+In a cluster, account changes made on one node reach the others within seconds: each change carries a
+version, the newest change to a name wins on every node, and a node that was down catches up when it
+returns. A list of databases is part of the account and travels with it, ordered like a role change; a node
+refuses an account whose list it cannot read rather than take it without one. Accounts travel between nodes
+as bcrypt hashes, over the cluster's TLS and behind its cluster key.
 
-An account has two parts, each with its own version: its access (the role, the list of databases, and
-whether it is deleted) and its password. A change moves the parts it names: a password moves the password,
-a role or `databases` moves the access, a change with both moves both, and a new account starts both. On
-every node each part comes from the newest change to that part. So two admins changing one account on two
-nodes at the same moment, one its password and the other its role or list, both keep their change. Two
-changes to the same part keep the newer one: two lists given at once end as the later list, and a `PUT`
-with a password and a role replaces both parts.
+A change replaces the whole account (password, role and list). So two admins changing one account on two
+nodes within the same few seconds, before either change has reached the other node, end with the newer
+change only: a password reset made on one node can undo a list or a role given on another a moment
+before, and neither admin is told. Change an account from one node at a time, and read it back with `GET
+/v1/users` after a change that restricts it.
+Nodes older than 2.2 do not take part: in a cluster being upgraded, an account made on a 2.2 node works on
+the 2.2 nodes only.
 
-An account's own password change (`POST /v1/password`) moves only the password. It never changes the access,
-so an account cannot undo its demotion or its list that way, and it loses to a password an admin set on
-another node that it had not heard of yet: the admin's password stands.
-
-A delete changes both parts: the account loses its access and its password. A change made on another node
-at the same moment that names only the password, or only the role or list, does not bring it back, even if
-it is stamped later: the account still signs in with nothing, and is not listed. Setting a password then
-makes it again, as a new account (`write` and no list, unless the change gives them). Only a change that
-names both parts, made after the delete by the nodes' clocks, makes the account again on its own.
+An admin's change always wins over an account's own password change (`POST /v1/password`) made on the
+version before it. So an account that is deleted or given another role cannot undo that by changing its
+password on a node that has not heard of it yet; its password change is lost instead, and it signs in with
+the password the admin's version has. A node that is out of date (see CONSISTENCY.md) still takes and
+passes on account changes.
 
 The last-admin rule holds on each node, but two admins deleted on two nodes at once can leave none. The
 other accounts keep working. Restart one node with `SERENGETI_ADMIN_PASSWORD` set: once it has pulled the

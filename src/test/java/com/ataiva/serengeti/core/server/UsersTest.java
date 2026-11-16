@@ -421,8 +421,7 @@ class UsersTest {
         b.merge(a.entries());
         assertEquals(List.of("blog"), a.accounts().get("app").databases());
         assertEquals(a.digest(), b.digest());
-        // A list given on one node and an own password change on a node that has not heard of it both stand:
-        // they change different parts of the account.
+        // An admin change beats an own password change on a node that has not heard of it: the list stands.
         b.merge(a.entries());
         a.setDatabases("app", Users.Limit.to(List.of("shop")));
         assertTrue(b.changeOwnPassword("app", PW, "my own password 1"));
@@ -430,12 +429,12 @@ class UsersTest {
         b.merge(a.entries());
         assertEquals(a.digest(), b.digest());
         for (Users u : List.of(a, b)) {
-            assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))),
-                    u.authenticate("app", "my own password 1"), "the list stands, and so does the new password");
-            assertEquals(Optional.empty(), u.authenticate("app", PW));
+            assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), u.authenticate("app", PW),
+                    "the list stands, and the own password change made on top of the older version is lost");
+            assertEquals(Optional.empty(), u.authenticate("app", "my own password 1"));
         }
         // An own password change made on top of the list keeps it everywhere.
-        assertTrue(b.changeOwnPassword("app", "my own password 1", "my own password 2"));
+        assertTrue(b.changeOwnPassword("app", PW, "my own password 2"));
         a.merge(b.entries());
         assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), a.authenticate("app", "my own password 2"));
         // A delete after a list change wins on both, in either order.
@@ -572,16 +571,13 @@ class UsersTest {
             assertFalse(u.list().containsKey("mallory"), "the delete stands");
             assertEquals(Users.Role.READ, u.list().get("eve"), "the demotion stands");
             assertEquals(Optional.empty(), u.verify("mallory", "a new password 1"));
-            assertEquals(Optional.empty(), u.verify("mallory", PW));
-            assertEquals(Optional.of(Users.Role.READ), u.verify("eve", "a new password 2"),
-                    "eve's own password change stands too, under the role the admin gave");
         }
         // The own change is checked against the account as it is: a wrong current password, or a deleted
         // account, changes nothing.
         assertFalse(a.changeOwnPassword("eve", "not her password", "a new password 3"));
         assertFalse(a.changeOwnPassword("mallory", PW, "a new password 3"));
         // And it keeps the role it has now.
-        assertTrue(a.changeOwnPassword("eve", "a new password 2", "a new password 4"));
+        assertTrue(a.changeOwnPassword("eve", PW, "a new password 4"));
         assertEquals(Users.Role.READ, a.list().get("eve"));
         assertEquals(Optional.of(Users.Role.READ), a.verify("eve", "a new password 4"));
         // Two own changes on two nodes: the later one wins on both.
@@ -698,275 +694,5 @@ class UsersTest {
             assertEquals(Users.Role.READ, u.list().get("boss"), "the demotion stands");
             assertEquals(Optional.empty(), u.verify("mallory", "mallory again 1"));
         }
-    }
-
-    /**
-     * Review 22d, finding 6: two admins on two nodes, within the seconds a change takes to spread, one limiting
-     * shop-app to shop and the other giving it a new password. Both stand, on both nodes, in either order.
-     */
-    @Test
-    void aConcurrentPasswordChangeOnAnotherNodeDoesNotDropTheList() throws IOException {
-        Users a = node("a");
-        Users b = node("b");
-        a.setPassword("admin", PW, Users.Role.ADMIN);
-        a.setPassword("shop-app", PW, Users.Role.WRITE);
-        b.merge(a.entries());
-        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE)), a.authenticate("shop-app", PW)); // cached
-        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE)), b.authenticate("shop-app", PW));
-        // On b: limit it. On a, before b's change arrives (and stamped after it): a new password, nothing else.
-        assertEquals(true, b.setDatabases("shop-app", Users.Limit.to(List.of("shop"))));
-        a.change("shop-app", "a new password 1", null, Users.Limit.KEEP);
-        a.merge(b.entries());
-        b.merge(a.entries());
-        assertEquals(a.digest(), b.digest());
-        Users.Access limited = new Users.Access(Users.Role.WRITE, List.of("shop"));
-        for (Users u : List.of(a, b)) {
-            assertEquals(List.of("shop"), u.accounts().get("shop-app").databases(), "the list set on b stands");
-            assertEquals(Optional.of(limited), u.authenticate("shop-app", "a new password 1"), "so does a's password");
-            assertEquals(Optional.empty(), u.authenticate("shop-app", PW), "the cache was cleared by the merge");
-        }
-        // The other way round: the password set first, the list stamped after it.
-        Users c = node("c");
-        c.merge(a.entries());
-        c.change("shop-app", "a new password 2", null, Users.Limit.KEEP);
-        a.setDatabases("shop-app", Users.Limit.to(List.of("blog", "shop")));
-        a.merge(c.entries());
-        c.merge(a.entries());
-        assertEquals(a.digest(), c.digest());
-        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("blog", "shop"))),
-                c.authenticate("shop-app", "a new password 2"));
-    }
-
-    @Test
-    void aConcurrentPasswordChangeOnAnotherNodeDoesNotUndoADemotion() throws IOException {
-        Users a = node("a");
-        Users b = node("b");
-        a.setPassword("admin", PW, Users.Role.ADMIN);
-        a.setPassword("ops", PW, Users.Role.ADMIN);
-        b.merge(a.entries());
-        assertTrue(b.setRole("ops", Users.Role.READ)); // b demotes ops
-        a.change("ops", "a new password 1", null, Users.Limit.KEEP); // a resets its password, stamped later
-        b.merge(a.entries());
-        a.merge(b.entries());
-        assertEquals(a.digest(), b.digest());
-        for (Users u : List.of(a, b)) {
-            assertEquals(Optional.of(Users.Role.READ), u.verify("ops", "a new password 1"));
-            assertEquals(Optional.empty(), u.verify("ops", PW));
-        }
-        // A change that names both a password and a role moves both parts: the newer one wins whole.
-        a.merge(b.entries());
-        b.setPassword("ops", "set by b 12345", Users.Role.WRITE);
-        a.setPassword("ops", "set by a 12345", Users.Role.ADMIN); // later
-        b.merge(a.entries());
-        a.merge(b.entries());
-        assertEquals(a.digest(), b.digest());
-        assertEquals(Optional.of(Users.Role.ADMIN), b.verify("ops", "set by a 12345"));
-        assertEquals(Optional.empty(), b.verify("ops", "set by b 12345"));
-    }
-
-    @Test
-    void anAdminsPasswordResetBeatsAnOwnChangeMadeBeforeTheNodeSawIt() throws IOException {
-        Users a = node("a");
-        Users b = node("b");
-        a.setPassword("admin", PW, Users.Role.ADMIN);
-        a.setPassword("app", PW, Users.Role.WRITE);
-        b.merge(a.entries());
-        a.change("app", "reset by the admin", null, Users.Limit.KEEP);
-        assertTrue(b.changeOwnPassword("app", PW, "chosen by the app 1")); // stamped after the reset
-        a.merge(b.entries());
-        b.merge(a.entries());
-        assertEquals(a.digest(), b.digest());
-        for (Users u : List.of(a, b)) {
-            assertEquals(Optional.of(Users.Role.WRITE), u.verify("app", "reset by the admin"), "cred_at decides first");
-            assertEquals(Optional.empty(), u.verify("app", "chosen by the app 1"));
-        }
-        // An own change made after the node saw the reset wins over it.
-        assertTrue(b.changeOwnPassword("app", "reset by the admin", "chosen by the app 2"));
-        a.merge(b.entries());
-        assertEquals(Optional.of(Users.Role.WRITE), a.verify("app", "chosen by the app 2"));
-        // Two own changes on two nodes on top of the same reset: the later one wins on both.
-        assertTrue(a.changeOwnPassword("app", "chosen by the app 2", "chosen by the app 3"));
-        assertTrue(b.changeOwnPassword("app", "chosen by the app 2", "chosen by the app 4"));
-        a.merge(b.entries());
-        b.merge(a.entries());
-        assertEquals(Optional.of(Users.Role.WRITE), a.verify("app", "chosen by the app 4"));
-        assertEquals(a.digest(), b.digest());
-    }
-
-    @Test
-    void aDeleteBeatsAConcurrentPasswordResetWhicheverIsStampedLater() throws IOException {
-        for (boolean resetLater : List.of(true, false)) {
-            Users a = node("a" + resetLater);
-            Users b = node("b" + resetLater);
-            a.setPassword("admin", PW, Users.Role.ADMIN);
-            a.setPassword("app", PW, Users.Role.WRITE);
-            b.merge(a.entries());
-            assertTrue(b.authenticate("app", PW).isPresent()); // cached on b
-            assertEquals(java.util.Set.of("admin", "app"), legacyUsers(dir.resolve("b" + resetLater)).keySet());
-            if (resetLater) {
-                assertTrue(a.delete("app"));
-                b.change("app", "reset meanwhile 1", null, Users.Limit.KEEP);
-            } else {
-                b.change("app", "reset meanwhile 1", null, Users.Limit.KEEP);
-                assertTrue(a.delete("app"));
-            }
-            a.merge(b.entries());
-            b.merge(a.entries());
-            assertEquals(a.digest(), b.digest());
-            for (Users u : List.of(a, b)) {
-                assertFalse(u.list().containsKey("app"), "deleted");
-                assertEquals(Optional.empty(), u.authenticate("app", "reset meanwhile 1"));
-                assertEquals(Optional.empty(), u.authenticate("app", PW));
-                assertFalse(u.setDatabases("app", Users.Limit.NONE), "no such account");
-                assertFalse(u.changeOwnPassword("app", "reset meanwhile 1", "chosen by the app 1"));
-            }
-            assertEquals(java.util.Set.of("admin"), legacyUsers(dir.resolve("b" + resetLater)).keySet());
-            // Made again, it starts after the delete: no list, the new password, on both nodes.
-            Users.Changed c = b.change("app", "made again 123", Users.Role.READ, Users.Limit.KEEP);
-            assertTrue(c.created());
-            a.merge(b.entries());
-            assertEquals(Optional.of(new Users.Access(Users.Role.READ)), a.authenticate("app", "made again 123"));
-            assertEquals(a.digest(), b.digest());
-        }
-    }
-
-    /**
-     * A delete removes the password too. So a role or list given on another node at the same moment, even
-     * stamped later, leaves the account deleted (it has no password) instead of bringing it back with the
-     * password it had.
-     */
-    @Test
-    void aDeleteBeatsAConcurrentRoleOrListChangeStampedLater() throws IOException {
-        Users a = node("a");
-        Users b = node("b");
-        a.setPassword("admin", PW, Users.Role.ADMIN);
-        a.setPassword("app", PW, Users.Role.WRITE);
-        a.setPassword("svc", PW, Users.Role.WRITE);
-        b.merge(a.entries());
-        assertTrue(a.delete("app"));
-        assertTrue(a.delete("svc"));
-        assertTrue(b.setDatabases("app", Users.Limit.to(List.of("shop")))); // later
-        assertTrue(b.setRole("svc", Users.Role.READ)); // later
-        a.merge(b.entries());
-        b.merge(a.entries());
-        assertEquals(a.digest(), b.digest());
-        for (Users u : List.of(a, b)) {
-            assertEquals(java.util.Set.of("admin"), u.list().keySet());
-            assertEquals(Optional.empty(), u.authenticate("app", PW));
-            assertEquals(Optional.empty(), u.authenticate("svc", PW));
-            assertFalse(u.setRole("svc", Users.Role.WRITE), "no such account: a change without a password");
-        }
-        // Peers carry what is left: the access of the later change, and no hash.
-        var app = b.entries().stream().filter(e -> e.get("user").equals("app")).findFirst().orElseThrow();
-        assertFalse(app.containsKey("hash"), app.toString());
-        assertTrue(app.containsKey("cred_at"), app.toString());
-        // Making it again with a password brings it back, without the list (it is a new account).
-        assertTrue(a.change("app", "made again 123", null, Users.Limit.KEEP).created());
-        b.merge(a.entries());
-        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE)), b.authenticate("app", "made again 123"));
-        assertEquals(a.digest(), b.digest());
-        // That holds across a restart.
-        assertEquals(a.digest(), Users.open(dir.resolve("a"), 4, now::get).digest());
-    }
-
-    /**
-     * An admin deleted on one node and given the admin role on another at the same moment has no password, so it
-     * does not count as an admin: with the other admin deleted too, the recovery path makes the admin again.
-     */
-    @Test
-    void anAdminWithoutAPasswordDoesNotCountAsAnAdmin() throws IOException {
-        Users a = node("a");
-        Users b = node("b");
-        a.setPassword("admin", PW, Users.Role.ADMIN);
-        a.setPassword("ops", PW, Users.Role.ADMIN);
-        a.setPassword("app", PW, Users.Role.WRITE);
-        b.merge(a.entries());
-        assertTrue(a.delete("admin")); // ops is left on a
-        assertTrue(b.delete("ops")); // admin is left on b
-        assertTrue(b.setRole("admin", Users.Role.ADMIN)); // later than a's delete
-        a.merge(b.entries());
-        b.merge(a.entries());
-        assertEquals(a.digest(), b.digest());
-        assertFalse(a.isSetUp(), "no admin can sign in");
-        assertTrue(a.hasAccounts());
-        assertEquals(Optional.of(Users.Role.WRITE), a.verify("app", PW));
-        Users again = Users.open(dir.resolve("a"), 4, now::get);
-        again.setStamps(() -> new com.ataiva.serengeti.core.storage.Stamp(tick++, 0, "a"));
-        assertEquals(Users.Bootstrap.RECOVERED, again.bootstrapAdmin("the admin again 1"));
-        b.merge(again.entries());
-        assertEquals(Optional.of(Users.Role.ADMIN), b.verify("admin", "the admin again 1"));
-        assertTrue(b.isSetUp());
-    }
-
-    /**
-     * Entries in the form 2.2 wrote before the parts merged apart (no cred_at: at versioned the whole account),
-     * from this node's file or from a peer, read with cred_at = at.
-     */
-    @Test
-    void entriesWithoutCredAtAreReadWithTheHashVersionedByAt() throws IOException {
-        Path d = dir.resolve("old");
-        Files.createDirectories(d);
-        String ha = org.mindrot.jbcrypt.BCrypt.hashpw(PW, org.mindrot.jbcrypt.BCrypt.gensalt(4));
-        String hb = org.mindrot.jbcrypt.BCrypt.hashpw("own password 1", org.mindrot.jbcrypt.BCrypt.gensalt(4));
-        String accounts = "{\"v\":3,\"accounts\":["
-                + "{\"user\":\"admin\",\"at\":\"100.0.a\",\"hash\":\"" + ha + "\",\"role\":\"admin\"},"
-                + "{\"user\":\"app\",\"at\":\"105.0.a\",\"pw_at\":\"107.0.b\",\"hash\":\"" + hb
-                + "\",\"role\":\"write\",\"databases\":[\"shop\"]},"
-                + "{\"user\":\"gone\",\"at\":\"110.0.a\",\"deleted\":true}]}\n";
-        PrivateFiles.writeAtomically(d.resolve(Users.ACCOUNTS_FILE), accounts);
-        PrivateFiles.writeAtomically(d.resolve(Users.FILE), "{\"_v\":3,\"users\":{\"admin\":{\"hash\":\"" + ha
-                + "\",\"role\":\"admin\"}}}\n");
-        Users old = Users.open(d, 4, now::get);
-        old.setStamps(() -> new com.ataiva.serengeti.core.storage.Stamp(tick++, 0, "old"));
-        assertEquals(Optional.of(Users.Role.ADMIN), old.verify("admin", PW));
-        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), old.authenticate("app", "own password 1"));
-        assertFalse(old.list().containsKey("gone"));
-        // Written out as they were read: nothing about these accounts changed.
-        @SuppressWarnings("unchecked")
-        var written = (List<Object>) com.ataiva.serengeti.core.json.Json.parseObject(accounts).get("accounts");
-        assertEquals(written, new java.util.ArrayList<Object>(old.entries()));
-        // The same entries from a peer.
-        Users b = node("b");
-        b.merge(old.entries());
-        assertEquals(old.digest(), b.digest());
-        // An own change in the old form (pw_at 107 on at 105) loses to a password an admin set at 106 or later
-        // (cred_at decides first), and the list made at 105 stays.
-        b.change("app", "reset by an admin", null, Users.Limit.KEEP); // stamped just after 107, b's clock behind
-        old.merge(b.entries());
-        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), old.authenticate("app", "reset by an admin"));
-        // An old-form change from a peer counts as a change to both parts at its at: a role set there at 200
-        // wins over the reset (stamped earlier), password included.
-        var roleChange = new java.util.LinkedHashMap<String, Object>(java.util.Map.of("user", "app", "at", "200000.0.c",
-                "hash", ha, "role", "read"));
-        now.set(150_000);
-        old.merge(List.of(roleChange));
-        assertEquals(Optional.of(new Users.Access(Users.Role.READ)), old.authenticate("app", PW));
-        assertEquals(Optional.empty(), old.authenticate("app", "reset by an admin"));
-        // A tombstone in the old form is one with no hash, versioned by at in both parts.
-        old.mergeFrom(List.of(java.util.Map.of("user", "app", "at", "200001.0.c", "deleted", true)));
-        assertFalse(old.list().containsKey("app"));
-        assertEquals(java.util.Map.of("user", "app", "at", "200001.0.c", "deleted", true),
-                old.entries().stream().filter(e -> e.get("user").equals("app")).findFirst().orElseThrow());
-    }
-
-    @Test
-    void malformedOrFutureStampsInTheCredentialsAreRefusedOrLeftOut() throws IOException {
-        Users a = node("a");
-        a.setPassword("admin", PW, Users.Role.ADMIN);
-        String before = a.digest();
-        Object hash = a.entries().get(0).get("hash");
-        for (var bad : List.<java.util.Map<String, Object>>of(
-                java.util.Map.of("user", "x", "at", "5.0.n", "cred_at", 5, "hash", hash, "role", "write"),
-                java.util.Map.of("user", "x", "at", "5.0.n", "cred_at", "five", "hash", hash, "role", "write"),
-                java.util.Map.of("user", "x", "at", "5.0.n", "role", "write"), // no hash and no cred_at
-                java.util.Map.of("user", "x", "at", "5.0.n", "deleted", true, "hash", "plain"),
-                java.util.Map.of("user", "x", "at", "5.0.n", "cred_at", "6.0.n", "hash", false, "role", "write"))) {
-            assertThrows(IllegalArgumentException.class, () -> a.merge(List.of(bad)), bad.toString());
-        }
-        assertEquals(before, a.digest());
-        Users.Merged m = a.mergeFrom(List.of(
-                java.util.Map.of("user", "x", "at", "5.0.n", "cred_at", "9999999999999.0.evil", "hash", hash, "role", "write")));
-        assertEquals(new Users.Merged(0, 1), m);
-        assertEquals(before, a.digest());
     }
 }
