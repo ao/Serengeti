@@ -136,14 +136,36 @@ expect "a restart keeps old and new writes" 46 "$(count 1)"
 expect "and the update" 1 "$(count 1 'n = 700')"
 expect "create an index" 200 "$(q 1 'CREATE INDEX ON d.t (n)')"
 expect "a write after it" 200 "$(q 1 "INSERT INTO d.t (_id, n) VALUES ('post-index', 800)")"
+acct() { # i user password method path [body] -> status
+  local args=(-s -o /tmp/body -w '%{http_code}' --max-time 20 --cacert /tmp/ca.pem -u "$2:$3" -X "$4")
+  if [ -n "${6:-}" ]; then args+=(-H 'Content-Type: application/json' --data-binary "$6"); fi
+  docker exec "$RUN-client" curl "${args[@]}" "https://c$1:1985$5" || true
+}
+if [ "$(acct 1 admin "$PW" GET /v1/users)" = 200 ]; then # this build has accounts and roles
+  expect "make a write account" 201 "$(acct 1 admin "$PW" PUT /v1/users/writer '{"password": "writer password 1", "role": "write"}')"
+  expect "make a read account" 201 "$(acct 1 admin "$PW" PUT /v1/users/reader '{"password": "reader password 1", "role": "read"}')"
+  expect "make and delete one" 200 "$(acct 1 admin "$PW" PUT /v1/users/gone '{"password": "gone password 1"}' >/dev/null; acct 1 admin "$PW" DELETE /v1/users/gone)"
+  accounts=1
+fi
 replace 1 "$OLD_IMAGE" -
 wait_up 1
 expect "rolled back to $OLD_IMAGE, every row is still there" 47 "$(count 1)"
 expect "including the one written after the index" 1 "$(count 1 'n = 800')"
 if docker logs "$RUN-n1" 2>&1 | grep -q discarded; then bad "rollback" "$OLD_IMAGE discarded part of its log"
 else ok "$OLD_IMAGE discarded nothing from the log"; fi
+if [ "${accounts:-0}" = 1 ]; then
+  expect "$OLD_IMAGE reads users.json: the admin logs in" 200 "$(acct 1 admin "$PW" GET /v1/status)"
+  expect "the write account works as a 2.0 user" 200 "$(acct 1 writer 'writer password 1' POST /v1/query "{\"query\": \"INSERT INTO d.t (_id, n) VALUES ('by-writer', 900)\"}")"
+  expect "the read account cannot log in to $OLD_IMAGE (it fails closed)" 401 "$(acct 1 reader 'reader password 1' GET /v1/status)"
+  expect "nor the deleted one" 401 "$(acct 1 gone 'gone password 1' GET /v1/status)"
+fi
 replace 1 "$IMAGE" -
 wait_up 1
+if [ "${accounts:-0}" = 1 ]; then
+  expect "upgraded again, the read account is back" 200 "$(acct 1 reader 'reader password 1' GET /v1/status)"
+  expect "and may still only read" 403 "$(acct 1 reader 'reader password 1' POST /v1/query '{"query": "INSERT INTO d.t (n) VALUES (1)"}')"
+  expect "the deleted one stays deleted" 401 "$(acct 1 gone 'gone password 1' GET /v1/status)"
+fi
 q 1 'SHOW INDEXES IN d.t' >/dev/null
 case "$(body)" in *'"rows":[["n"]]'*) ok "upgraded again, the index is back" ;; *) bad "index after rollback" "$(body)" ;; esac
 expect "and finds rows" 1 "$(count 1 'n = 800')"

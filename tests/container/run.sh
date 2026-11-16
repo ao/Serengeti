@@ -114,10 +114,26 @@ expect "text/plain is refused" 415 "$(docker exec "$RUN-client" curl -s -o /dev/
 expect "a 2 MB body is refused" 413 "$(docker exec "$RUN-client" sh -c \
   'head -c 2000000 /dev/zero | tr "\0" a > /tmp/big; curl -s -o /dev/null -w "%{http_code}" -u "$1" \
    -H "Content-Type: application/json" --data-binary @/tmp/big http://env:1985/v1/query' sh "admin:$PW")"
+RPW='reader password 1'
+WPW='writer password 1'
+expect "an admin makes a read account" 201 "$(status env PUT /v1/users/reader "admin:$PW" "{\"password\": \"$RPW\", \"role\": \"read\"}")"
+expect "and a write account" 201 "$(status env PUT /v1/users/writer "admin:$PW" "{\"password\": \"$WPW\", \"role\": \"write\"}")"
+expect "the read account can SELECT" 200 "$(status env POST /v1/query "reader:$RPW" '{"query": "SELECT * FROM shop.items"}')"
+expect "the read account cannot INSERT" 403 "$(status env POST /v1/query "reader:$RPW" "{\"query\": \"INSERT INTO shop.items (name) VALUES ('x')\"}")"
+expect "nor list accounts" 403 "$(status env GET /v1/users "reader:$RPW")"
+expect "the write account can INSERT" 200 "$(status env POST /v1/query "writer:$WPW" "{\"query\": \"INSERT INTO shop.items (_id, name) VALUES ('w', 'washer')\"}")"
+expect "but not take a backup" 403 "$(status env GET /v1/backup "writer:$WPW")"
+contains "the account list has roles and no hashes" '"user":"reader","role":"read"' "$(body env GET /v1/users "admin:$PW")"
+expect "no hash in it" 0 "$(body env GET /v1/users "admin:$PW" | grep -c '\$2' || true)"
+expect "delete the write account and its row" 200 "$(status env DELETE /v1/users/writer "admin:$PW")"
+expect "it cannot log in any more" 401 "$(status env GET /v1/status "writer:$WPW")"
+expect "remove its row" 200 "$(query env "DELETE FROM shop.items WHERE _id = 'w'")"
 docker restart "$RUN-env" >/dev/null
 wait_up env
 contains "rows are there after a restart" '"rows":[["a","bolt"],["b","nut"]]' \
   "$(body env POST /v1/query "admin:$PW" '{"query": "SELECT _id, name FROM shop.items"}')"
+expect "accounts are there after a restart" 200 "$(status env GET /v1/status "reader:$RPW")"
+expect "and the deleted one stays deleted" 401 "$(status env GET /v1/status "writer:$WPW")"
 
 echo "# data directory edge cases"
 node nested -e SERENGETI_DATA_DIR=/data/a/b/c -e SERENGETI_ADMIN_PASSWORD="$PW"

@@ -2,7 +2,8 @@
 
 A cluster is a fixed set of 1 to 7 nodes, and every node holds every database. Peers come from
 `SERENGETI_PEERS`, or from opt-in discovery in a range of at most 256 addresses (`discovery_cidr`).
-Accounts are not replicated: give every node the same `SERENGETI_ADMIN_PASSWORD`.
+Accounts replicate between nodes (see [API.md](API.md#accounts)); give every node the same
+`SERENGETI_ADMIN_PASSWORD` for the first admin.
 
 ## Writes
 

@@ -4,6 +4,7 @@ import com.ataiva.serengeti.core.config.Cidr;
 import com.ataiva.serengeti.core.config.Config;
 import com.ataiva.serengeti.core.server.InternalRoutes;
 import com.ataiva.serengeti.core.server.QueryService;
+import com.ataiva.serengeti.core.server.Users;
 import com.ataiva.serengeti.core.storage.Op;
 import com.ataiva.serengeti.core.storage.StorageEngine;
 import com.ataiva.serengeti.core.storage.Store;
@@ -55,6 +56,8 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     static final long DISCOVERY_INTERVAL_MILLIS = 10_000;
     /** How often a peer found running 2.0 is asked again whether it has the bucket routes (it may have been upgraded). */
     static final long PROBE_MILLIS = 30_000;
+    /** Accounts are compared with each peer every this many sync rounds. */
+    static final int ACCOUNT_ROUNDS = 5;
 
     private static final class Peer {
         final String address;
@@ -73,6 +76,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         volatile boolean v2Synced;
         /** This node is stale and has pushed the writes it made while away to this peer. */
         volatile boolean isolatedPushed;
+        /** The peer has no account routes (older than 2.2); asked again after PROBE_MILLIS. */
+        volatile boolean noAccounts;
+        volatile long noAccountsSince;
+        volatile CompletableFuture<Void> accountsInFlight;
 
         Peer(String address) {
             this.address = address;
@@ -418,6 +425,15 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                             PeerClient.STATE_TIMEOUT.toMillis() + 5_000, TimeUnit.MILLISECONDS);
                 }
             }
+            if (++rounds % ACCOUNT_ROUNDS == 0) {
+                for (Peer p : peers) {
+                    CompletableFuture<Void> f = p.accountsInFlight;
+                    if (f == null || f.isDone()) {
+                        p.accountsInFlight = syncAccounts(p).completeOnTimeout(null,
+                                PeerClient.CALL_TIMEOUT.toMillis() * 3, TimeUnit.MILLISECONDS);
+                    }
+                }
+            }
             long now = clock.getAsLong();
             int ok = 0;
             for (Peer p : peers) {
@@ -487,6 +503,60 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                         + java.time.Instant.ofEpochMilli(since) + " to " + p.address + ". Empty it and start it again.");
             }
             return false;
+        });
+    }
+
+    private long rounds;
+    private volatile Users accounts;
+
+    /**
+     * Replicates accounts: changes made here are pushed to the peers at once, and every ACCOUNT_ROUNDS sync
+     * rounds each peer's account digest is compared and, if it differs, its accounts are merged (the newer
+     * change to a name wins; see Users.merge). Peers older than 2.2 have no account routes and are skipped.
+     */
+    public void setAccounts(Users users) {
+        this.accounts = users;
+        users.setListener(changed -> {
+            for (Peer p : List.copyOf(peers)) {
+                if (!p.protocol1 && !p.noAccounts) {
+                    client.pushAccounts(p.address, changed).exceptionally(err -> null);
+                }
+            }
+        });
+    }
+
+    private CompletableFuture<Void> syncAccounts(Peer p) {
+        Users users = accounts;
+        if (users == null || stale || p.protocol1
+                || p.noAccounts && clock.getAsLong() - p.noAccountsSince < PROBE_MILLIS) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return client.accountDigest(p.address).thenCompose(theirs -> {
+            p.noAccounts = false;
+            if (theirs.equals(users.digest())) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return client.accounts(p.address).thenAccept(list -> {
+                try {
+                    int n = users.merge(list);
+                    if (n > 0) {
+                        LOG.info("merged " + n + " account changes from " + p.address);
+                    }
+                } catch (IOException e) {
+                    throw new java.util.concurrent.CompletionException(e);
+                }
+            });
+        }).exceptionally(err -> {
+            if (unwrap(err) instanceof PeerClient.NotSupported) {
+                if (!p.noAccounts) {
+                    LOG.info("peer " + p.address + " runs a version without account replication (before 2.2)");
+                }
+                p.noAccounts = true;
+                p.noAccountsSince = clock.getAsLong();
+            } else {
+                LOG.fine("account sync with " + p.address + ": " + PeerClient.describe(err));
+            }
+            return null;
         });
     }
 
@@ -751,6 +821,28 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         switch (path) {
             case "/internal/hello" -> {
                 return Map.of("node", nodeId, "cluster_size", size, "protocol", 2);
+            }
+            case "/internal/v3/users" -> {
+                Users users = accounts;
+                if (users == null) {
+                    throw new QueryService.Rejected(404, "no such route");
+                }
+                if (method.equals("POST")) {
+                    if (!(body.get("users") instanceof List<?> list)) {
+                        throw new QueryService.Rejected(400, "users is required");
+                    }
+                    try {
+                        return Map.of("node", nodeId, "merged", users.merge(list));
+                    } catch (IllegalArgumentException e) {
+                        throw new QueryService.Rejected(400, e.getMessage());
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                }
+                if ("1".equals(query.get("digest"))) {
+                    return Map.of("node", nodeId, "digest", users.digest());
+                }
+                return Map.of("node", nodeId, "users", users.entries());
             }
             case "/internal/v2/roots" -> {
                 return Map.of("node", nodeId, "dbs", engine.read(Store::rootHashes));

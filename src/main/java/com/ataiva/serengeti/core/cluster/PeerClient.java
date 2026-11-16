@@ -123,6 +123,30 @@ final class PeerClient {
         return send(r).thenApply(m -> null);
     }
 
+    /** The peer's account digest, or NotSupported from a peer older than 2.2 (no such route). */
+    CompletableFuture<String> accountDigest(String peer) {
+        return send(request(peer, "/internal/v3/users?digest=1", CALL_TIMEOUT).GET().build(), true)
+                .thenApply(m -> str(m, "digest"));
+    }
+
+    /** The peer's accounts and tombstones (see Users.entries). */
+    CompletableFuture<List<?>> accounts(String peer) {
+        return send(request(peer, "/internal/v3/users", CALL_TIMEOUT).GET().build(), true).thenApply(m -> {
+            if (!(m.get("users") instanceof List<?> l)) {
+                throw new IllegalStateException("peer sent no accounts");
+            }
+            return l;
+        });
+    }
+
+    CompletableFuture<Void> pushAccounts(String peer, List<Map<String, Object>> entries) {
+        String body = Json.write(Map.of("users", entries));
+        HttpRequest r = request(peer, "/internal/v3/users", CALL_TIMEOUT)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+        return send(r, true).thenApply(m -> null);
+    }
+
     private CompletableFuture<Map<String, Object>> get(String peer, String path, Duration timeout) {
         return send(request(peer, path, timeout).GET().build());
     }

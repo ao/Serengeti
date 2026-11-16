@@ -83,17 +83,19 @@ public final class Node implements AutoCloseable {
                         cluster.syncForRead();
                     }
                     if (ack == null || cluster == null) {
-                        return q.run(text).toJson();
+                        return q.run(text, role.mayWrite()).toJson();
                     }
                     Cluster.Ack a = ack.equals("local") ? Cluster.Ack.LOCAL : Cluster.Ack.MAJORITY;
                     try {
-                        return Cluster.withAck(a, () -> q.run(text).toJson());
+                        return Cluster.withAck(a, () -> q.run(text, role.mayWrite()).toJson());
                     } catch (QueryException | UnavailableException | IOException
                             | com.ataiva.serengeti.core.storage.WriteRefusedException e) {
                         throw e;
                     } catch (Exception e) {
                         throw new IllegalStateException(e);
                     }
+                } catch (com.ataiva.serengeti.core.query.ForbiddenException e) {
+                    throw new Rejected(403, e.getMessage());
                 } catch (QueryException e) {
                     throw new Rejected(400, e.getMessage());
                 } catch (UnavailableException | com.ataiva.serengeti.core.storage.WriteRefusedException e) {
@@ -134,11 +136,15 @@ public final class Node implements AutoCloseable {
         clock.observe(storage.read(s -> s.maxStamp()));
         this.memory = config.memoryLimitPercent < 100 ? MemoryGuard.ofHeap(config.memoryLimitPercent) : null;
         storage.setAdmission(memory);
+        if (config.changesBuffer > 0) {
+            storage.enableChanges(config.changesBuffer);
+        }
         this.users = Users.open(dir);
+        users.setStamps(clock::now);
         AtomicReference<SetupToken> token = new AtomicReference<>();
         if (!users.isSetUp()) {
             if (config.adminPassword != null) {
-                users.setPassword(Users.ADMIN, config.adminPassword, Users.Role.ADMIN);
+                users.bootstrapAdmin(config.adminPassword);
                 Files.deleteIfExists(dir.resolve(SetupToken.FILE));
                 LOG.info("admin password set from the configuration");
             } else {
@@ -170,6 +176,7 @@ public final class Node implements AutoCloseable {
                 + ":" + api.address().getPort()
                 + (cluster == null ? "" : ", cluster of " + cluster.size() + " (writes need " + cluster.quorum() + ")"));
         if (cluster != null) {
+            cluster.setAccounts(users);
             cluster.start();
         }
         maintenance = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -243,6 +250,11 @@ public final class Node implements AutoCloseable {
             @Override
             public Optional<List<Op>> snapshot() {
                 return Optional.of(storage.snapshotOps());
+            }
+
+            @Override
+            public com.ataiva.serengeti.core.storage.ChangeFeed changes() {
+                return storage.changes();
             }
 
             @Override

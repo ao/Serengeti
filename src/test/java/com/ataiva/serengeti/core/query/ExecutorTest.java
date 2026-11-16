@@ -412,4 +412,23 @@ class ExecutorTest {
         run("CREATE TABLE shop.items");
         assertEquals(List.of(), rows("SHOW INDEXES IN shop.items").rows());
     }
+
+    @Test
+    void aReadOnlyCallerRunsSelectAndShowOnly() throws IOException {
+        run("CREATE DATABASE shop");
+        run("CREATE TABLE shop.items");
+        run("INSERT INTO shop.items (_id, n) VALUES ('a', 1)");
+        for (String q : List.of("SELECT * FROM shop.items", "SELECT COUNT(*) FROM shop.items", "SHOW DATABASES",
+                "SHOW TABLES IN shop", "SHOW INDEXES IN shop.items", "SHOW CONFLICTS IN shop.items")) {
+            query.run(q, false);
+        }
+        for (String q : List.of("INSERT INTO shop.items (n) VALUES (2)", "UPDATE shop.items SET n = 3",
+                "DELETE FROM shop.items", "CREATE TABLE shop.more", "DROP TABLE shop.items", "CREATE DATABASE x",
+                "DROP DATABASE shop", "CREATE INDEX ON shop.items (n)", "DROP INDEX IF EXISTS ON shop.items (n)")) {
+            ForbiddenException e = assertThrows(ForbiddenException.class, () -> query.run(q, false), q);
+            assertTrue(e.getMessage().contains("read role"), e.getMessage());
+        }
+        assertEquals(List.of(List.of("a", 1L)), rows("SELECT _id, n FROM shop.items").rows(), "nothing changed");
+        assertThrows(ParseException.class, () -> query.run("SELEC x", false), "parse errors stay parse errors");
+    }
 }

@@ -224,6 +224,24 @@ public final class StorageEngine implements AutoCloseable {
         return wal.failed();
     }
 
+    private volatile ChangeFeed changes;
+
+    /** Starts keeping the last {@code capacity} changes for {@code GET /v1/changes} (see ChangeFeed). */
+    public void enableChanges(int capacity) {
+        lock.writeLock().lock();
+        try {
+            changes = new ChangeFeed(capacity);
+            store.setFeed(changes);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /** The change feed, or null if it is not enabled. */
+    public ChangeFeed changes() {
+        return changes;
+    }
+
     /** Makes the next fsync fail with {@code e}, for tests of the failure path. */
     public void failNextFsyncForTest(IOException e) {
         wal.failNextForceForTest(e);

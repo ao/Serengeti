@@ -158,7 +158,7 @@ class MetricsTest {
     void metricsNeedCredentialsOfAnyRoleAndAnAdminAccount() throws Exception {
         assertEquals(503, send("GET", "/metrics", "admin", PASSWORD).statusCode(), "before setup");
         setUp();
-        users.setPassword("reader", "reader password 1", Users.Role.USER);
+        users.setPassword("reader", "reader password 1", Users.Role.WRITE);
         assertEquals(401, send("GET", "/metrics", null, null).statusCode());
         assertEquals(401, send("GET", "/metrics", "admin", "wrong password here").statusCode());
         assertEquals(200, send("GET", "/metrics", "reader", "reader password 1").statusCode());

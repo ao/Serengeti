@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -372,5 +373,75 @@ class HttpApiTest {
     @Test
     void listensOnLoopbackOnly() {
         assertTrue(api.address().getAddress().isLoopbackAddress());
+    }
+
+    private HttpResponse<String> as(String user, String password, String method, String path, String body)
+            throws Exception {
+        return send(req(method, path, body == null ? null : "application/json", body)
+                .header("Authorization", basic(user, password)));
+    }
+
+    @Test
+    void anAdminManagesAccountsAndNoResponseCarriesAHash() throws Exception {
+        setUp();
+        assertEquals(201, as("admin", PASSWORD, "PUT", "/v1/users/reader", "{\"password\": \"reader password 1\", \"role\": \"read\"}").statusCode());
+        assertEquals(201, as("admin", PASSWORD, "PUT", "/v1/users/writer", "{\"password\": \"writer password 1\"}").statusCode());
+        HttpResponse<String> list = as("admin", PASSWORD, "GET", "/v1/users", null);
+        assertEquals(200, list.statusCode());
+        assertEquals(List.of(Map.of("user", "admin", "role", "admin"), Map.of("user", "reader", "role", "read"),
+                Map.of("user", "writer", "role", "write")), json(list).get("users"));
+        assertFalse(list.body().contains("$2"), "no bcrypt hash in a response");
+        assertEquals(Optional.of(Users.Role.READ), users.verify("reader", "reader password 1"));
+        // Role only, password only.
+        assertEquals(200, as("admin", PASSWORD, "PUT", "/v1/users/reader", "{\"role\": \"write\"}").statusCode());
+        assertEquals(Optional.of(Users.Role.WRITE), users.verify("reader", "reader password 1"));
+        assertEquals(200, as("admin", PASSWORD, "PUT", "/v1/users/reader", "{\"password\": \"new reader pass 2\"}").statusCode());
+        assertEquals(Optional.of(Users.Role.WRITE), users.verify("reader", "new reader pass 2"), "the role is kept");
+        assertEquals(200, as("admin", PASSWORD, "DELETE", "/v1/users/reader", null).statusCode());
+        assertEquals(401, as("reader", "new reader pass 2", "GET", "/v1/status", null).statusCode());
+        assertEquals(404, as("admin", PASSWORD, "DELETE", "/v1/users/reader", null).statusCode());
+    }
+
+    @Test
+    void accountRequestsThatAreWrongAreRefusedWithReasons() throws Exception {
+        setUp();
+        String[][] cases = {
+            {"PUT", "/v1/users/bad%20name", "{\"password\": \"long enough pw 1\"}", "400"},
+            {"PUT", "/v1/users/a:b", "{\"password\": \"long enough pw 1\"}", "400"},
+            {"PUT", "/v1/users/x", "{\"password\": \"short\"}", "400"},
+            {"PUT", "/v1/users/x", "{\"role\": \"read\"}", "400"},
+            {"PUT", "/v1/users/x", "{}", "400"},
+            {"PUT", "/v1/users/x", "{\"password\": \"long enough pw 1\", \"role\": \"root\"}", "400"},
+            {"PUT", "/v1/users/x", "{\"password\": \"long enough pw 1\", \"admin\": true}", "400"},
+            {"PUT", "/v1/users/x", "{\"password\": 5}", "400"},
+            {"PUT", "/v1/users/admin", "{\"role\": \"read\"}", "409"},
+            {"DELETE", "/v1/users/admin", null, "409"},
+            {"POST", "/v1/users/x", "{}", "405"},
+            {"POST", "/v1/users", "{}", "405"},
+        };
+        for (String[] c : cases) {
+            HttpResponse<String> r = as("admin", PASSWORD, c[0], c[1], c[2]);
+            assertEquals(Integer.parseInt(c[3]), r.statusCode(), String.join(" ", c) + " -> " + r.body());
+            assertTrue(json(r).get("error") instanceof String, r.body());
+        }
+        assertEquals(Map.of("admin", Users.Role.ADMIN), users.list(), "nothing was created");
+    }
+
+    @Test
+    void onlyAnAdminManagesAccountsOrTakesBackups() throws Exception {
+        setUp();
+        users.setPassword("writer", "writer password 1", Users.Role.WRITE);
+        users.setPassword("reader", "reader password 1", Users.Role.READ);
+        for (String[] who : new String[][] {{"writer", "writer password 1"}, {"reader", "reader password 1"}}) {
+            assertEquals(403, as(who[0], who[1], "GET", "/v1/users", null).statusCode());
+            assertEquals(403, as(who[0], who[1], "PUT", "/v1/users/mine", "{\"password\": \"long enough pw 1\", \"role\": \"admin\"}").statusCode());
+            assertEquals(403, as(who[0], who[1], "DELETE", "/v1/users/admin", null).statusCode());
+            assertEquals(403, as(who[0], who[1], "GET", "/v1/backup", null).statusCode());
+            assertEquals(200, as(who[0], who[1], "GET", "/v1/status", null).statusCode());
+        }
+        // Any account changes its own password, keeping its role.
+        assertEquals(200, as("reader", "reader password 1", "POST", "/v1/password", "{\"password\": \"reader password 2\"}").statusCode());
+        assertEquals(Optional.of(Users.Role.READ), users.verify("reader", "reader password 2"));
+        assertEquals(Map.of("admin", Users.Role.ADMIN, "reader", Users.Role.READ, "writer", Users.Role.WRITE), users.list());
     }
 }

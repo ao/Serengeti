@@ -30,6 +30,11 @@ public interface NodeOps {
     }
 
     /** Values read on each scrape of {@code GET /metrics}. */
+    /** The change feed for GET /v1/changes, or null when the node keeps none. */
+    default com.ataiva.serengeti.core.storage.ChangeFeed changes() {
+        return null;
+    }
+
     default Gauges gauges() {
         return Gauges.ZERO;
     }

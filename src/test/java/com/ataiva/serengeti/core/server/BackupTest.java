@@ -77,7 +77,7 @@ class BackupTest {
     void backupNeedsAnAdminAccountAndStreamsTheSnapshot() throws Exception {
         assertEquals(503, get(api, "/v1/backup", "admin", PASSWORD).statusCode(), "before setup");
         users.setPassword(Users.ADMIN, PASSWORD, Users.Role.ADMIN);
-        users.setPassword("reader", "reader password 1", Users.Role.USER);
+        users.setPassword("reader", "reader password 1", Users.Role.WRITE);
 
         assertEquals(401, get(api, "/v1/backup", null, null).statusCode());
         assertEquals(401, get(api, "/v1/backup", "admin", "wrong password here").statusCode());

@@ -135,4 +135,145 @@ class UsersTest {
         l.failed("10.0.0.1");
         assertEquals(0, l.retryAfterSeconds("10.0.0.1"), "a new window starts from one failure");
     }
+
+    private long tick = 100;
+
+    private Users node(String name) throws IOException {
+        Path d = dir.resolve(name);
+        Files.createDirectories(d);
+        Users u = Users.open(d, 4, now::get);
+        u.setStamps(() -> new com.ataiva.serengeti.core.storage.Stamp(tick++, 0, name));
+        return u;
+    }
+
+    @Test
+    void rolesAreAdminWriteAndReadAndTheOldUserRoleMeansWrite() {
+        assertEquals(Users.Role.ADMIN, Users.Role.parse("admin"));
+        assertEquals(Users.Role.WRITE, Users.Role.parse("WRITE"));
+        assertEquals(Users.Role.WRITE, Users.Role.parse("user"));
+        assertEquals(Users.Role.READ, Users.Role.parse("read"));
+        assertThrows(IllegalArgumentException.class, () -> Users.Role.parse("root"));
+        assertFalse(Users.Role.READ.mayWrite());
+        assertTrue(Users.Role.WRITE.mayWrite());
+    }
+
+    @Test
+    void namesAreShortAndPlain() throws IOException {
+        Users u = node("a");
+        for (String bad : new String[] {"", "a b", "a:b", "ä", "x".repeat(65), "a/b", null}) {
+            assertNotNull(Users.nameProblem(bad), String.valueOf(bad));
+        }
+        assertNull(Users.nameProblem("ops.reader-1_x"));
+        assertThrows(IllegalArgumentException.class, () -> u.setPassword("a:b", PW, Users.Role.READ));
+    }
+
+    @Test
+    void theLastAdminCannotBeDeletedOrDemoted() throws IOException {
+        Users u = node("a");
+        u.setPassword("admin", PW, Users.Role.ADMIN);
+        assertThrows(IllegalStateException.class, () -> u.delete("admin"));
+        assertThrows(IllegalStateException.class, () -> u.setRole("admin", Users.Role.READ));
+        assertThrows(IllegalStateException.class, () -> u.setPassword("admin", PW, Users.Role.WRITE));
+        u.setPassword("second", PW, Users.Role.ADMIN);
+        assertTrue(u.delete("admin"));
+        assertFalse(u.delete("admin"), "already deleted");
+        assertFalse(u.setRole("nobody", Users.Role.READ));
+        assertTrue(u.isSetUp());
+    }
+
+    @Test
+    void aDeletedAccountCannotLogInEvenFromTheCache() throws IOException {
+        Users u = node("a");
+        u.setPassword("admin", PW, Users.Role.ADMIN);
+        u.setPassword("reader", PW, Users.Role.READ);
+        assertEquals(Optional.of(Users.Role.READ), u.verify("reader", PW));
+        assertTrue(u.delete("reader"));
+        assertEquals(Optional.empty(), u.verify("reader", PW));
+        assertEquals(java.util.Map.of("admin", Users.Role.ADMIN), u.list());
+        Users again = Users.open(dir.resolve("a"), 4, now::get);
+        assertEquals(Optional.empty(), again.verify("reader", PW), "the deletion survives a restart");
+    }
+
+    @Test
+    void accountsMergeTheSameWayOnEveryNodeInAnyOrder() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        b.setPassword("writer", PW, Users.Role.WRITE); // stamp 101
+        a.setPassword("writer", "another password 1", Users.Role.READ); // stamp 102, newer
+        b.setPassword("gone", PW, Users.Role.WRITE);
+        assertTrue(b.delete("gone"));
+        var fromA = a.entries();
+        var fromB = b.entries();
+        assertEquals(1, a.merge(fromB), "only the tombstone of gone is new to a: its writer is newer");
+        assertFalse(a.list().containsKey("gone"));
+        b.merge(fromA);
+        assertEquals(a.digest(), b.digest());
+        assertEquals(a.list(), b.list());
+        assertEquals(Users.Role.READ, b.list().get("writer"), "the newer change won");
+        assertEquals(Optional.of(Users.Role.READ), b.verify("writer", "another password 1"));
+        assertEquals(Optional.empty(), b.verify("writer", PW));
+        assertEquals(0, a.merge(fromB), "merging again changes nothing");
+        assertEquals(0, b.merge(a.entries()));
+        assertTrue(b.isSetUp(), "the admin made on a reached b");
+    }
+
+    @Test
+    void twoBootstrapAdminsResolveToTheSameHashEverywhere() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        a.bootstrapAdmin(PW);
+        b.bootstrapAdmin(PW);
+        a.merge(b.entries());
+        b.merge(a.entries());
+        assertEquals(a.digest(), b.digest());
+        assertEquals(Optional.of(Users.Role.ADMIN), a.verify("admin", PW));
+        // Any real change is newer than a bootstrap account.
+        b.setPassword("admin", "changed password 1", Users.Role.ADMIN);
+        a.merge(b.entries());
+        assertEquals(Optional.of(Users.Role.ADMIN), a.verify("admin", "changed password 1"));
+    }
+
+    @Test
+    void malformedEntriesFromAPeerAreRefusedWhole() throws IOException {
+        Users a = node("a");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        String before = a.digest();
+        var good = new java.util.LinkedHashMap<String, Object>(a.entries().get(0));
+        good.put("user", "ok");
+        for (var bad : java.util.List.<java.util.Map<String, Object>>of(
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", "plain", "role", "write"),
+                java.util.Map.of("user", "a b", "at", "5.0.n", "deleted", true),
+                java.util.Map.of("user", "x", "hash", a.entries().get(0).get("hash"), "role", "write"),
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", a.entries().get(0).get("hash"), "role", "root"))) {
+            assertThrows(IllegalArgumentException.class, () -> a.merge(java.util.List.of(good, bad)), bad.toString());
+        }
+        assertEquals(before, a.digest(), "nothing of a refused batch was merged");
+    }
+
+    @Test
+    void theFileStaysReadableByOlderVersions() throws IOException {
+        Users a = node("a");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.setPassword("writer", PW, Users.Role.WRITE);
+        a.setPassword("reader", PW, Users.Role.READ);
+        a.setPassword("gone", PW, Users.Role.WRITE);
+        a.delete("gone");
+        var root = com.ataiva.serengeti.core.json.Json.parseObject(Files.readString(dir.resolve("a").resolve(Users.FILE)));
+        @SuppressWarnings("unchecked")
+        var users = (java.util.Map<String, java.util.Map<String, Object>>) root.get("users");
+        // 2.0 and 2.1 read "users" and know only the roles admin and user.
+        assertEquals(java.util.Set.of("admin", "writer"), users.keySet());
+        assertEquals("user", users.get("writer").get("role"));
+        assertTrue(((java.util.Map<?, ?>) root.get("read_users")).containsKey("reader"));
+        assertTrue(((java.util.Map<?, ?>) root.get("deleted")).containsKey("gone"));
+        Users again = Users.open(dir.resolve("a"), 4, now::get);
+        assertEquals(a.list(), again.list());
+        assertEquals(a.digest(), again.digest());
+        // A 2.1 file: no stamps.
+        PrivateFiles.writeAtomically(dir.resolve("a").resolve(Users.FILE), "{\"users\": {\"admin\": {\"hash\": \""
+                + users.get("admin").get("hash") + "\", \"role\": \"admin\"}}}");
+        Users old = Users.open(dir.resolve("a"), 4, now::get);
+        assertEquals(Optional.of(Users.Role.ADMIN), old.verify("admin", PW));
+    }
 }

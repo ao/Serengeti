@@ -27,7 +27,7 @@ public final class Config {
     private static final Set<String> KEYS = Set.of("bind", "port", "data_dir", "fsync", "peers", "advertise",
             "discovery_cidr", "cluster_size", "cluster_key_file", "cluster_plaintext", "admin_password_file",
             "tls_keystore", "tls_keystore_password_file", "tls_truststore", "tls_truststore_password_file",
-            "test_fsync_delay_ms", "tombstone_ttl_hours", "write_ack", "memory_limit_percent");
+            "test_fsync_delay_ms", "tombstone_ttl_hours", "write_ack", "memory_limit_percent", "changes_buffer");
 
     public final String bind;
     public final int port;
@@ -51,6 +51,8 @@ public final class Config {
     public final boolean localWriteAck;
     /** Writes that add data are refused once the data is estimated to take this share of the heap. 100 turns it off. */
     public final int memoryLimitPercent;
+    /** How many recent changes a node keeps for GET /v1/changes; 0 turns the feed off. */
+    public final int changesBuffer;
 
     private final boolean explicitSize;
 
@@ -83,6 +85,7 @@ public final class Config {
         }
         localWriteAck = ack.equals("local");
         memoryLimitPercent = parseInt(v.getOrDefault("memory_limit_percent", "60"), "memory_limit_percent", 10, 100);
+        changesBuffer = parseInt(v.getOrDefault("changes_buffer", "10000"), "changes_buffer", 0, 1_000_000);
         String size = v.get("cluster_size");
         clusterSize = size == null ? peers.size() + 1 : parseInt(size, "cluster_size", 1, 7);
         validate();

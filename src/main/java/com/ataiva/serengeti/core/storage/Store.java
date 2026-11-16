@@ -289,9 +289,14 @@ public final class Store {
     }
 
     private static final class DbState {
+        final String name;
         Stamp created = Stamp.ZERO;
         Stamp dropped = Stamp.ZERO;
         final TreeMap<String, TableState> tables = new TreeMap<>();
+
+        DbState(String name) {
+            this.name = name;
+        }
 
         boolean exists() {
             return created.after(dropped);
@@ -479,19 +484,28 @@ public final class Store {
 
     public void apply(Op op) {
         maxStamp = Stamp.max(maxStamp, op.stamp());
-        DbState d = dbs.computeIfAbsent(op.db(), n -> new DbState());
+        DbState d = dbs.computeIfAbsent(op.db(), DbState::new);
         if (op instanceof Op.CreateDb o) {
             d.created = Stamp.max(d.created, o.stamp());
         } else if (op instanceof Op.DropDb o) {
+            boolean existed = d.exists();
             d.dropped = Stamp.max(d.dropped, o.stamp());
             for (TableState t : d.tables.values()) {
                 t.drop(o.stamp());
+            }
+            if (feed != null && existed && !d.exists()) {
+                feed.add("drop_db", op.db(), null, null, null, o.stamp());
             }
         } else if (op instanceof Op.CreateTable o) {
             TableState t = d.table(o.table());
             t.created = Stamp.max(t.created, o.stamp());
         } else if (op instanceof Op.DropTable o) {
-            d.table(o.table()).drop(o.stamp());
+            TableState t = d.table(o.table());
+            boolean existed = d.exists() && t.exists();
+            t.drop(o.stamp());
+            if (feed != null && existed && !t.exists()) {
+                feed.add("drop_table", op.db(), o.table(), null, null, o.stamp());
+            }
         } else if (op instanceof Op.CreateIndex o) {
             TableState t = d.table(o.table());
             t.index(o.column()).setCreated(o.stamp(), t.rows);
@@ -499,7 +513,7 @@ public final class Store {
             TableState t = d.table(o.table());
             t.index(o.column()).setDropped(o.stamp(), t.rows);
         } else if (op instanceof Op.RowOp o) {
-            putRow(d.table(o.table()), o.id(), Version.of(o));
+            putRow(d, o.table(), o.id(), Version.of(o));
         }
     }
 
@@ -509,7 +523,8 @@ public final class Store {
         }
     }
 
-    private static void putRow(TableState t, String id, Version in) {
+    private void putRow(DbState d, String table, String id, Version in) {
+        TableState t = d.table(table);
         if (!in.stamp().after(t.dropped)) {
             return;
         }
@@ -517,7 +532,18 @@ public final class Store {
         RowState next = r == null ? new RowState(List.of(in)) : r.with(in);
         if (next != r) {
             t.replace(id, r, next);
+            // A version that does not change the row's value (a conflicting one that lost) is not a change.
+            if (feed != null && (r == null ? null : r.value()) != next.value() && d.exists() && t.exists()) {
+                feed.add("row", d.name, table, id, next.value(), next.winner().stamp());
+            }
         }
+    }
+
+    private ChangeFeed feed;
+
+    /** Starts reporting changes to {@code feed}; null stops. Set after the data is loaded, not before. */
+    public void setFeed(ChangeFeed feed) {
+        this.feed = feed;
     }
 
     /**

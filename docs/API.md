@@ -1,19 +1,23 @@
 # HTTP API
 
 All bodies are JSON. Requests with a body must send `Content-Type: application/json`, and bodies over
-1 MiB are refused. Every route except `GET /health` needs HTTP Basic credentials; the only account in this
-version is `admin`.
+1 MiB are refused. Every route except `GET /health`, `GET /ready` and `POST /v1/setup` needs the HTTP Basic
+credentials of an account; see [Accounts](#accounts) for the roles.
 
 | Route | Auth | Purpose |
 |---|---|---|
 | `GET /health` | none | `{"status":"ok"}` while the process serves HTTP. |
 | `GET /ready` | none | `{"status":"ready"}`, or 503 `{"status":"not ready"}` while a readiness check fails. |
 | `POST /v1/setup` | setup token | Sets the first admin password. |
-| `POST /v1/query` | Basic | Runs one statement from [QUERY.md](QUERY.md). |
+| `POST /v1/query` | Basic | Runs one statement from [QUERY.md](QUERY.md). The read role can run SELECT and SHOW only. |
 | `POST /post` | Basic | The 1.x route name, kept for 2.0 only. Same body and result as `/v1/query`. |
 | `GET /v1/status` | Basic | Node id, version, uptime in seconds, number of databases, fsync policy. |
 | `POST /v1/password` | Basic | Changes the caller's password. |
+| `GET /v1/changes` | Basic | The changes this node applied after a cursor, waiting for one. See [Changes](#changes). |
 | `GET /v1/backup` | Basic, admin | Streams a snapshot of the data. See [Backup](#backup). |
+| `GET /v1/users` | Basic, admin | The accounts and their roles. See [Accounts](#accounts). |
+| `PUT /v1/users/NAME` | Basic, admin | Creates an account, or changes its password or role. |
+| `DELETE /v1/users/NAME` | Basic, admin | Deletes an account. |
 | `GET /metrics` | Basic | Prometheus text format. See [Metrics](#metrics). |
 | `GET /` | Basic | The console. |
 
@@ -143,6 +147,62 @@ POST /v1/password
 
 200 `{"user":"admin"}`. The old password stops working at once.
 
+## Changes
+
+`GET /v1/changes?db=D&table=T&after=CURSOR&wait=SECONDS&limit=N` returns the changes to database `D`
+(and table `T`, if given) that this node applied after the cursor, in the order it applied them: rows
+written here, rows merged from other nodes, and tables and databases dropped. With nothing new it waits up
+to `wait` seconds (0 to 60, default 0) for a change; `limit` is 1 to 10,000 (default 1,000). Any role may
+follow changes.
+
+```
+GET /v1/changes?db=shop&table=items&after=3f9a1c22e07b:41&wait=30
+{"changes": [{"kind": "row", "table": "items", "_id": "bolt", "deleted": false, "row": {"qty": 90},
+              "at": 1731400012000, "node": "0b6f3c2e-5d1a-4e8b-9a7c-2f4d6e8a1b3c"}],
+ "cursor": "3f9a1c22e07b:44"}
+```
+
+Pass the returned `cursor` as `after` next time. `kind` is `row` (with `deleted` and the row's new value),
+`drop_table` or `drop_db`. A row appears when its value changes; a conflicting version that does not
+become the value is not a change (see CONSISTENCY.md).
+
+To follow a table from the start: take a cursor with `after=now`, read the table with SELECT, then follow
+from the cursor. A change can then arrive for a row the SELECT already showed; apply changes by `_id`.
+
+A node keeps its last `changes_buffer` changes (10,000 by default) in memory, from when it started. A
+cursor from before a restart, from another node, or older than what the node still holds gets 410: read
+the table again and follow from `after=now`. Cursors belong to the node that gave them. At most 8 requests
+wait at once; more answer at once, with whatever there is.
+
+## Accounts
+
+An account has one of three roles:
+
+| Role | May |
+|---|---|
+| `read` | SELECT and SHOW, `/v1/status`, `/metrics`, the console, and change its own password. |
+| `write` | Also INSERT, UPDATE, DELETE, and CREATE and DROP of databases, tables and indexes. |
+| `admin` | Also manage accounts (`/v1/users`) and take backups. |
+
+The first admin comes from `SERENGETI_ADMIN_PASSWORD` or the setup token. An admin then makes the others:
+
+```
+PUT /v1/users/dashboard
+{"password": "a long password for it", "role": "read"}
+```
+
+201 `{"user":"dashboard","role":"read"}` for a new account, 200 for a change. Give `role` alone to change the
+role, `password` alone to change the password (the role is kept; a new account without a role gets
+`write`). `GET /v1/users` returns `{"users": [{"user": "admin", "role": "admin"}, ...]}`; no response ever
+contains a password hash. `DELETE /v1/users/NAME` deletes the account. A name is 1 to 64 letters, digits,
+`.`, `_` or `-`; a password is 12 to 72 bytes. The last admin cannot be deleted or given another role (409).
+
+In a cluster, account changes made on one node reach the others within seconds: each change carries a
+version, the newest change to a name wins on every node, and a node that was down catches up when it
+returns. Accounts travel between nodes as bcrypt hashes, over the cluster's TLS and behind its cluster key.
+Nodes older than 2.2 do not take part: in a cluster being upgraded, an account made on a 2.2 node works on
+the 2.2 nodes only.
+
 ## Errors
 
 Errors have a status code and a body of the form `{"error": "message"}`. The message never
@@ -153,10 +213,10 @@ clients in [examples/](../examples/) print the message and exit non-zero.
 |---|---|
 | 400 | The body is not the expected JSON, or the query is invalid. Query errors give the position: `expected FROM at position 9`. |
 | 401 | Missing or wrong credentials. The response has `WWW-Authenticate: Basic realm="serengeti"`. |
-| 403 | Wrong setup token, a POST whose `Origin` header names another site, or a backup asked for by an account that is not admin. |
+| 403 | Wrong setup token, a POST whose `Origin` header names another site, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin). |
 | 404 | No such route. |
 | 405 | Wrong method for the route. |
-| 409 | Setup when an admin password exists. |
+| 409 | Setup when an admin password exists, or deleting or demoting the last admin. |
 | 413 | Body over 1 MiB. |
 | 415 | `Content-Type` is not `application/json`. |
 | 429 | Ten failed logins or setup attempts from this address in the last minute. `Retry-After` gives the seconds to wait. |

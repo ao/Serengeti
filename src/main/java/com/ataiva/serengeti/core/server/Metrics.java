@@ -16,9 +16,10 @@ final class Metrics {
     static final String CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8";
     static final String OTHER = "other";
     static final List<String> ROUTES = List.of("/", "/app.css", "/app.js", "/health", "/metrics", "/post",
-            "/ready", "/v1/backup", "/v1/password", "/v1/query", "/v1/setup", "/v1/status",
+            "/ready", "/v1/backup", "/v1/changes", "/v1/password", "/v1/query", "/v1/setup", "/v1/status", "/v1/users",
             "/internal/apply", "/internal/digests", "/internal/hello", "/internal/state",
-            "/internal/v2/buckets", "/internal/v2/roots", "/internal/v2/rows", "/internal/v2/schema");
+            "/internal/v2/buckets", "/internal/v2/roots", "/internal/v2/rows", "/internal/v2/schema",
+            "/internal/v3/users");
 
     /** Upper bounds in seconds, as they appear in the le label, and in nanoseconds for the comparison. */
     private static final String[] BOUND_LABELS = {"0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1",
@@ -44,6 +45,9 @@ final class Metrics {
 
     /** The label for a request path: the path itself for a known route, {@link #OTHER} for anything else. */
     static String route(String path) {
+        if (path != null && path.startsWith("/v1/users/")) {
+            return "/v1/users/{name}"; // one label for every account, so names never become series
+        }
         return path != null && ROUTES.contains(path) ? path : OTHER;
     }
 

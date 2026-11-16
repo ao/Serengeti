@@ -12,8 +12,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -210,6 +212,10 @@ public final class HttpApi implements AutoCloseable {
                     + "from the data directory");
         }
         Users.Role role = authenticate(ex, caller);
+        if (path.equals("/v1/users") || path.startsWith("/v1/users/")) {
+            users(ex, method, path, role);
+            return;
+        }
         switch (path) {
             case "/v1/query", "/post" -> {
                 // /post is the v1 route, kept for one release. It takes the same JSON body: a raw text/plain
@@ -237,6 +243,10 @@ public final class HttpApi implements AutoCloseable {
             case "/v1/password" -> {
                 requireMethod(method, "POST");
                 changePassword(ex, role);
+            }
+            case "/v1/changes" -> {
+                requireMethod(method, "GET");
+                changes(ex);
             }
             default -> {
                 requireMethod(method, "GET");
@@ -291,6 +301,192 @@ public final class HttpApi implements AutoCloseable {
         }
         LOG.info("admin password set through /v1/setup; the setup token is deleted");
         sendJson(ex, 200, Map.of("user", Users.ADMIN));
+    }
+
+    /**
+     * Account management, admin only. {@code GET /v1/users} lists names and roles (never hashes);
+     * {@code PUT /v1/users/NAME} with {@code {"password": ..., "role": ...}} creates an account or changes
+     * its password, its role or both; {@code DELETE /v1/users/NAME} deletes it. The last admin cannot be
+     * deleted or demoted. In a cluster the change spreads to the other nodes.
+     */
+    /** {"user": ..., "role": ...} in that order, so clients and logs see the same text every time. */
+    private static Map<String, Object> account(String user, String role) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("user", user);
+        m.put("role", role);
+        return m;
+    }
+
+    private void users(HttpExchange ex, String method, String path, Users.Role role) throws IOException {
+        if (role != Users.Role.ADMIN) {
+            throw new HttpError(403, "managing accounts needs the admin role");
+        }
+        Users users = deps.users();
+        if (path.equals("/v1/users")) {
+            requireMethod(method, "GET");
+            List<Object> out = new ArrayList<>();
+            users.list().forEach((u, r) -> out.add(account(u, r.label())));
+            sendJson(ex, 200, Map.of("users", out));
+            return;
+        }
+        String name = path.substring("/v1/users/".length());
+        String bad = Users.nameProblem(name);
+        if (bad != null) {
+            throw new HttpError(400, bad);
+        }
+        try {
+            switch (method) {
+                case "PUT" -> {
+                    Map<String, Object> body = jsonBody(ex);
+                    for (String k : body.keySet()) {
+                        if (!k.equals("password") && !k.equals("role")) {
+                            throw new HttpError(400, "unknown field '" + k + "'; use password and role");
+                        }
+                    }
+                    Users.Role r = null;
+                    if (body.get("role") != null) {
+                        if (!(body.get("role") instanceof String s)) {
+                            throw new HttpError(400, "role must be admin, write or read");
+                        }
+                        try {
+                            r = Users.Role.parse(s);
+                        } catch (IllegalArgumentException e) {
+                            throw new HttpError(400, e.getMessage());
+                        }
+                    }
+                    Users.Role existing = users.list().get(name);
+                    if (body.get("password") != null) {
+                        if (!(body.get("password") instanceof String pw)) {
+                            throw new HttpError(400, "password must be a string");
+                        }
+                        String problem = Users.passwordProblem(pw);
+                        if (problem != null) {
+                            throw new HttpError(400, problem);
+                        }
+                        Users.Role to = r != null ? r : existing != null ? existing : Users.Role.WRITE;
+                        users.setPassword(name, pw, to);
+                        sendJson(ex, existing == null ? 201 : 200, account(name, to.label()));
+                    } else if (r == null) {
+                        throw new HttpError(400, "give a password, a role, or both");
+                    } else if (existing == null) {
+                        throw new HttpError(400, "a new account needs a password");
+                    } else {
+                        users.setRole(name, r);
+                        sendJson(ex, 200, account(name, r.label()));
+                    }
+                }
+                case "DELETE" -> {
+                    if (!users.delete(name)) {
+                        throw new HttpError(404, "no account '" + name + "'");
+                    }
+                    Map<String, Object> gone = new LinkedHashMap<>();
+                    gone.put("user", name);
+                    gone.put("deleted", true);
+                    sendJson(ex, 200, gone);
+                }
+                default -> throw new HttpError(405, "use PUT or DELETE");
+            }
+        } catch (IllegalStateException e) {
+            throw new HttpError(409, e.getMessage());
+        }
+    }
+
+    /** At most this many /v1/changes requests wait at once; the rest answer at once (the pool has 16 threads). */
+    static final int MAX_WAITING = 8;
+    private final java.util.concurrent.atomic.AtomicInteger waiting = new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * {@code GET /v1/changes?db=D[&table=T]&after=CURSOR|now[&wait=SECONDS][&limit=N]}: the changes this node
+     * applied after the cursor, waiting up to {@code wait} seconds (at most 60) for one. See docs/API.md.
+     */
+    private void changes(HttpExchange ex) throws IOException {
+        com.ataiva.serengeti.core.storage.ChangeFeed feed = deps.ops().changes();
+        if (feed == null) {
+            throw new HttpError(404, "this node keeps no change feed (changes_buffer is 0)");
+        }
+        Map<String, String> q = queryParams(ex);
+        String db = q.get("db");
+        String after = q.get("after");
+        if (db == null || db.isEmpty() || after == null) {
+            throw new HttpError(400, "db and after are required; after=now gives a cursor to follow from");
+        }
+        int limit = intParam(q, "limit", 1000, 1, 10_000);
+        int wait = intParam(q, "wait", 0, 0, 60);
+        if (after.equals("now")) {
+            sendJson(ex, 200, page(List.of(), feed.now()));
+            return;
+        }
+        boolean mayWait = wait > 0 && waiting.incrementAndGet() <= MAX_WAITING;
+        com.ataiva.serengeti.core.storage.ChangeFeed.Page page;
+        try {
+            page = feed.read(after, db, q.get("table"), limit, mayWait ? wait * 1000L : 0);
+        } catch (com.ataiva.serengeti.core.storage.ChangeFeed.Gone e) {
+            throw new HttpError(410, e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw new HttpError(400, e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new HttpError(503, "interrupted");
+        } finally {
+            if (wait > 0) {
+                waiting.decrementAndGet();
+            }
+        }
+        List<Object> out = new ArrayList<>(page.changes().size());
+        for (com.ataiva.serengeti.core.storage.ChangeFeed.Change c : page.changes()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("kind", c.kind());
+            if (c.table() != null) {
+                m.put("table", c.table());
+            }
+            if (c.id() != null) {
+                m.put("_id", c.id());
+                m.put("deleted", c.row() == null);
+                m.put("row", c.row());
+            }
+            m.put("at", c.stamp().wall());
+            m.put("node", c.stamp().node());
+            out.add(m);
+        }
+        sendJson(ex, 200, page(out, page.cursor()));
+    }
+
+    private static Map<String, Object> page(List<Object> changes, String cursor) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("changes", changes);
+        m.put("cursor", cursor);
+        return m;
+    }
+
+    private static Map<String, String> queryParams(HttpExchange ex) {
+        Map<String, String> out = new LinkedHashMap<>();
+        String raw = ex.getRequestURI().getRawQuery();
+        if (raw == null || raw.isEmpty()) {
+            return out;
+        }
+        for (String part : raw.split("&")) {
+            int eq = part.indexOf('=');
+            String k = java.net.URLDecoder.decode(eq < 0 ? part : part.substring(0, eq), StandardCharsets.UTF_8);
+            String v = eq < 0 ? "" : java.net.URLDecoder.decode(part.substring(eq + 1), StandardCharsets.UTF_8);
+            out.putIfAbsent(k, v);
+        }
+        return out;
+    }
+
+    private static int intParam(Map<String, String> q, String name, int dflt, int min, int max) {
+        String v = q.get(name);
+        if (v == null) {
+            return dflt;
+        }
+        try {
+            int n = Integer.parseInt(v);
+            if (n < min || n > max) {
+                throw new NumberFormatException();
+            }
+            return n;
+        } catch (NumberFormatException e) {
+            throw new HttpError(400, name + " must be a whole number from " + min + " to " + max);
+        }
     }
 
     private void changePassword(HttpExchange ex, Users.Role role) throws IOException {

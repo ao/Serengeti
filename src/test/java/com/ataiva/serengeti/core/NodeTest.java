@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -110,6 +111,61 @@ class NodeTest {
                 .POST(HttpRequest.BodyPublishers.ofString(
                         com.ataiva.serengeti.core.json.Json.write(Map.of("query", q)))).build(),
                 HttpResponse.BodyHandlers.ofString());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> changes(Node n, String query) throws Exception {
+        HttpResponse<String> r = get(n, "/v1/changes?" + query, PW);
+        Map<String, Object> m = new java.util.HashMap<>(com.ataiva.serengeti.core.json.Json.parseObject(r.body()));
+        m.put("status", (long) r.statusCode());
+        return m;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aClientFollowsATableThroughTheChangeFeed() throws Exception {
+        Path data = tmp.resolve("data");
+        Config c = config(data, "SERENGETI_ADMIN_PASSWORD", PW);
+        String old;
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+            assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
+            String cursor = (String) changes(n, "db=shop&after=now").get("cursor");
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, qty) VALUES ('bolt', 1)").statusCode());
+            assertEquals(200, query(n, "UPDATE shop.items SET qty = 2 WHERE _id = 'bolt'").statusCode());
+            Map<String, Object> page = changes(n, "db=shop&table=items&after=" + cursor);
+            List<Map<String, Object>> list = (List<Map<String, Object>>) page.get("changes");
+            assertEquals(2, list.size(), page.toString());
+            assertEquals("bolt", list.get(1).get("_id"));
+            assertEquals(Map.of("qty", 2L), list.get(1).get("row"));
+            assertEquals(false, list.get(1).get("deleted"));
+            // A long poll returns as soon as the next change comes.
+            String next = (String) page.get("cursor");
+            Thread writer = new Thread(() -> {
+                try {
+                    Thread.sleep(300);
+                    query(n, "DELETE FROM shop.items WHERE _id = 'bolt'");
+                } catch (Exception e) {
+                    // the poll below then times out and the test fails
+                }
+            });
+            writer.start();
+            long t0 = System.nanoTime();
+            Map<String, Object> waited = changes(n, "db=shop&table=items&wait=10&after=" + next);
+            writer.join();
+            assertTrue((System.nanoTime() - t0) / 1_000_000 < 5_000, "returned when the delete came");
+            assertEquals(true, ((List<Map<String, Object>>) waited.get("changes")).get(0).get("deleted"));
+            for (String bad : List.of("after=now", "db=shop", "db=shop&after=xyz", "db=shop&after=now&wait=61",
+                    "db=shop&after=now&limit=0")) {
+                assertEquals(400L, changes(n, bad).get("status"), bad);
+            }
+            old = (String) waited.get("cursor");
+        }
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            Map<String, Object> gone = changes(n, "db=shop&after=" + old);
+            assertEquals(410L, gone.get("status"), "a cursor from before the restart");
+            assertTrue(((String) gone.get("error")).contains("after=now"), gone.toString());
+        }
     }
 
     @Test

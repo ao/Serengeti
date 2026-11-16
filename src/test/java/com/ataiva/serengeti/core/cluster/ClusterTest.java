@@ -372,6 +372,81 @@ class ClusterTest {
         }
     }
 
+    private int as(int i, String user, String password, String method, String path, String body) {
+        try {
+            HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[i] + path))
+                    .header("Authorization", "Basic " + Base64.getEncoder()
+                            .encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8)))
+                    .timeout(Duration.ofSeconds(20));
+            if (body != null) {
+                b.header("Content-Type", "application/json");
+            }
+            b.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
+            return HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString()).statusCode();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    @Test
+    void accountsMadeOnOneNodeWorkOnEveryNodeAndDeletionsSpread() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        waitWritable(0);
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        assertEquals(201, as(0, "admin", PW, "PUT", "/v1/users/reader", "{\"password\": \"reader password 1\", \"role\": \"read\"}"));
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " knows the reader", () -> as(n, "reader", "reader password 1", "GET", "/v1/status", null) == 200);
+        }
+        // The read role holds on every node, not only where the account was made.
+        assertEquals(403, as(2, "reader", "reader password 1", "POST", "/v1/query", "{\"query\": \"INSERT INTO d.t (n) VALUES (1)\"}"));
+        assertEquals(200, as(2, "reader", "reader password 1", "POST", "/v1/query", "{\"query\": \"SELECT * FROM d.t\"}"));
+        // A node that is down while accounts change catches up when it comes back.
+        stop(2);
+        assertEquals(200, as(0, "admin", PW, "DELETE", "/v1/users/reader", null));
+        assertEquals(201, as(1, "admin", PW, "PUT", "/v1/users/writer", "{\"password\": \"writer password 1\", \"role\": \"write\"}"));
+        start(2);
+        eventually("node 2 learns the deletion", () -> as(2, "reader", "reader password 1", "GET", "/v1/status", null) == 401);
+        eventually("node 2 learns the new account", () -> as(2, "writer", "writer password 1", "GET", "/v1/status", null) == 200);
+        // A password change spreads, and the old password stops working everywhere.
+        assertEquals(200, as(1, "admin", PW, "POST", "/v1/password", "{\"password\": \"a new admin password\"}"));
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has the new admin password",
+                    () -> as(n, "admin", "a new admin password", "GET", "/v1/users", null) == 200
+                            && as(n, "admin", PW, "GET", "/v1/status", null) == 401);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aWriteOnOneNodeShowsInAnotherNodesChangeFeed() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        waitWritable(0);
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        eventually("node 1 has the table", () -> has(1, "SHOW TABLES IN d", List.of(List.of("t"))));
+        String cursor = (String) Json.parseObject(get(1, "/v1/changes?db=d&after=now")).get("cursor");
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES ('a', 1)").statusCode());
+        Map<String, Object> page = Json.parseObject(get(1, "/v1/changes?db=d&table=t&wait=10&after=" + cursor));
+        List<Map<String, Object>> changes = (List<Map<String, Object>>) page.get("changes");
+        assertEquals(1, changes.size(), page.toString());
+        assertEquals("a", changes.get(0).get("_id"));
+        assertEquals(nodes[0].id(), changes.get(0).get("node"), "the change names the node that wrote it");
+    }
+
+    private String get(int i, String path) throws Exception {
+        return HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[i] + path))
+                .header("Authorization", "Basic " + Base64.getEncoder()
+                        .encodeToString(("admin:" + PW).getBytes(StandardCharsets.UTF_8)))
+                .timeout(Duration.ofSeconds(20)).GET().build(), HttpResponse.BodyHandlers.ofString()).body();
+    }
+
     @Test
     void anIndexCreatedOnOneNodeIsBuiltOnEveryNode() throws Exception {
         for (int i = 0; i < 3; i++) {
