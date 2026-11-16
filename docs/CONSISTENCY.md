@@ -94,8 +94,10 @@ might hold rows deleted meanwhile whose tombstones are already gone; the 20 minu
 back just in time at least that long to pull every delete it missed before its peers leave them out of the
 sums they compare. A stale node starts, or carries on: it neither syncs rows nor takes writes, and
 its own data is not served to peers. It does hand on, once to each peer, the changes stamped after its
-last sync with a majority, which are newer than any tombstone the cluster can have dropped, so writes it
-acknowledged with `"ack": "local"` while cut off are not lost. Then stop it, empty its data directory
+last sync with a majority, so writes it acknowledged with `"ack": "local"` while cut off are not lost. One
+case is not covered: such a write to a row that the majority deleted later, more than the TTL before the
+node comes back, whose tombstone the peers have dropped by then, brings the row back with that write's
+value (review 22e found it by reading the code). Then stop it, empty its data directory
 except `accounts.json`, `users.json` and `node-id`, and start it; it resyncs from its peers. The time of its last sync is
 kept in `last-sync`; `serengeti restore` sets it to the backup's newest change, so a node restored from
 a backup older than that starts stale too.
