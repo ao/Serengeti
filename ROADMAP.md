@@ -46,9 +46,7 @@ here has a date.
 ## Possible next steps
 
 Not committed to, and in no particular order: indexes on more than one column;
-clients published as packages; a change feed that survives a restart; account changes merged field by
-field, so that a password reset on one node cannot undo a role or a list of databases given on another at
-the same moment.
+clients published as packages; a change feed that survives a restart.
 
 ## Not planned
 

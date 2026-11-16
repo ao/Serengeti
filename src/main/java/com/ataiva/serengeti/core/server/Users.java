@@ -30,12 +30,19 @@ import org.mindrot.jbcrypt.BCrypt;
  * <p>A read or write account may be limited to some databases ({@link Access#databases}). The list is part of
  * the account: an admin change, stamped and merged like a role.
  *
- * <p>Accounts merge across a cluster like rows: the newest change to a name wins on every node, in any order
- * (see {@link #merge}), and a deleted account stays as a tombstone. Two stamps order an account's changes.
- * {@code at} is the stamp of its last admin change: creating it, a password or role set by an admin, deleting
- * it. {@code pw_at} is the stamp of its own last password change on top of that version. A newer {@code at}
- * always wins, so an account cannot undo its deletion or demotion by changing its password on a node that
- * has not heard of it yet; that password change is lost instead.
+ * <p>Accounts merge across a cluster like rows, in any order and the same on every node (see {@link #merge}),
+ * but in two parts that merge apart. The access (role, databases, and whether the account is deleted) carries
+ * {@code at}, the stamp of the last admin change to it. The credentials (the hash) carry {@code cred_at}, the
+ * stamp of the last password an admin set, and {@code pw_at}, that of the account's own password change after
+ * it. Each part comes from the side with the newer version of that part, credentials ordered by cred_at and
+ * then pw_at. So a password reset on one node and a role or list given on another at the same moment both
+ * stand; an admin's reset wins over an own change made on a node that had not heard of the reset; and an
+ * account's own password change never touches its access, so it cannot undo a demotion or a list.
+ *
+ * <p>A delete changes both parts: the access becomes deleted and the hash is removed, both at the delete's
+ * stamp. An account exists only while its access is not deleted and it has a hash, so neither a password reset
+ * nor a role change made at the same moment on another node brings it back; only a change to both, made after
+ * the delete, does (making the account again). What is left of a deleted account stays as a tombstone.
  *
  * <p>The admin made at first start from {@code SERENGETI_ADMIN_PASSWORD} has the oldest possible stamp, so
  * any later change wins over it and a new node does not reset a cluster's admin password. If no admin is left
@@ -216,41 +223,67 @@ public final class Users {
     }
 
     /**
-     * One account, or the tombstone of a deleted one ({@code hash}, {@code role} and {@code databases} null).
-     * {@code databases} is null for an account that reaches every database. {@code at} is the stamp of the last
-     * admin change, {@code pwAt} of the account's own last password change after it ({@link Stamp#ZERO} if
-     * none).
+     * One name: an account, or what is left of a deleted one, in two parts with a version each. The access:
+     * {@code role} (null once deleted) and {@code databases} (null for an account that reaches every database),
+     * at {@code at}. The credentials: {@code hash} (null once a delete removed it), at {@code credAt}, when an
+     * admin last set the password, then {@code pwAt}, the account's own last password change after that
+     * ({@link Stamp#ZERO} if none). The account exists only with both a role and a hash.
      */
-    private record Account(String hash, Role role, List<String> databases, Stamp at, Stamp pwAt) {
+    private record Account(Role role, List<String> databases, Stamp at, String hash, Stamp credAt, Stamp pwAt) {
         Account {
             pwAt = pwAt == null ? Stamp.ZERO : pwAt;
         }
 
-        boolean deleted() {
-            return hash == null;
+        boolean exists() {
+            return role != null && hash != null;
         }
 
         Access access() {
             return new Access(role, databases);
         }
 
+        /** The latest of its stamps. */
+        Stamp last() {
+            return Stamp.max(at, Stamp.max(credAt, pwAt));
+        }
+
         /**
-         * The newer of two versions of a name, the same on every node: by at, then pw_at, then hash, then the
-         * list of databases.
+         * Two versions of a name as one, the same on every node and in any order: the access of the one with
+         * the newer at, and the credentials of the one with the newer cred_at, then pw_at. Equal stamps on
+         * different contents come only from two nodes that made the admin from the environment or read one
+         * account from their users.json; then the narrower access wins (deleted, then the lesser role, then a
+         * list) and, of the credentials, none, then the greater hash.
          */
-        static Account newer(Account a, Account b) {
+        static Account merge(Account a, Account b) {
+            Account access = newerAccess(a, b);
+            Account creds = newerCredentials(a, b);
+            return access == creds ? access
+                    : new Account(access.role, access.databases, access.at, creds.hash, creds.credAt, creds.pwAt);
+        }
+
+        private static Account newerAccess(Account a, Account b) {
             int c = a.at.compareTo(b.at);
+            if (c == 0) {
+                c = Integer.compare(narrowness(a), narrowness(b));
+            }
+            if (c == 0) {
+                c = String.valueOf(a.databases).compareTo(String.valueOf(b.databases));
+            }
+            return c >= 0 ? a : b;
+        }
+
+        /** Greater for less access: deleted, then metrics, read, write and admin, each limited above unlimited. */
+        private static int narrowness(Account a) {
+            return a.role == null ? Integer.MAX_VALUE : a.role.ordinal() * 2 + (a.databases != null ? 1 : 0);
+        }
+
+        private static Account newerCredentials(Account a, Account b) {
+            int c = a.credAt.compareTo(b.credAt);
             if (c == 0) {
                 c = a.pwAt.compareTo(b.pwAt);
             }
-            if (c != 0) {
-                return c > 0 ? a : b;
-            }
-            String ka = a.deleted() ? "~" : a.hash;
-            String kb = b.deleted() ? "~" : b.hash;
-            c = ka.compareTo(kb);
             if (c == 0) {
-                c = String.valueOf(a.databases).compareTo(String.valueOf(b.databases));
+                c = (a.hash == null ? "~" : a.hash).compareTo(b.hash == null ? "~" : b.hash);
             }
             return c >= 0 ? a : b;
         }
@@ -328,9 +361,9 @@ public final class Users {
         }
         // Written or rewritten by 2.0 or 2.1, which know no stamps and cannot make or delete accounts or change
         // roles, only passwords. So an entry whose hash differs from accounts.json is the account's own
-        // password change: it keeps its admin version (at), role and databases, and gets the file's time as
-        // pw_at. An admin change made on 2.2 anywhere still wins over it. Read and metrics accounts, accounts
-        // limited to some databases and tombstones are not in users.json and stay.
+        // password change: it keeps its access and cred_at, and gets the file's time as pw_at. A password an
+        // admin sets on 2.2 anywhere still wins over it. Read and metrics accounts, accounts limited to some
+        // databases and tombstones are not in users.json and stay.
         Stamp legacy = new Stamp(Math.max(2, Files.getLastModifiedTime(usersFile).toMillis()), 0, "legacy");
         accounts.putAll(base);
         boolean changed = false;
@@ -351,16 +384,16 @@ public final class Users {
                         + " can check");
             }
             Account b = base.get(name);
-            if (b != null && !b.deleted() && b.hash().equals(h)) {
-                continue;
-            }
-            if (b != null && b.deleted()) {
+            if (b != null && !b.exists()) {
                 continue; // deleted on 2.2; an older version cannot have made it again
             }
+            if (b != null && b.hash().equals(h)) {
+                continue;
+            }
             Account acct = b == null
-                    ? new Account(h, role, null, LEGACY, legacy)
-                    : new Account(h, b.role(), b.databases(), b.at(),
-                            Stamp.max(legacy, after(b.at(), b.pwAt(), legacy)));
+                    ? new Account(role, null, LEGACY, h, LEGACY, legacy)
+                    : new Account(b.role(), b.databases(), b.at(), h, b.credAt(),
+                            after(Stamp.max(b.credAt(), b.pwAt()), legacy));
             accounts.put(name, acct);
             changed = true;
         }
@@ -392,12 +425,12 @@ public final class Users {
 
     /** True while an admin exists: /v1/setup is refused then. */
     public synchronized boolean isSetUp() {
-        return accounts.values().stream().anyMatch(a -> !a.deleted() && a.role() == Role.ADMIN);
+        return admins() > 0;
     }
 
     /** True while any account exists: until then every route but /health, /ready and /v1/setup is refused. */
     public synchronized boolean hasAccounts() {
-        return accounts.values().stream().anyMatch(a -> !a.deleted());
+        return accounts.values().stream().anyMatch(Account::exists);
     }
 
     /** Checks a password against the rules. Returns an error message, or null if it is acceptable. */
@@ -430,7 +463,9 @@ public final class Users {
     /**
      * An admin's change to an account, written to the files before it returns: creates it (a password is
      * needed then) or changes its password, role and databases, any of them, as one change with one stamp. A
-     * null password or role is left as it is; a new account without a role gets write.
+     * null password or role is left as it is; a new account without a role gets write. A password moves the
+     * credentials' version, a role or databases the access's, and a new account both: a part the change
+     * leaves alone keeps its version, so it merges with what another node did to that part meanwhile.
      *
      * @throws NoSuchAccount if there is no account and no password
      * @throws IllegalArgumentException for a bad name or password, nothing to change, or databases on an admin
@@ -517,7 +552,7 @@ public final class Users {
                 return null;
             }
             Account old = accounts.get(user);
-            Account live = old == null || old.deleted() ? null : old;
+            Account live = old == null || !old.exists() ? null : old;
             if (live == null && hash == null) {
                 throw new NoSuchAccount();
             }
@@ -529,8 +564,12 @@ public final class Users {
             if (to != Role.ADMIN && live != null && live.role() == Role.ADMIN && admins() == 1) {
                 throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
             }
-            Account a = new Account(hash != null ? hash : live.hash(), to, databases,
-                    bootstrap ? BOOTSTRAP : next(old), Stamp.ZERO);
+            Stamp at = bootstrap ? BOOTSTRAP : next(old);
+            // A new account (or one made again) sets both parts; otherwise only the parts the change names move.
+            boolean access = live == null || role != null || !limit.keep();
+            Account a = hash != null
+                    ? new Account(to, databases, access ? at : live.at(), hash, at, Stamp.ZERO)
+                    : new Account(to, databases, at, live.hash(), live.credAt(), live.pwAt());
             entry = commit(user, a);
             out = new Changed(a.access(), live == null);
         }
@@ -547,9 +586,9 @@ public final class Users {
     }
 
     /**
-     * An account changes its own password: {@code current} must still be its password. The role stays what it
-     * is now (not what it was when the request was authenticated), and the change is stamped as the account's
-     * own, so it never undoes an admin's delete or role change, here or on another node.
+     * An account changes its own password: {@code current} must still be its password. Only pw_at moves (cred_at
+     * stays), so the change never undoes an admin's delete, role or list, here or on another node, and loses to
+     * a password an admin set on a node that had not heard of it.
      *
      * @return false if the account does not exist (any more) or {@code current} is not its password
      */
@@ -564,7 +603,7 @@ public final class Users {
             synchronized (this) {
                 was = accounts.get(user);
             }
-            if (was == null || was.deleted() || current == null || !matches(current, was.hash())) {
+            if (was == null || !was.exists() || current == null || !matches(current, was.hash())) {
                 return false;
             }
             Map<String, Object> entry;
@@ -572,8 +611,8 @@ public final class Users {
                 if (!was.equals(accounts.get(user))) {
                     continue; // changed while bcrypt ran: check against what it is now
                 }
-                Account a = new Account(hash, was.role(), was.databases(), was.at(),
-                        after(was.at(), was.pwAt(), stamps.get()));
+                Account a = new Account(was.role(), was.databases(), was.at(), hash, was.credAt(),
+                        after(Stamp.max(was.credAt(), was.pwAt()), stamps.get()));
                 entry = commit(user, a);
             }
             listener.accept(List.of(entry));
@@ -596,18 +635,22 @@ public final class Users {
         }
     }
 
-    /** Deletes an account, keeping its tombstone. False if there is no such account. */
+    /**
+     * Deletes an account, keeping its tombstone: both parts change, the access to deleted and the credentials
+     * to none. False if there is no such account.
+     */
     public boolean delete(String user) throws IOException {
         Map<String, Object> entry;
         synchronized (this) {
             Account old = accounts.get(user);
-            if (old == null || old.deleted()) {
+            if (old == null || !old.exists()) {
                 return false;
             }
             if (old.role() == Role.ADMIN && admins() == 1) {
                 throw new IllegalStateException("'" + user + "' is the only admin; make another admin first");
             }
-            entry = commit(user, new Account(null, null, null, next(old), Stamp.ZERO));
+            Stamp at = next(old);
+            entry = commit(user, new Account(null, null, at, null, at, Stamp.ZERO));
         }
         listener.accept(List.of(entry));
         return true;
@@ -626,12 +669,11 @@ public final class Users {
     /** A stamp for an admin change to a name: after every stamp it has, even if this node's clock is behind. */
     private Stamp next(Account old) {
         Stamp now = stamps.get();
-        return old == null ? now : after(old.at(), old.pwAt(), now);
+        return old == null ? now : after(old.last(), now);
     }
 
-    /** {@code now}, or just after the later of {@code a} and {@code b} if {@code now} is not after both. */
-    private static Stamp after(Stamp a, Stamp b, Stamp now) {
-        Stamp last = Stamp.max(a, b);
+    /** {@code now}, or just after {@code last} if {@code now} is not after it. */
+    private static Stamp after(Stamp last, Stamp now) {
         if (now.after(last)) {
             return now;
         }
@@ -643,7 +685,7 @@ public final class Users {
     private int admins() {
         int n = 0;
         for (Account a : accounts.values()) {
-            if (!a.deleted() && a.role() == Role.ADMIN) {
+            if (a.exists() && a.role() == Role.ADMIN) {
                 n++;
             }
         }
@@ -654,7 +696,7 @@ public final class Users {
     public synchronized Map<String, Role> list() {
         Map<String, Role> out = new TreeMap<>();
         accounts.forEach((name, a) -> {
-            if (!a.deleted()) {
+            if (a.exists()) {
                 out.put(name, a.role());
             }
         });
@@ -665,7 +707,7 @@ public final class Users {
     public synchronized Map<String, Access> accounts() {
         Map<String, Access> out = new TreeMap<>();
         accounts.forEach((name, a) -> {
-            if (!a.deleted()) {
+            if (a.exists()) {
                 out.put(name, a.access());
             }
         });
@@ -673,8 +715,8 @@ public final class Users {
     }
 
     /**
-     * Every account and tombstone, as sent to peers: name, stamps, and hash, role and (for a limited account)
-     * databases, or {@code deleted}.
+     * Every account and tombstone, as sent to peers: name, stamps, {@code deleted} or role and (for a limited
+     * account) databases, and the hash if it has one.
      */
     public synchronized List<Map<String, Object>> entries() {
         List<Map<String, Object>> out = new ArrayList<>();
@@ -682,17 +724,27 @@ public final class Users {
         return out;
     }
 
+    /**
+     * An entry in the form 2.2 wrote before the two parts merged apart, plus {@code cred_at} where it differs from
+     * {@code at}: an account made, or changed in both parts at once, and a plain tombstone look as they did.
+     */
     private static Map<String, Object> entry(String name, Account a) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("user", name);
         m.put("at", a.at().toString());
+        if (!a.credAt().equals(a.at())) {
+            m.put("cred_at", a.credAt().toString());
+        }
         if (a.pwAt().after(Stamp.ZERO)) {
             m.put("pw_at", a.pwAt().toString());
         }
-        if (a.deleted()) {
+        if (a.role() == null) {
             m.put("deleted", true);
-        } else {
+        }
+        if (a.hash() != null) {
             m.put("hash", a.hash());
+        }
+        if (a.role() != null) {
             m.put("role", a.role().label());
             if (a.databases() != null) {
                 m.put("databases", a.databases());
@@ -705,6 +757,10 @@ public final class Users {
      * One entry, from a peer ({@code fromPeer}, which bounds the bcrypt cost) or from this node's own file. A
      * {@code databases} key that is not a list as every node writes it (1 to 100 names, sorted, none twice), or
      * on an account that may not have one, makes the entry malformed: it is never read as no limit.
+     *
+     * <p>Without {@code cred_at} (also every entry 2.2 wrote before the parts merged apart, where {@code at}
+     * versioned the whole account), the hash's version is {@code at}. An account without a hash, which only a
+     * delete merged with a later role change makes, always has a {@code cred_at}.
      */
     private Map.Entry<String, Account> parse(Object o, boolean fromPeer) {
         if (!(o instanceof Map<?, ?> m) || !(m.get("user") instanceof String user) || nameProblem(user) != null
@@ -712,15 +768,29 @@ public final class Users {
             throw new IllegalArgumentException("malformed account entry");
         }
         Stamp stamp = Stamp.parse(at);
+        Stamp credStamp = stamp;
+        if (m.containsKey("cred_at")) {
+            if (!(m.get("cred_at") instanceof String c)) {
+                throw new IllegalArgumentException("malformed account entry for " + user);
+            }
+            credStamp = Stamp.parse(c);
+        }
         Stamp pwStamp = m.get("pw_at") instanceof String p ? Stamp.parse(p) : Stamp.ZERO;
         Pattern hashes = fromPeer ? PEER_HASH : LOCAL_HASH;
+        String hash = null;
+        if (m.containsKey("hash")) {
+            if (!(m.get("hash") instanceof String h) || !hashes.matcher(h).matches()) {
+                throw new IllegalArgumentException("malformed account entry for " + user);
+            }
+            hash = h;
+        }
         Account a;
         if (Boolean.TRUE.equals(m.get("deleted"))) {
             if (m.containsKey("databases")) {
                 throw new IllegalArgumentException("malformed list of databases for " + user);
             }
-            a = new Account(null, null, null, stamp, pwStamp);
-        } else if (m.get("hash") instanceof String h && hashes.matcher(h).matches() && m.get("role") instanceof String r) {
+            a = new Account(null, null, stamp, hash, credStamp, pwStamp);
+        } else if (m.get("role") instanceof String r && (hash != null || m.containsKey("cred_at"))) {
             Role role = Role.parse(r);
             List<String> databases = null;
             if (m.containsKey("databases")) {
@@ -729,7 +799,7 @@ public final class Users {
                     throw new IllegalArgumentException("malformed list of databases for " + user);
                 }
             }
-            a = new Account(h, role, databases, stamp, pwStamp);
+            a = new Account(role, databases, stamp, hash, credStamp, pwStamp);
         } else {
             throw new IllegalArgumentException("malformed account entry for " + user);
         }
@@ -764,8 +834,9 @@ public final class Users {
     }
 
     /**
-     * Merges accounts from a peer: for each name the newer version wins (see {@link Account#newer}), so merging
-     * is idempotent and order-independent. Writes the files when any name changed. An entry stamped more than
+     * Merges accounts from a peer: for each name, each part comes from whichever version has the newer stamp
+     * for it (see {@link Account#merge}), so merging is idempotent and order-independent. Writes the files
+     * when any name changed. An entry with any stamp more than
      * {@link #MAX_AHEAD_MILLIS} ahead of this node's clock is left out (and counted), as row changes are: the
      * peer sends it again once the clocks agree.
      *
@@ -781,18 +852,18 @@ public final class Users {
         for (Object o : entries) {
             Map.Entry<String, Account> e = parse(o, true);
             Account a = e.getValue();
-            if (a.at().wall() > limit || a.pwAt().wall() > limit) {
+            if (a.at().wall() > limit || a.credAt().wall() > limit || a.pwAt().wall() > limit) {
                 ahead++;
                 continue;
             }
-            in.merge(e.getKey(), a, Account::newer);
+            in.merge(e.getKey(), a, Account::merge);
         }
         int changed = 0;
         synchronized (this) {
             Map<String, Account> next = new TreeMap<>(accounts);
             for (Map.Entry<String, Account> e : in.entrySet()) {
                 Account old = next.get(e.getKey());
-                Account won = old == null ? e.getValue() : Account.newer(old, e.getValue());
+                Account won = old == null ? e.getValue() : Account.merge(old, e.getValue());
                 if (!won.equals(old)) {
                     next.put(e.getKey(), won);
                     changed++;
@@ -836,7 +907,7 @@ public final class Users {
             all.add(entry(name, a));
             // Only the roles 2.0 and 2.1 know: they would take any other one for a write account. And no
             // limited account: they would ignore the list and let it reach every database.
-            if (!a.deleted() && a.databases() == null && (a.role() == Role.ADMIN || a.role() == Role.WRITE)) {
+            if (a.exists() && a.databases() == null && (a.role() == Role.ADMIN || a.role() == Role.WRITE)) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("hash", a.hash());
                 m.put("role", a.role() == Role.WRITE ? "user" : a.role().label());
@@ -888,7 +959,7 @@ public final class Users {
                     return Optional.of(a.access());
                 }
             }
-            if (current != null && current.deleted()) {
+            if (current != null && !current.exists()) {
                 current = null;
             }
             if (attempt == 3 || a != null && current == null) {
