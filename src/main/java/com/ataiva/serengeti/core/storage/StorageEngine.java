@@ -39,6 +39,7 @@ public final class StorageEngine implements AutoCloseable {
     private final Wal wal;
     private final ScheduledExecutorService flusher;
     private boolean closed;
+    private DirLock dirLock;
 
     /** What {@link #open} found. */
     public record OpenStats(long snapshotOps, long walBatches, long walDiscardedBytes) {}
@@ -91,12 +92,22 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     public static StorageEngine open(Path dir, FsyncPolicy policy) throws IOException {
-        return new StorageEngine(dir, policy, 64L * 1024 * 1024, 0);
+        return open(dir, policy, 64L * 1024 * 1024, 0);
     }
 
+    /** Opens {@code dir}, taking its {@link DirLock} first: a directory another engine has open is refused. */
     public static StorageEngine open(Path dir, FsyncPolicy policy, long checkpointBytes, long testFsyncDelayMs)
             throws IOException {
-        return new StorageEngine(dir, policy, checkpointBytes, testFsyncDelayMs);
+        Files.createDirectories(dir);
+        DirLock dirLock = DirLock.acquire(dir);
+        try {
+            StorageEngine e = new StorageEngine(dir, policy, checkpointBytes, testFsyncDelayMs);
+            e.dirLock = dirLock;
+            return e;
+        } catch (IOException | RuntimeException | Error t) {
+            dirLock.close();
+            throw t;
+        }
     }
 
     public OpenStats openStats() {
@@ -361,7 +372,13 @@ public final class StorageEngine implements AutoCloseable {
             if (flusher != null) {
                 flusher.shutdownNow();
             }
-            wal.close();
+            try {
+                wal.close();
+            } finally {
+                if (dirLock != null) {
+                    dirLock.close();
+                }
+            }
         } finally {
             lock.writeLock().unlock();
         }

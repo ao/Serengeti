@@ -19,7 +19,7 @@ RUN groupadd --system --gid 10001 serengeti \
  && useradd --system --uid 10001 --gid 10001 --home-dir /data --no-create-home serengeti \
  && mkdir /data && chown 10001:10001 /data && chmod 700 /data
 COPY --from=build /serengeti.jar /opt/serengeti/serengeti.jar
-COPY --chmod=755 docker/serengeti-certs /usr/local/bin/serengeti-certs
+COPY --chmod=755 docker/serengeti-certs docker/serengeti /usr/local/bin/
 USER 10001:10001
 # All interfaces inside the container's own network namespace. Nothing is published unless the operator
 # passes -p; publish to 127.0.0.1 unless other machines need to reach the node.

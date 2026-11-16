@@ -83,6 +83,7 @@ The admin password is only used when there is no account yet. Once `users.json` 
 | `setup-token` | One-time setup token (mode 0600), present only until the first admin password is set. |
 | `node-id` | A random id for this node, kept across restarts. |
 | `last-sync` | In a cluster: when this node last synced with a majority (Unix milliseconds), written at most once a minute. |
+| `lock` | Empty. The running node holds a lock on it, so a second node started on the same directory (in the same container, or another container on the same volume) stops with exit status 2. The operating system drops the lock when the node exits, also after a crash. |
 
 Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md#backup)). Copying the directory
 of a stopped node also works. A backup holds the data only: `users.json`, `node-id` and `setup-token` are not in it.

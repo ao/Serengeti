@@ -68,13 +68,27 @@ public final class Backup {
         } catch (IOException | RuntimeException e) {
             throw new IOException("backup " + file + " is not valid, nothing was written: " + e.getMessage(), e);
         }
+        // Checked before taking the lock, so a refused restore leaves the directory exactly as it was, and again
+        // under it, as a node may have started meanwhile.
+        refuseUnlessEmpty(dataDir);
+        Files.createDirectories(dataDir);
+        // Held while writing, so a node cannot start on the directory halfway through.
+        try (com.ataiva.serengeti.core.storage.DirLock lock = com.ataiva.serengeti.core.storage.DirLock.acquire(dataDir)) {
+            refuseUnlessEmpty(dataDir);
+            return write(ops, dataDir);
+        }
+    }
+
+    private static void refuseUnlessEmpty(Path dataDir) throws IOException {
         for (String name : List.of(StorageEngine.WAL_FILE, StorageEngine.SNAPSHOT_FILE, StorageEngine.INDEX_FILE)) {
             if (Files.exists(dataDir.resolve(name))) {
                 throw new IOException(dataDir.toAbsolutePath() + " already holds " + name
                         + "; restore needs an empty data directory");
             }
         }
-        Files.createDirectories(dataDir);
+    }
+
+    private static int write(List<Op> ops, Path dataDir) throws IOException {
         // Index definitions go to their own file, as the engine keeps them (see StorageEngine.INDEX_FILE).
         List<Op> indexes = Op.indexOnly(ops);
         if (!indexes.isEmpty()) {

@@ -262,6 +262,20 @@ node copy -v "$restored:/data" -e SERENGETI_ADMIN_PASSWORD="$PW"
 wait_up copy
 contains "a node on the restored volume has the rows" '"rows":[["a","bolt"],["b","nut"]]' \
   "$(body copy POST /v1/query "admin:$PW" '{"query": "SELECT _id, name FROM shop.items"}')"
+
+# The command line beside a running node, and no second node on its data directory.
+expect "serengeti shell in the node's container, with its admin password" "$(printf 'name\nbolt\nnut')" \
+  "$(docker exec "$RUN-copy" serengeti shell --format tsv -c 'SELECT name FROM shop.items ORDER BY name' 2>&1)"
+contains "serengeti with no command prints its usage" "usage: serengeti" "$(docker exec "$RUN-copy" serengeti 2>&1)"
+second=$(docker exec -e SERENGETI_PORT=1986 "$RUN-copy" java -jar /opt/serengeti/serengeti.jar 2>&1) && rc=0 || rc=$?
+expect "a second node in the container on the same data exits 2" 2 "$rc"
+contains "and says the directory is in use" "in use by another node" "$second"
+second=$(docker run --rm --label "serengeti-it=$RUN" -m 512m -v "$restored:/data" \
+  -e SERENGETI_ADMIN_PASSWORD="$PW" "$IMAGE" 2>&1) && rc=0 || rc=$?
+expect "a second container on the same volume exits 2" 2 "$rc"
+contains "and says the directory is in use" "in use by another node" "$second"
+expect "the first node still answers" 200 \
+  "$(query copy "SELECT _id FROM shop.items")"
 contains "the request log names route and status, not the query" \
   'request method=POST route=/v1/query status=200' "$(docker logs "$RUN-env" 2>&1)"
 expect "the request log holds no query text" 0 \

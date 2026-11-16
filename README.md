@@ -52,7 +52,21 @@ q "SELECT name, qty FROM shop.items WHERE qty > 200"
 # {"type":"rows","columns":["name","qty"],"rows":[["nut",300]],"count":1,"truncated":false}
 ```
 
-The console is at http://127.0.0.1:1985/ and asks for the same user name and password.
+The console is at http://127.0.0.1:1985/ and asks for the same user name and password. The image also
+has a shell that prints results as a table:
+
+```
+$ docker exec -it -e SERENGETI_PASSWORD serengeti serengeti shell
+serengeti> SELECT name, qty FROM shop.items ORDER BY qty
+name | qty
+-----+----
+bolt | 120
+nut  | 300
+(2 rows, 8 ms)
+```
+
+`-c 'STATEMENT'` runs statements and exits, and `--format tsv` or `--format json` suit scripts;
+`serengeti shell --help` lists the rest.
 
 To set the password when the node first starts, pass `-e SERENGETI_ADMIN_PASSWORD` to `docker run`
 (the value is taken from your shell), and skip the setup step.

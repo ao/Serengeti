@@ -17,6 +17,24 @@ public final class Serengeti {
         // Drop clients that hold a request open: 30 s to send a request, 60 s to read a response.
         System.setProperty("sun.net.httpserver.maxReqTime", "30");
         System.setProperty("sun.net.httpserver.maxRspTime", "60");
+        if (args.length > 0 && args[0].equals("shell")) {
+            java.io.Console console = System.console();
+            Shell.Terminal terminal = console == null ? null : new Shell.Terminal() {
+                @Override
+                public String readLine(String prompt) {
+                    return console.readLine("%s", prompt);
+                }
+
+                @Override
+                public char[] readPassword(String prompt) {
+                    return console.readPassword("%s", prompt);
+                }
+            };
+            java.io.PrintStream out = new java.io.PrintStream(
+                    new java.io.FileOutputStream(java.io.FileDescriptor.out), true, java.nio.charset.StandardCharsets.UTF_8);
+            System.exit(Shell.run(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(), System.in, out,
+                    System.err, terminal));
+        }
         if (args.length > 0 && args[0].equals("restore")) {
             System.exit(restore(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(),
                     System.out, System.err));
@@ -39,6 +57,7 @@ public final class Serengeti {
                 case "--help", "-h" -> {
                     System.out.println("usage: serengeti [--config FILE] [--version] [--health]\n"
                             + "       serengeti restore [--config FILE] BACKUP_FILE\n"
+                            + "       serengeti shell [--url URL] [--user NAME] [-c STATEMENT] ... (see shell --help)\n"
                             + "--health asks the running node's GET /health and exits 0 if it answers 200.\n"
                             + "restore loads a backup into an empty data directory; stop the node first.\n"
                             + "Settings come from FILE (or SERENGETI_CONFIG) and SERENGETI_* environment variables.\n"
@@ -68,17 +87,21 @@ public final class Serengeti {
         }
     }
 
-    /** For container health checks: the image has no curl. A wildcard bind is reached on loopback. */
-    static boolean probe(Config config) {
+    /** This machine's node, from its settings. A wildcard bind is reached on loopback. */
+    static String localUrl(Config config) {
         String host = switch (config.bind) {
             case "0.0.0.0", "*" -> "127.0.0.1";
             case "::" -> "[::1]";
             default -> config.bind.contains(":") ? "[" + config.bind + "]" : config.bind;
         };
+        return config.scheme() + "://" + host + ":" + config.port;
+    }
+
+    /** For container health checks: the image has no curl. */
+    static boolean probe(Config config) {
         try {
             java.net.HttpURLConnection c = (java.net.HttpURLConnection)
-                    java.net.URI.create(config.scheme() + "://" + host + ":" + config.port + "/health").toURL()
-                            .openConnection();
+                    java.net.URI.create(localUrl(config) + "/health").toURL().openConnection();
             if (c instanceof javax.net.ssl.HttpsURLConnection https) {
                 // Trust only this node's own certificate. The host name is not checked: the probe connects
                 // to loopback, and the certificate names the node's public host.

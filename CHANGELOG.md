@@ -28,6 +28,17 @@ GitHub release notes and tags.
 - Clients for Python (standard library only) and JavaScript (`fetch`), one file each, in `clients/`:
   queries, reads that move on to the next node, writes that are never sent twice, the change feed,
   accounts and TLS with a cluster's own CA. `clients/run.sh` tests both against the image; CI runs it.
+- `serengeti shell`, and a `serengeti` command in the image: statements typed at a prompt, read from a
+  script or given with `-c`, with results as a table, tab-separated values or JSON. A statement runs at
+  `;`, or at the end of a line once it is complete. In a node's container, `docker exec -it NAME serengeti
+  shell` reaches that node, trusting its own certificate, and signs in as admin with
+  `SERENGETI_ADMIN_PASSWORD` when it is set.
+
+### Fixed
+- Nothing stopped a second node from opening a data directory in use, for example a second container on the
+  same volume, and both would write the same log. A node now holds a lock on `data_dir/lock` while it runs;
+  a second one stops with exit status 2 and says the directory is in use. `serengeti restore` takes the
+  lock too. On a file system without locks, the node logs a warning and starts.
 
 ### Changed
 - The image uses G1 and gives the heap 60% of the container's memory (was 75%), leaving room for the log's
