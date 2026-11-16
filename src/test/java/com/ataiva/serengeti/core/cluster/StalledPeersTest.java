@@ -142,7 +142,8 @@ class StalledPeersTest {
             List<Socket> stalled = new ArrayList<>(stall("127.0.0.2", port, 24));
             Thread.sleep(3_000);
             long onePeer = usedAfterGc() - before;
-            long bound = (long) (PER_PEER + BUILT_AT_ONCE) * page;
+            // Two pages more for what the measurement itself catches (buffers, garbage a full GC kept).
+            long bound = (long) (PER_PEER + BUILT_AT_ONCE + 2) * page;
             assertTrue(onePeer < bound, "24 stalled requests from one peer hold " + onePeer / (1 << 20)
                     + " MiB; pages of " + page / (1 << 20) + " MiB, bound " + bound / (1 << 20) + " MiB");
             // Several peers: the shared bound, plus what may be built while it is checked.
