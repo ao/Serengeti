@@ -986,9 +986,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     /**
      * Protocol 2: compare per-table roots, then bucket sums of the tables that differ, then pull what
      * differs in those buckets: the rows that differ, found by comparing row hashes with the peer (protocol
-     * 3, {@link #pullTable}), or every row of the bucket from a peer without that. In a steady cluster this
-     * moves only the root map; under writes, only what the writes touched. Completes with the number of ops
-     * merged.
+     * 3, {@link #pullTable}), or every row of the bucket from a peer without that. With a protocol 3 peer
+     * the roots and sums compared count tombstones too (the full sums), so a newer delete reaches a node
+     * that holds an older one; 2.1's count live rows only. In a steady cluster this moves only the root map;
+     * under writes, only what the writes touched. Completes with the number of ops merged.
      */
     @SuppressWarnings("unchecked")
     private CompletableFuture<Integer> syncByBuckets(Peer p, java.util.concurrent.atomic.AtomicBoolean readDone) {
@@ -1007,8 +1008,11 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                 CompletableFuture<Integer> schemaStep = mySchema == theirSchema
                         ? CompletableFuture.completedFuture(0)
                         : client.schema(p.address, db).thenApply(this::mergeOrThrow);
-                Map<String, Object> theirTables = (Map<String, Object>) e.getValue().get("tables");
-                Map<String, Object> myTables = m == null ? Map.of() : (Map<String, Object>) m.get("tables");
+                // A peer with the full sums (tombstones counted) is compared by those; 2.1 sends only "tables".
+                Map<String, Object> theirFull = (Map<String, Object>) e.getValue().get("full");
+                boolean full = theirFull != null && tryRowRoutes(p);
+                Map<String, Object> theirTables = full ? theirFull : (Map<String, Object>) e.getValue().get("tables");
+                Map<String, Object> myTables = m == null ? Map.of() : (Map<String, Object>) m.get(full ? "full" : "tables");
                 for (Map.Entry<String, Object> t : theirTables.entrySet()) {
                     long theirRoot = ((Number) t.getValue()).longValue();
                     Object mineRoot = myTables.get(t.getKey());
@@ -1018,20 +1022,41 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     }
                     String table = t.getKey();
                     // Schema first, so a drop that removes rows is applied before rows are compared.
-                    work.add(schemaStep.thenCompose(x -> client.buckets(p.address, db, table)).thenCompose(sums -> {
-                        long[] local = engine.read(s -> s.bucketSums(db, table));
-                        List<Integer> differ = new ArrayList<>();
-                        for (int i = 0; i < sums.length; i++) {
-                            if (sums[i] != local[i]) {
-                                differ.add(i);
-                            }
-                        }
-                        return pullTable(new TablePull(p, limiter, stop, db, table), differ);
-                    }));
+                    work.add(schemaStep.thenCompose(x -> differingBuckets(p, db, table, full))
+                            .thenCompose(differ -> pullTable(new TablePull(p, limiter, stop, db, table), differ)));
                 }
                 work.add(schemaStep);
             }
             return sum(work);
+        });
+    }
+
+    /**
+     * The buckets of a table whose sums differ from the peer's: the full sums (tombstones counted, protocol 3)
+     * if {@code full}, else the live ones, which is all 2.1 has. A peer that answers 404 to the full sums is
+     * treated as one without the protocol 3 routes.
+     */
+    private CompletableFuture<List<Integer>> differingBuckets(Peer p, String db, String table, boolean full) {
+        CompletableFuture<long[]> theirs = !full ? client.buckets(p.address, db, table)
+                : client.fullBuckets(p.address, db, table).handle((sums, err) -> {
+                    if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
+                        throw new java.util.concurrent.CompletionException(unwrap(err));
+                    }
+                    return sums;
+                });
+        return theirs.thenCompose(sums -> {
+            if (sums == null) {
+                noRowRoutes(p);
+                return differingBuckets(p, db, table, false);
+            }
+            long[] local = engine.read(s -> full ? s.fullBucketSums(db, table) : s.bucketSums(db, table));
+            List<Integer> differ = new ArrayList<>();
+            for (int i = 0; i < sums.length; i++) {
+                if (sums[i] != local[i]) {
+                    differ.add(i);
+                }
+            }
+            return CompletableFuture.completedFuture(differ);
         });
     }
 
@@ -1241,6 +1266,19 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     return o;
                 });
                 return Map.of("ops", Op.toJson(ops));
+            }
+            case "/internal/v3/buckets" -> {
+                if (rowRoutesOff) {
+                    throw new QueryService.Rejected(404, "no such route");
+                }
+                String db = required(query, "db");
+                String table = required(query, "table");
+                long[] sums = engine.read(s -> s.fullBucketSums(db, table));
+                List<Object> out = new ArrayList<>(sums.length);
+                for (long v : sums) {
+                    out.add(v);
+                }
+                return Map.of("sums", out);
             }
             case "/internal/v3/hashes" -> {
                 if (rowRoutesOff) {

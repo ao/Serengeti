@@ -153,6 +153,68 @@ class StoreProperties {
         assertEquals(removed >= 0, true);
     }
 
+    @Property(tries = 500)
+    void theFullSumsEqualAFreshCountAtAnyExpiryAndCollectingChangesThemNot(@ForAll("ops") List<Op> ops,
+            @ForAll("expiries") long expiry, @ForAll boolean expireFirst) {
+        Store s = new Store();
+        if (expireFirst) {
+            s.setExpiry(expiry); // ops then arrive with the expiry set, as merges do
+        }
+        s.applyAll(ops);
+        s.setExpiry(expiry);
+        Store rebuilt = new Store();
+        rebuilt.setExpiry(expiry);
+        rebuilt.applyAll(s.toOps());
+        Store collected = new Store();
+        collected.applyAll(s.toOps());
+        collected.setExpiry(expiry);
+        collected.collectTombstones(expiry);
+        for (String db : s.allDatabaseNames()) {
+            for (String t : List.of("t", "u")) {
+                String full = java.util.Arrays.toString(s.fullBucketSums(db, t));
+                assertEquals(full, java.util.Arrays.toString(rebuilt.fullBucketSums(db, t)), db + "." + t);
+                assertEquals(full, java.util.Arrays.toString(collected.fullBucketSums(db, t)), db + "." + t);
+                java.util.Set<Integer> all = new java.util.HashSet<>();
+                for (int b = 0; b < Store.BUCKETS; b++) {
+                    all.add(b);
+                }
+                long[] fromHashes = new long[Store.BUCKETS];
+                s.rowHashes(db, t, all).forEach((id, h) -> fromHashes[Store.bucket(id)] += h);
+                assertEquals(full, java.util.Arrays.toString(fromHashes), "the hashes add up to the full sums");
+                assertEquals(s.rowHashes(db, t, all), collected.rowHashes(db, t, all));
+            }
+        }
+    }
+
+    @Provide
+    Arbitrary<Long> expiries() {
+        return Arbitraries.oneOf(Arbitraries.just(Long.MIN_VALUE), Arbitraries.longs().between(0, 32));
+    }
+
+    /** Leaving out expired deletes of rows not held changes nothing that sync compares, nor any live row. */
+    @Property(tries = 500)
+    void mergingWithoutExpiredDeletesComparesLikeMergingAll(@ForAll("ops") List<Op> state,
+            @ForAll("ops") List<Op> peer, @ForAll("expiries") long expiry) {
+        Store all = new Store();
+        Store filtered = new Store();
+        for (Store s : List.of(all, filtered)) {
+            s.applyAll(state);
+            s.setExpiry(expiry);
+        }
+        Store from = new Store();
+        from.applyAll(otherNodes(peer));
+        all.applyAll(from.toOps());
+        filtered.applyAll(filtered.withoutExpiredDeletes(from.toOps()));
+        assertEquals(roots(all), roots(filtered));
+        assertEquals(withoutTombstones(all.toOps()), withoutTombstones(filtered.toOps()));
+        for (String db : all.allDatabaseNames()) {
+            for (String t : List.of("t", "u")) {
+                assertEquals(java.util.Arrays.toString(all.fullBucketSums(db, t)),
+                        java.util.Arrays.toString(filtered.fullBucketSums(db, t)), db + "." + t);
+            }
+        }
+    }
+
     /** merge() logs only ops for which isNew is true, so isNew must be exactly "applying changes the state". */
     @Property(tries = 500)
     void isNewIsTrueExactlyWhenApplyingChangesTheState(@ForAll("ops") List<Op> state, @ForAll("ops") List<Op> more) {

@@ -974,6 +974,130 @@ class ClusterTest {
         assertTrue(pages[1] > 0 && pages[2] > 0, java.util.Arrays.toString(pages));
     }
 
+    // ---- tombstones that differ (the full bucket sums, /internal/v3/buckets) ----
+
+    /** The versions node i holds of row {@code id} of d.t, newest first, as "kind:stamp". */
+    @SuppressWarnings("unchecked")
+    private List<String> versions(int i, String id) {
+        try {
+            HttpResponse<String> r = internal(i, "/internal/v3/rows", Json.write(Map.of("db", "d", "table", "t",
+                    "ids", List.of(id))), KEY);
+            List<String> out = new ArrayList<>();
+            for (Object o : (List<Object>) Json.parseObject(r.body()).get("ops")) {
+                Map<String, Object> op = (Map<String, Object>) o;
+                if (id.equals(op.get("id"))) {
+                    out.add(op.get("op") + ":" + op.get("at"));
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of(e.toString());
+        }
+    }
+
+    /**
+     * The soak's check 8 (TombstoneBlindTest): node 0 holds an older delete of x, nodes 1 and 2 a newer one.
+     * Compared by the live sums alone, as with a 2.1 peer, the two count nothing and the newer delete never
+     * comes; by the full sums it does, so a concurrent update older than it, arriving later, stays hidden.
+     */
+    @Test
+    void aNewerDeleteReachesANodeThatHoldsAnOlderOne() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        for (int i = 0; i < 3; i++) {
+            waitWritable(i);
+        }
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has d.t", () -> has(n, "SHOW TABLES IN d", List.of(List.of("t"))));
+        }
+        long now = System.currentTimeMillis();
+        String xs = (now - 5_000) + ".0.z1";
+        String ts = (now - 4_000) + ".0.z2";
+        String us = (now - 3_000) + ".0.z4";
+        String ds = (now - 2_000) + ".0.z3";
+        for (int i = 0; i < 3; i++) {
+            merge(i, List.of(rowOp("t", "x", Map.of("n", 1L), xs, Map.of())));
+        }
+        merge(0, List.of(rowOp("t", "x", null, ts, Map.of("z1", xs))));
+        // Peers without the protocol 3 routes: node 0 falls back to the live sums with them.
+        nodes[1].cluster().rowRoutesForTest(false);
+        nodes[2].cluster().rowRoutesForTest(false);
+        nodes[0].cluster().rowProbeMillisForTest(300);
+        for (int i = 1; i < 3; i++) {
+            merge(i, List.of(rowOp("t", "x", null, ds, Map.of("z1", xs, "z2", ts))));
+        }
+        Thread.sleep(2_500);
+        assertEquals(List.of("delete:" + ts), versions(0, "x"), "the live sums of both count nothing for x");
+        nodes[1].cluster().rowRoutesForTest(true);
+        nodes[2].cluster().rowRoutesForTest(true);
+        eventually("node 0 has the newer delete", () -> versions(0, "x").equals(List.of("delete:" + ds)));
+        // The update of a node that was cut off: concurrent with both deletes, newer than the older one.
+        merge(0, List.of(rowOp("t", "x", Map.of("n", 2L), us, Map.of("z1", xs))));
+        assertEquals(List.of("delete:" + ds, "put:" + us), versions(0, "x"));
+        assertEquals(List.of(List.of(0L)), rows(0, "SELECT COUNT(*) FROM d.t"));
+        HttpResponse<String> r = query(0, "SELECT COUNT(*) FROM d.t", "majority");
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(r.body().contains("[[0]]"), r.body());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theFullSumsCountTombstonesExceptExpiredOnes() throws Exception {
+        start(0); // its peers are down, so it may not collect tombstones; it still leaves expired ones out
+        long now = System.currentTimeMillis();
+        long old = now - 8 * 24 * 3_600_000L; // older than the default TTL (7 days) and its 10-minute step
+        merge(0, List.of(Map.of("op", "create_db", "db", "d", "at", old + ".0.z1"),
+                Map.of("op", "create_table", "db", "d", "table", "t", "at", old + ".1.z1"),
+                rowOp("t", "gone", Map.of("n", 1L), old + ".2.z1", Map.of()),
+                rowOp("t", "gone", null, old + ".3.z1", Map.of("z1", old + ".2.z1")),
+                rowOp("t", "dead", null, (now - 1_000) + ".0.z1", Map.of()),
+                rowOp("t", "x", Map.of("n", 1L), (now - 900) + ".0.z1", Map.of()),
+                rowOp("t", "lost", null, old + ".5.z1", Map.of())));
+        assertEquals(List.of("delete:" + old + ".3.z1"), versions(0, "gone"), "held: it may not be collected yet");
+        assertEquals(List.of(), versions(0, "lost"), "an expired delete of a row not held is not merged");
+        assertEquals(List.of("delete:" + (now - 1_000) + ".0.z1"), versions(0, "dead"));
+
+        java.util.TreeSet<Integer> buckets = new java.util.TreeSet<>();
+        for (String id : List.of("gone", "dead", "x", "lost")) {
+            buckets.add(com.ataiva.serengeti.core.storage.Store.bucket(id));
+        }
+        String list = String.join(",", buckets.stream().map(String::valueOf).toList());
+        Map<String, Object> h = Json.parseObject(internal(0, "/internal/v3/hashes?db=d&table=t&buckets=" + list, null, KEY).body());
+        assertEquals(List.of("dead", "x"), h.get("ids"), "the expired tombstone is left out");
+        HttpResponse<String> b = internal(0, "/internal/v3/buckets?db=d&table=t", null, KEY);
+        assertEquals(200, b.statusCode(), b.body());
+        List<Object> sums = (List<Object>) Json.parseObject(b.body()).get("sums");
+        assertEquals(com.ataiva.serengeti.core.storage.Store.BUCKETS, sums.size());
+        long total = 0;
+        for (Object v : sums) {
+            total += (Long) v;
+        }
+        long hashes = 0;
+        for (Object v : (List<Object>) h.get("h")) {
+            hashes += (Long) v;
+        }
+        assertEquals(hashes, total, "the full sums add up the hashes of the rows sync compares, the recent tombstone too");
+        List<Object> v2 = (List<Object>) Json.parseObject(internal(0, "/internal/v2/buckets?db=d&table=t", null, KEY).body())
+                .get("sums");
+        assertFalse(v2.equals(sums), "the live sums leave out every tombstone");
+        Map<String, Object> roots = (Map<String, Object>) ((Map<String, Object>) Json.parseObject(
+                internal(0, "/internal/v2/roots", null, KEY).body()).get("dbs")).get("d");
+        assertTrue(roots.containsKey("full") && roots.containsKey("tables"), roots.toString());
+        for (String bad : List.of("db=d", "table=t", "")) {
+            assertEquals(400, internal(0, "/internal/v3/buckets?" + bad, null, KEY).statusCode(), bad);
+        }
+        assertEquals(401, internal(0, "/internal/v3/buckets?db=d&table=t", null, null).statusCode());
+        List<Object> none = (List<Object>) Json.parseObject(internal(0, "/internal/v3/buckets?db=d&table=nope", null, KEY)
+                .body()).get("sums");
+        assertTrue(none.stream().allMatch(v -> ((Long) v) == 0L));
+        nodes[0].cluster().rowRoutesForTest(false);
+        assertEquals(404, internal(0, "/internal/v3/buckets?db=d&table=t", null, KEY).statusCode());
+    }
+
     /**
      * Found by tests/soak (docs/SOAK.md, finding 1): Node.close() closed the cluster first and the HTTP server
      * after it, and the server went on answering for up to a second, so a local write already in the log, and

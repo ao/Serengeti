@@ -228,7 +228,8 @@ class MetricsTest {
     @Test
     void everyNodeToNodeRouteHasItsOwnLabel() {
         for (String path : List.of("/internal/v2/roots", "/internal/v2/schema", "/internal/v2/buckets",
-                "/internal/v2/rows", "/internal/apply", "/internal/hello", "/internal/v3/hashes", "/internal/v3/rows",
+                "/internal/v2/rows", "/internal/apply", "/internal/hello", "/internal/v3/buckets", "/internal/v3/hashes",
+                "/internal/v3/rows",
                 "/internal/v3/users")) {
             assertEquals(path, Metrics.route(path));
         }

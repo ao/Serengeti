@@ -118,6 +118,15 @@ GitHub release notes and tags.
 - docs/QUERY.md, "Reading a large table": keyset paging with `WHERE _id > 'last' ORDER BY _id LIMIT n`.
 
 ### Fixed
+- A newer delete did not reach a node that held an older delete of the same row (2.1 too): sync compared
+  sums that count only live rows, and two tombstones count nothing there. A write made on a node that was
+  cut off, concurrent with both deletes and older than the newer one, could then show on that node as the
+  row's value, also to a majority read. 2.2 nodes now also keep sums that count tombstones and compare
+  those with each other (`GET /internal/v3/buckets`, and a `full` root per table in `/internal/v2/roots`,
+  which 2.1 ignores); with 2.1 peers they compare as before. Tombstones now expire on 10-minute boundaries
+  of the wall clock with the same cutoff on every node, and sync leaves expired ones out, so nodes that
+  have dropped them and nodes that may not yet compare equal. Found by the soak (5 nodes, seed 31337,
+  check 8).
 - Nothing stopped a second node from opening a data directory in use, for example a second container on the
   same volume, and both would write the same log. A node now holds a lock on `data_dir/lock` while it runs;
   a second one stops with exit status 2 and says the directory is in use. `serengeti restore` takes the

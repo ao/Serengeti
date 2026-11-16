@@ -42,13 +42,21 @@ The state is a CRDT: rows, tables and databases keep their newest version (a val
 merging is idempotent and order-independent, and the merge only logs what is new. This is how a node
 that was down or partitioned catches up, and how a write that missed a peer gets there.
 
-Each table spreads its rows over 1024 buckets by a hash of their id, and keeps, per bucket, a sum of
-hashes of its live rows' versions, updated on every change. Every second each node asks each peer for one
-root value per table, compares, and asks for the 1024 bucket sums of any table that differs. For the
-buckets that differ, it then asks for the id of each row in them and a hash of that row's versions
-(tombstones included), compares them with its own, and pulls only the rows whose hashes differ or that
-only the peer has; rows only it has are left for the peer to pull. A bucket it holds no row of is pulled
-whole, since every row in it is missing. A cluster where nothing changed exchanges the roots and nothing
+Each table spreads its rows over 1024 buckets by a hash of their id, and keeps, per bucket, two sums of
+hashes of its rows' versions, updated on every change: one over the live rows, which is what 2.1 compares,
+and one that counts tombstones too. Every second each node asks each peer for one root value per table,
+compares, and asks for the 1024 bucket sums of any table that differs. For the buckets that differ, it
+then asks for the id of each row in them and a hash of that row's versions (tombstones included), compares
+them with its own, and pulls only the rows whose hashes differ or that only the peer has; rows only it has
+are left for the peer to pull. A bucket it holds no row of is pulled whole, since every row in it is
+missing.
+
+Between 2.2 nodes the roots and bucket sums compared are the ones that count tombstones, so a node that
+holds an older delete of a row gets a peer's newer one. Compared by the live sums, as with a 2.1 peer, two
+tombstones of a row both count nothing: the newer one never travels, and a write made meanwhile on a node
+that was cut off, concurrent with both deletes and older than the newer one, can then show as the row's
+value on the node holding the older delete, also to a majority read. 2.1 compares only the live sums and
+has this; a 2.2 node still does with a 2.1 peer. A cluster where nothing changed exchanges the roots and nothing
 else; a node that missed a few thousand writes to a large table compares about 40 bytes per row of the
 buckets that differ and pulls the rows it missed. Hashes come in pages of about 20,000 rows, rows in pages
 of at most 2,000 ids, one after another per table, with at most two pulls of either kind running at once on
@@ -65,6 +73,13 @@ A delete leaves a tombstone so that an older copy of the row cannot come back fr
 delete. Tombstones are kept for `tombstone_ttl_hours` (default 168, one week) and then dropped, but only
 on a node whose every peer has synced with it by buckets since it started: a 2.0 node, or one not heard
 from yet (down, or restored from a backup), could otherwise bring a deleted row back.
+
+Tombstones expire on 10-minute boundaries of the wall clock (:00, :10, ...): at each, every node takes the
+boundary less the TTL as its cutoff, so all drop the same tombstones within seconds of each other. From
+then on sync leaves the expired ones out everywhere (from the sums that count tombstones and from the row
+hashes), also on a node that may not drop them yet, and a node does not take an expired delete from a peer
+for a row it holds nothing of. So nodes that have dropped a tombstone and nodes that still hold it compare
+equal, and it is not pulled back.
 
 A node that has not synced with a majority for longer than the TTL might hold rows deleted meanwhile whose
 tombstones are already gone. It starts, or carries on, as stale: it neither syncs rows nor takes writes, and

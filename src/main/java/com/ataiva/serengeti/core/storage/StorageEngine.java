@@ -206,7 +206,8 @@ public final class StorageEngine implements AutoCloseable {
 
     /**
      * Applies the ops that change the state and logs only those; returns how many that was. Used for ops
-     * from replicas and catch-up, where most of a peer's state is usually known already.
+     * from replicas and catch-up, where most of a peer's state is usually known already. Expired deletes of
+     * rows not held here are left out (Store.withoutExpiredDeletes).
      */
     public int merge(List<Op> ops) throws IOException {
         long pos = -1;
@@ -216,7 +217,7 @@ public final class StorageEngine implements AutoCloseable {
         try {
             ensureOpen();
             List<Op> fresh = new ArrayList<>();
-            for (Op op : ops) {
+            for (Op op : store.withoutExpiredDeletes(ops)) {
                 if (store.isNew(op)) {
                     fresh.add(op);
                 }
@@ -271,15 +272,18 @@ public final class StorageEngine implements AutoCloseable {
     }
 
     /**
-     * Drops row tombstones older than {@code ttlMillis}. Nothing is logged: a restart replays them from
-     * the log or snapshot and the next collection drops them again.
+     * Sets the store's expiry to {@code cutoffWallMillis} (see Store.expiry: what sync leaves out and
+     * merges skip) and, if {@code collect}, drops the row tombstones it covers. Nothing is logged: a restart
+     * replays them from the log or snapshot and the next collection drops them again.
+     *
+     * @return the number of tombstones dropped
      */
-    public int collectTombstones(long ttlMillis) {
-        long cutoff = System.currentTimeMillis() - ttlMillis;
+    public int expireTombstones(long cutoffWallMillis, boolean collect) {
         lock.writeLock().lock();
         try {
             ensureOpen();
-            return store.collectTombstones(cutoff);
+            store.setExpiry(cutoffWallMillis);
+            return collect ? store.collectTombstones(cutoffWallMillis) : 0;
         } finally {
             lock.writeLock().unlock();
         }

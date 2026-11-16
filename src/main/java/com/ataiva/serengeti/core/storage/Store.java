@@ -26,7 +26,8 @@ public final class Store {
     /**
      * Rows of a table are spread over this many buckets by a hash of their id. Each bucket keeps the sum
      * (mod 2^64) of {@link #rowHash} over its live rows, updated as rows change, so replicas compare a
-     * table in O(1) and find the differing rows by bucket without hashing the whole table.
+     * table in O(1) and find the differing rows by bucket without hashing the whole table. A second sum per
+     * bucket also counts tombstones (see {@code TableState.full}); 2.1 compares only the first.
      */
     public static final int BUCKETS = 1024;
 
@@ -37,6 +38,12 @@ public final class Store {
         /** Estimated heap bytes of the rows held (see Weight), kept in step with every change. */
         long weight;
         final long[] buckets = new long[BUCKETS];
+        /**
+         * Per bucket, the sum of {@link RowState#versionsHash} over its rows, tombstones included, except
+         * expired ones (see {@link #setExpiry}): what protocol 3 compares, so that a newer delete reaches a
+         * replica that holds an older one.
+         */
+        final long[] full = new long[BUCKETS];
 
         TableState(Stamp dropped) {
             this.dropped = dropped;
@@ -53,7 +60,7 @@ public final class Store {
             return indexes.computeIfAbsent(column, c -> new IndexState(c, dropped));
         }
 
-        void drop(Stamp at) {
+        void drop(Stamp at, long expiry) {
             if (at.after(dropped)) {
                 dropped = at;
                 for (IndexState ix : indexes.values()) {
@@ -63,22 +70,25 @@ public final class Store {
                     RowState r = rows.get(id);
                     RowState kept = r.newerThan(at);
                     if (kept != r) {
-                        replace(id, r, kept);
+                        replace(id, r, kept, expiry);
                     }
                 }
             }
         }
 
-        /** Replaces a row's state ({@code next} null removes it), keeping bucket sums and indexes in step. */
-        void replace(String id, RowState old, RowState next) {
+        /**
+         * Replaces a row's state ({@code next} null removes it), keeping bucket sums and indexes in step.
+         * {@code expiry} is the store's (the full sums were last counted with it).
+         */
+        void replace(String id, RowState old, RowState next, long expiry) {
             if (old != null) {
-                unaccount(id, old);
+                unaccount(id, old, expiry);
                 weight -= old.weight(id);
             }
             if (next == null) {
                 rows.remove(id);
             } else {
-                account(id, next);
+                account(id, next, expiry);
                 weight += next.weight(id);
                 rows.put(id, next);
             }
@@ -93,17 +103,35 @@ public final class Store {
             }
         }
 
-        void account(String id, RowState r) {
-            buckets[bucket(id)] += r.hash(id);
+        void account(String id, RowState r, long expiry) {
+            int b = bucket(id);
+            buckets[b] += r.hash(id);
+            full[b] += r.counted(id, expiry);
         }
 
-        void unaccount(String id, RowState r) {
-            buckets[bucket(id)] -= r.hash(id);
+        void unaccount(String id, RowState r, long expiry) {
+            int b = bucket(id);
+            buckets[b] -= r.hash(id);
+            full[b] -= r.counted(id, expiry);
+        }
+
+        /** The full sums counted again from the rows, for a new expiry. */
+        void recount(long expiry) {
+            java.util.Arrays.fill(full, 0);
+            rows.forEach((id, r) -> full[bucket(id)] += r.counted(id, expiry));
         }
 
         long root() {
+            return root(buckets);
+        }
+
+        long fullRoot() {
+            return root(full);
+        }
+
+        static long root(long[] sums) {
             long sum = 0;
-            for (long b : buckets) {
+            for (long b : sums) {
                 sum = sum * 31 + b;
             }
             return sum;
@@ -564,6 +592,16 @@ public final class Store {
          * The sum over all versions, deletes included: two replicas hold the same versions of a row exactly
          * when these agree (up to 64-bit collisions). Equal to {@link #hash} for a live row.
          */
+        /** Every version is a delete stamped before {@code expiry}: it is collected, and sync leaves it out. */
+        boolean expired(long expiry) {
+            return !live() && winner().stamp().wall() < expiry;
+        }
+
+        /** The row's share of its bucket's full sum: {@link #versionsHash}, or nothing once expired. */
+        long counted(String id, long expiry) {
+            return expired(expiry) ? 0 : versionsHash(id);
+        }
+
         long versionsHash(String id) {
             long h = 0;
             for (Version v : versions) {
@@ -635,6 +673,40 @@ public final class Store {
     private final TreeMap<String, DbState> dbs = new TreeMap<>();
     private Stamp maxStamp = Stamp.ZERO;
 
+    /**
+     * Tombstones whose every version is stamped before this wall time are expired: left out of the full
+     * bucket sums and of {@link #rowHashes}, not merged for a row not held here ({@link #withoutExpiredDeletes}),
+     * and collected by {@link #collectTombstones}. Every node sets the same value at the same time ({@link #expiryAt}), so
+     * nodes that have collected them and nodes that cannot yet agree on what to compare.
+     */
+    private long expiry = Long.MIN_VALUE;
+
+    /** How often the expiry moves on, on wall-clock boundaries (:00, :10, ...). */
+    public static final long EXPIRY_STEP_MILLIS = 10 * 60_000L;
+
+    /** The expiry for a node whose clock reads {@code nowMillis}: the last boundary, less the TTL. */
+    public static long expiryAt(long nowMillis, long ttlMillis) {
+        return Math.floorDiv(nowMillis, EXPIRY_STEP_MILLIS) * EXPIRY_STEP_MILLIS - ttlMillis;
+    }
+
+    public long expiry() {
+        return expiry;
+    }
+
+    /** Sets the expiry (see {@link #expiry}) and counts the full bucket sums again; O(rows) when it changes. */
+    public void setExpiry(long wallMillis) {
+        if (wallMillis == expiry) {
+            return;
+        }
+        expiry = wallMillis;
+        for (DbState d : dbs.values()) {
+            for (TableState t : d.tables.values()) {
+                t.recount(expiry);
+            }
+        }
+    }
+
+
     public void apply(Op op) {
         maxStamp = Stamp.max(maxStamp, op.stamp());
         DbState d = dbs.computeIfAbsent(op.db(), DbState::new);
@@ -649,7 +721,7 @@ public final class Store {
             boolean existed = d.exists();
             d.dropped = Stamp.max(d.dropped, o.stamp());
             for (TableState t : d.tables.values()) {
-                t.drop(o.stamp());
+                t.drop(o.stamp(), expiry);
             }
             if (feed != null && existed && !d.exists()) {
                 feed.add("drop_db", op.db(), null, null, null, o.stamp());
@@ -664,7 +736,7 @@ public final class Store {
         } else if (op instanceof Op.DropTable o) {
             TableState t = d.table(o.table());
             boolean existed = d.exists() && t.exists();
-            t.drop(o.stamp());
+            t.drop(o.stamp(), expiry);
             if (feed != null && existed && !t.exists()) {
                 feed.add("drop_table", op.db(), o.table(), null, null, o.stamp());
             }
@@ -693,7 +765,7 @@ public final class Store {
         RowState r = t.rows.get(id);
         RowState next = r == null ? new RowState(List.of(in)) : r.with(in);
         if (next != r) {
-            t.replace(id, r, next);
+            t.replace(id, r, next, expiry);
             // A version that does not change the row's value (a conflicting one that lost) is not a change.
             if (feed != null && (r == null ? null : r.value()) != next.value() && d.exists() && t.exists()) {
                 feed.add("row", d.name, table, id, next.value(), next.winner().stamp());
@@ -792,17 +864,23 @@ public final class Store {
         return h;
     }
 
-    /** For each known database (dropped ones too): its schema hash and one root hash per table. */
+    /**
+     * For each known database (dropped ones too): its schema hash, one root hash per table over the live rows
+     * ({@code tables}, what 2.1 compares), and one over the full sums ({@code full}; 2.1 ignores the key).
+     */
     public Map<String, Map<String, Object>> rootHashes() {
         Map<String, Map<String, Object>> out = new TreeMap<>();
         for (Map.Entry<String, DbState> e : dbs.entrySet()) {
             Map<String, Object> tables = new TreeMap<>();
+            Map<String, Object> full = new TreeMap<>();
             for (Map.Entry<String, TableState> t : e.getValue().tables.entrySet()) {
                 tables.put(t.getKey(), t.getValue().root());
+                full.put(t.getKey(), t.getValue().fullRoot());
             }
             Map<String, Object> m = new TreeMap<>();
             m.put("schema", schemaHash(e.getKey()));
             m.put("tables", tables);
+            m.put("full", full);
             out.put(e.getKey(), m);
         }
         return out;
@@ -813,6 +891,16 @@ public final class Store {
         DbState d = dbs.get(db);
         TableState t = d == null ? null : d.tables.get(table);
         return t == null ? new long[BUCKETS] : t.buckets.clone();
+    }
+
+    /**
+     * The full bucket sums of a table (every version of every row, tombstones included, expired ones left
+     * out), or all zeros if it is unknown. A copy.
+     */
+    public long[] fullBucketSums(String db, String table) {
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        return t == null ? new long[BUCKETS] : t.full.clone();
     }
 
     /** The database's create and drop ops, and its tables' (no rows). */
@@ -883,7 +971,9 @@ public final class Store {
             return out;
         }
         t.rows.forEach((id, r) -> {
-            if (wanted.contains(bucket(id))) {
+            // Expired tombstones are left out, as from the full sums: a peer that has collected them must not
+            // pull them back.
+            if (wanted.contains(bucket(id)) && !r.expired(expiry)) {
                 out.put(id, r.versionsHash(id));
             }
         });
@@ -926,7 +1016,8 @@ public final class Store {
      * Forgets row tombstones written before {@code cutoffWallMillis}. A delete must have reached every
      * replica before its tombstone goes, or an older copy of the row could come back from a replica that
      * missed it; {@code Cluster} refuses to sync with a node that was away longer than the cutoff. Live
-     * rows and the digests are not affected: tombstones are not counted in the bucket sums.
+     * rows are not affected, nor the bucket sums, which do not count tombstones. A cluster node collects at
+     * its {@link #expiry}, which leaves the full sums unchanged too.
      *
      * @return the number of tombstones removed
      */
@@ -939,6 +1030,7 @@ public final class Store {
                     var e = it.next();
                     RowState r = e.getValue();
                     if (!r.live() && r.winner().stamp().wall() < cutoffWallMillis) {
+                        t.full[bucket(e.getKey())] -= r.counted(e.getKey(), expiry);
                         t.weight -= r.weight(e.getKey());
                         it.remove();
                         n++;
@@ -1014,6 +1106,48 @@ public final class Store {
         }
         RowState r = t == null ? null : t.rows.get(id);
         return r == null || r.with(Version.of((Op.RowOp) op)) != r;
+    }
+
+    /**
+     * {@code ops} (from a peer) without the deletes of rows that this node holds no state for and that the
+     * batch has nothing but expired deletes for (see {@link #expiry}): such a row would be collected at once,
+     * and applying it would report a delete of a row that is gone to the change feed. A row whose batch also
+     * holds a value, or a newer delete, keeps all of them.
+     */
+    public List<Op> withoutExpiredDeletes(List<Op> ops) {
+        java.util.Set<String> kept = new java.util.HashSet<>();
+        boolean any = false;
+        for (Op op : ops) {
+            if (op instanceof Op.RowOp r) {
+                if (r instanceof Op.Delete && r.stamp().wall() < expiry) {
+                    any = true;
+                } else {
+                    kept.add(rowKey(r));
+                }
+            }
+        }
+        if (!any) {
+            return ops;
+        }
+        List<Op> out = new ArrayList<>(ops.size());
+        for (Op op : ops) {
+            if (op instanceof Op.Delete del && del.stamp().wall() < expiry && !kept.contains(rowKey(del))
+                    && !holds(del.db(), del.table(), del.id())) {
+                continue;
+            }
+            out.add(op);
+        }
+        return out;
+    }
+
+    private static String rowKey(Op.RowOp r) {
+        return r.db() + "\u0000" + r.table() + "\u0000" + r.id();
+    }
+
+    private boolean holds(String db, String table, String id) {
+        DbState d = dbs.get(db);
+        TableState t = d == null ? null : d.tables.get(table);
+        return t != null && t.rows.containsKey(id);
     }
 
     /** The newest stamp applied so far; the clock must start after it. */

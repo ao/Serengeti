@@ -78,24 +78,34 @@ class RowSyncProperties {
         return ops;
     }
 
-    /** One sync of {@code into} from {@code from}, as Cluster.syncByBuckets: the schema, then each differing table. */
-    @SuppressWarnings("unchecked")
+    /** One sync of {@code into} from {@code from} by the live sums, as with a 2.1 peer. */
     static int sync(Store from, Store into, Pull pull) {
+        return sync(from, into, pull, false);
+    }
+
+    /**
+     * One sync of {@code into} from {@code from}, as Cluster.syncByBuckets: the schema, then each table whose
+     * root differs, by the full sums (tombstones counted, between protocol 3 nodes) or the live ones. Ops go
+     * in as a merge takes them (Store.withoutExpiredDeletes). Returns the row ops sent.
+     */
+    @SuppressWarnings("unchecked")
+    static int sync(Store from, Store into, Pull pull, boolean full) {
+        String key = full ? "full" : "tables";
         int rows = 0;
         for (Map.Entry<String, Map<String, Object>> e : from.rootHashes().entrySet()) {
             String db = e.getKey();
             if (from.schemaHash(db) != into.schemaHash(db)) {
                 into.applyAll(from.schemaOps(db));
             }
-            Map<String, Object> mine = (Map<String, Object>) into.rootHashes().getOrDefault(db, Map.of("tables", Map.of()))
-                    .get("tables");
-            for (Map.Entry<String, Object> t : ((Map<String, Object>) e.getValue().get("tables")).entrySet()) {
+            Map<String, Object> mine = (Map<String, Object>) into.rootHashes().getOrDefault(db, Map.of(key, Map.of()))
+                    .get(key);
+            for (Map.Entry<String, Object> t : ((Map<String, Object>) e.getValue().get(key)).entrySet()) {
                 Object myRoot = mine.get(t.getKey());
                 if (t.getValue().equals(myRoot == null ? 0L : myRoot)) {
                     continue;
                 }
-                long[] theirs = from.bucketSums(db, t.getKey());
-                long[] local = into.bucketSums(db, t.getKey());
+                long[] theirs = full ? from.fullBucketSums(db, t.getKey()) : from.bucketSums(db, t.getKey());
+                long[] local = full ? into.fullBucketSums(db, t.getKey()) : into.bucketSums(db, t.getKey());
                 Set<Integer> differ = new HashSet<>();
                 for (int i = 0; i < Store.BUCKETS; i++) {
                     if (theirs[i] != local[i]) {
@@ -108,10 +118,170 @@ class RowSyncProperties {
                         rows++;
                     }
                 }
-                into.applyAll(ops);
+                into.applyAll(into.withoutExpiredDeletes(ops));
             }
         }
         return rows;
+    }
+
+    /**
+     * Three replicas with their own histories, deletes and conflicting deletes among them, synced by the full
+     * sums until nothing differs: each ends holding exactly the merge of all three, tombstones included.
+     * Before the full sums, a replica holding an older tombstone kept it next to a peer's newer one (both
+     * counted nothing), and a concurrent write could then show through on it (TombstoneBlindTest).
+     */
+    @Property(tries = 1000)
+    void threeReplicasSyncedByTheFullSumsEndAsTheMergeOfAll(@ForAll("histories") List<List<Op>> h,
+            @ForAll("histories") List<List<Op>> more, @ForAll long seed) {
+        List<Op> third = new ArrayList<>(h.get(0));
+        for (Op o : more.get(2)) {
+            third.add(renamed(o, "t"));
+        }
+        List<List<Op>> histories = List.of(concat(h.get(0), h.get(1)), concat(h.get(0), h.get(2)), third);
+        List<Store> stores = new ArrayList<>();
+        Store union = new Store();
+        for (List<Op> ops : histories) {
+            stores.add(of(ops));
+            union.applyAll(ops);
+        }
+        java.util.Random random = new java.util.Random(seed);
+        int rounds = 0;
+        while (!converged(stores)) {
+            assertTrue(++rounds <= 6, "converges within six rounds");
+            // In a random order each round, as syncs run on their own.
+            List<int[]> pairs = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 3; j++) {
+                    if (i != j) {
+                        pairs.add(new int[] {i, j});
+                    }
+                }
+            }
+            java.util.Collections.shuffle(pairs, random);
+            for (int[] p : pairs) {
+                sync(stores.get(p[0]), stores.get(p[1]), RowSyncProperties::byRows, true);
+            }
+        }
+        for (Store s : stores) {
+            assertEquals(union.toOps(), s.toOps());
+        }
+    }
+
+    /**
+     * Replicas that agree, then take the same expiry: some collect the expired tombstones and some do not (a
+     * node may not collect while a peer is unknown). They still compare equal, and after newer writes on any
+     * of them they converge again to the same live rows, with no table left differing between any two, so
+     * nothing is pulled back and forth. (Writes older than the expiry do not arrive after it: a node away
+     * that long is stale and does not sync.)
+     */
+    @Property(tries = 500)
+    void collectedAndUncollectedReplicasAgreeOnceExpired(@ForAll("histories") List<List<Op>> h,
+            @ForAll("histories") List<List<Op>> later, @ForAll("cutoffs") long expiry, @ForAll boolean[] collects) {
+        List<Store> stores = new ArrayList<>();
+        Store union = new Store();
+        for (int i = 0; i < 3; i++) {
+            List<Op> ops = i == 0 ? concat(h.get(0), h.get(1)) : i == 1 ? concat(h.get(0), h.get(2)) : h.get(0);
+            stores.add(of(ops));
+            union.applyAll(ops);
+        }
+        syncUntilConverged(stores);
+        for (int i = 0; i < 3; i++) {
+            stores.get(i).setExpiry(expiry);
+            if (collects.length > i && collects[i]) {
+                stores.get(i).collectTombstones(expiry);
+            }
+        }
+        assertTrue(converged(stores), "collected or not, they compare equal");
+        for (int i = 0; i < 3; i++) {
+            for (Op o : later.get(i)) {
+                Op newer = renamed(o, "w" + i, 100); // after the expiry
+                stores.get(i).apply(newer);
+                union.apply(newer);
+            }
+        }
+        syncUntilConverged(stores);
+        for (Store s : stores) {
+            assertEquals(live(union), live(s));
+        }
+    }
+
+    static void syncUntilConverged(List<Store> stores) {
+        int rounds = 0;
+        while (!converged(stores)) {
+            assertTrue(++rounds <= 6, "converges within six rounds");
+            for (int i = 0; i < stores.size(); i++) {
+                for (int j = 0; j < stores.size(); j++) {
+                    if (i != j) {
+                        sync(stores.get(i), stores.get(j), RowSyncProperties::byRows, true);
+                    }
+                }
+            }
+        }
+    }
+
+    @Provide
+    Arbitrary<Long> cutoffs() {
+        return Arbitraries.longs().between(0, 42);
+    }
+
+    /** No table's full root differs between any two of the stores. */
+    @SuppressWarnings("unchecked")
+    static boolean converged(List<Store> stores) {
+        for (Store a : stores) {
+            for (Store b : stores) {
+                Map<String, Map<String, Object>> ra = a.rootHashes();
+                Map<String, Map<String, Object>> rb = b.rootHashes();
+                Set<String> dbs = new java.util.TreeSet<>(ra.keySet());
+                dbs.addAll(rb.keySet());
+                for (String db : dbs) {
+                    if (a.schemaHash(db) != b.schemaHash(db)) {
+                        return false;
+                    }
+                    Map<String, Object> fa = (Map<String, Object>) ra.getOrDefault(db, Map.of("full", Map.of())).get("full");
+                    Map<String, Object> fb = (Map<String, Object>) rb.getOrDefault(db, Map.of("full", Map.of())).get("full");
+                    Set<String> tables = new java.util.TreeSet<>(fa.keySet());
+                    tables.addAll(fb.keySet());
+                    for (String t : tables) {
+                        if (!fa.getOrDefault(t, 0L).equals(fb.getOrDefault(t, 0L))) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    static List<Op> concat(List<Op> a, List<Op> b) {
+        List<Op> out = new ArrayList<>(a);
+        out.addAll(b);
+        return out;
+    }
+
+    /** The op with its stamp moved to another node and counter range, so that no two replicas share stamps. */
+    static Op renamed(Op o, String prefix) {
+        return renamed(o, prefix, 0);
+    }
+
+    /** As above, and {@code later} milliseconds later, its context too. */
+    static Op renamed(Op o, String prefix, long later) {
+        Stamp s = new Stamp(o.stamp().wall() + later, o.stamp().counter() + 5_000, prefix + o.stamp().node());
+        Map<String, Stamp> seen = o instanceof Op.RowOp r ? shifted(r.seen(), later) : null;
+        return o instanceof Op.CreateDb c ? new Op.CreateDb(c.db(), s)
+                : o instanceof Op.DropDb c ? new Op.DropDb(c.db(), s)
+                : o instanceof Op.CreateTable c ? new Op.CreateTable(c.db(), c.table(), s)
+                : o instanceof Op.DropTable c ? new Op.DropTable(c.db(), c.table(), s)
+                : o instanceof Op.Put c ? new Op.Put(c.db(), c.table(), c.id(), c.row(), s, seen)
+                : new Op.Delete(o.db(), ((Op.Delete) o).table(), ((Op.Delete) o).id(), s, seen);
+    }
+
+    private static Map<String, Stamp> shifted(Map<String, Stamp> seen, long later) {
+        if (seen == null || later == 0) {
+            return seen;
+        }
+        Map<String, Stamp> out = new TreeMap<>();
+        seen.forEach((k, v) -> out.put(k, new Stamp(v.wall() + later, v.counter(), v.node())));
+        return out;
     }
 
     static Store of(List<Op> ops) {

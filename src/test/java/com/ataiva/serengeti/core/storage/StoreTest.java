@@ -383,4 +383,127 @@ class StoreTest {
         assertEquals(s.rowHashes("shop", "items", java.util.Set.of(Store.bucket("c"))).get("c"),
                 copy.rowHashes("shop", "items", java.util.Set.of(Store.bucket("c"))).get("c"));
     }
+
+    // ---- full bucket sums and the expiry of tombstones ----
+
+    static Map<String, Stamp> saw(Stamp... stamps) {
+        Map<String, Stamp> m = new java.util.TreeMap<>();
+        for (Stamp s : stamps) {
+            m.put(s.node(), s);
+        }
+        return m;
+    }
+
+    static String sums(long[] a) {
+        return java.util.Arrays.toString(a);
+    }
+
+    @Test
+    void theFullSumsCountDeletesAndTheLiveSumsDoNot() {
+        Store older = table();
+        Store newer = table();
+        for (Store s : List.of(older, newer)) {
+            s.apply(new Op.Put("shop", "items", "x", row("v", 1), at(10, "n1"), Map.of()));
+            s.apply(new Op.Delete("shop", "items", "x", at(20, "n2"), saw(at(10, "n1"))));
+        }
+        newer.apply(new Op.Delete("shop", "items", "x", at(30, "n3"), saw(at(10, "n1"), at(20, "n2"))));
+        assertEquals(sums(older.bucketSums("shop", "items")), sums(newer.bucketSums("shop", "items")),
+                "what 2.1 compares: no difference");
+        assertFalse(sums(older.fullBucketSums("shop", "items")).equals(sums(newer.fullBucketSums("shop", "items"))));
+        Map<String, Object> o = older.rootHashes().get("shop");
+        Map<String, Object> n = newer.rootHashes().get("shop");
+        assertEquals(o.get("tables"), n.get("tables"));
+        assertFalse(o.get("full").equals(n.get("full")));
+        // Merging the newer delete makes them equal; an empty table has all-zero sums.
+        older.applyAll(newer.rowOps("shop", "items", List.of("x")));
+        assertEquals(sums(newer.fullBucketSums("shop", "items")), sums(older.fullBucketSums("shop", "items")));
+        assertEquals(sums(new long[Store.BUCKETS]), sums(older.fullBucketSums("shop", "none")));
+    }
+
+    @Test
+    void theFullSumsFollowEveryChangeAndEqualARecount() {
+        Store s = rowsForHashes();
+        s.apply(new Op.Put("shop", "items", "r7", row("v", 70), at(80, "n2"), saw(at(17, "n1"))));
+        s.apply(new Op.Delete("shop", "items", "r8", at(81, "n2"), saw(at(18, "n1"))));
+        s.apply(new Op.Put("shop", "items", "r8", row("v", 80), at(82, "n3"), saw(at(18, "n1")))); // a conflict
+        long[] sums = new long[Store.BUCKETS];
+        s.rowHashes("shop", "items", allBuckets()).forEach((id, h) -> sums[Store.bucket(id)] += h);
+        assertEquals(sums(sums), sums(s.fullBucketSums("shop", "items")));
+        Store rebuilt = new Store();
+        rebuilt.applyAll(s.toOps());
+        assertEquals(sums(rebuilt.fullBucketSums("shop", "items")), sums(s.fullBucketSums("shop", "items")));
+        // Dropping the table removes every row older than the drop, and their share of the sums.
+        s.apply(new Op.DropTable("shop", "items", at(100, "n1")));
+        assertEquals(sums(new long[Store.BUCKETS]), sums(s.fullBucketSums("shop", "items")));
+    }
+
+    @Test
+    void expiredTombstonesAreLeftOutOfTheFullSumsAndTheHashesAndCollectingThemChangesNoSum() {
+        Store kept = rowsForHashes();
+        Store collected = rowsForHashes();
+        long[] before = kept.fullBucketSums("shop", "items");
+        // r3's only version is a delete at 70: expired once the expiry passes it.
+        kept.setExpiry(71);
+        collected.setExpiry(71);
+        assertEquals(sums(kept.fullBucketSums("shop", "items")), sums(collected.fullBucketSums("shop", "items")));
+        assertFalse(sums(before).equals(sums(kept.fullBucketSums("shop", "items"))));
+        assertFalse(kept.rowHashes("shop", "items", allBuckets()).containsKey("r3"));
+        assertEquals(1, collected.collectTombstones(71));
+        assertEquals(sums(kept.fullBucketSums("shop", "items")), sums(collected.fullBucketSums("shop", "items")),
+                "a node that collected them and one that may not yet compare equal");
+        assertEquals(kept.rowHashes("shop", "items", allBuckets()), collected.rowHashes("shop", "items", allBuckets()));
+        assertEquals(1, kept.tombstones(), "held, not collected");
+        // A conflict that holds a value is never expired, however old its delete.
+        assertTrue(kept.rowHashes("shop", "items", allBuckets()).containsKey("c"));
+        kept.setExpiry(Long.MAX_VALUE);
+        assertTrue(kept.rowHashes("shop", "items", allBuckets()).containsKey("c"));
+        kept.setExpiry(Long.MIN_VALUE);
+        assertEquals(sums(before), sums(kept.fullBucketSums("shop", "items")), "and back");
+    }
+
+    @Test
+    void anExpiredDeleteForARowNotHeldIsNotMerged() {
+        Store s = rowsForHashes();
+        s.setExpiry(100);
+        Op expiredForAbsent = new Op.Delete("shop", "items", "absent", at(99, "n2"), Map.of());
+        Op olderForAbsent = new Op.Delete("shop", "items", "absent", at(90, "n3"), Map.of());
+        // For a row held here it is kept: it covers the older version.
+        Op expiredForLive = new Op.Delete("shop", "items", "r1", at(99, "n2"), saw(at(11, "n1")));
+        // One that is not expired is kept for an absent row too, and so is a put, however old.
+        Op recent = new Op.Delete("shop", "items", "absent2", at(100, "n2"), Map.of());
+        Op oldPut = new Op.Put("shop", "items", "absent3", row("v", 1), at(5, "n2"), Map.of());
+        // A conflict whose newest version is an old delete: the delete comes first, and must not be lost.
+        Op conflictDelete = new Op.Delete("shop", "items", "absent4", at(98, "n2"), Map.of());
+        Op conflictPut = new Op.Put("shop", "items", "absent4", row("v", 4), at(97, "n3"), Map.of());
+        List<Op> batch = List.of(expiredForAbsent, olderForAbsent, expiredForLive, recent, oldPut, conflictDelete, conflictPut);
+        assertEquals(List.of(expiredForLive, recent, oldPut, conflictDelete, conflictPut), s.withoutExpiredDeletes(batch));
+        s.applyAll(s.withoutExpiredDeletes(batch));
+        assertNull(s.row("shop", "items", "r1"));
+        assertTrue(s.rowOps("shop", "items", List.of("absent")).isEmpty());
+        assertEquals(2, s.rowOps("shop", "items", List.of("absent4")).size());
+        assertEquals(batch, new Store().withoutExpiredDeletes(batch), "with no expiry set, nothing is left out");
+    }
+
+    @Test
+    void everyNodeTakesTheSameExpiryWithinATenMinuteStep() {
+        long ttl = 168 * 3_600_000L;
+        long boundary = 1_794_844_200_000L; // a multiple of 10 minutes
+        assertEquals(0, boundary % Store.EXPIRY_STEP_MILLIS);
+        assertEquals(boundary - ttl, Store.expiryAt(boundary, ttl));
+        assertEquals(boundary - ttl, Store.expiryAt(boundary + Store.EXPIRY_STEP_MILLIS - 1, ttl));
+        assertEquals(boundary - ttl - Store.EXPIRY_STEP_MILLIS, Store.expiryAt(boundary - 1, ttl));
+        // Two stores that collect at different moments of the same step drop the same tombstones.
+        long cutoff = Store.expiryAt(boundary + 3_000, ttl);
+        Store a = table();
+        Store b = table();
+        for (Store s : List.of(a, b)) {
+            for (long w : new long[] {cutoff - 2, cutoff - 1, cutoff, cutoff + 1, cutoff + 90_000}) {
+                s.apply(new Op.Put("shop", "items", "r" + w, row("v", 1), at(w - 10, "n1"), Map.of()));
+                s.apply(new Op.Delete("shop", "items", "r" + w, at(w, "n1"), saw(at(w - 10, "n1"))));
+            }
+        }
+        assertEquals(2, a.collectTombstones(Store.expiryAt(boundary + 1_000, ttl)));
+        assertEquals(2, b.collectTombstones(Store.expiryAt(boundary + 590_000, ttl)));
+        assertEquals(a.toOps(), b.toOps());
+    }
 }

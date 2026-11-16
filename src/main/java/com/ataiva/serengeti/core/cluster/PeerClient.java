@@ -87,16 +87,28 @@ final class PeerClient {
     }
 
     CompletableFuture<long[]> buckets(String peer, String db, String table) {
-        return get(peer, "/internal/v2/buckets?db=" + enc(db) + "&table=" + enc(table), CALL_TIMEOUT).thenApply(m -> {
-            if (!(m.get("sums") instanceof List<?> l) || l.size() != com.ataiva.serengeti.core.storage.Store.BUCKETS) {
+        return get(peer, "/internal/v2/buckets?db=" + enc(db) + "&table=" + enc(table), CALL_TIMEOUT)
+                .thenApply(PeerClient::sums);
+    }
+
+    /** The full bucket sums (tombstones counted); NotSupported from a peer without the route (2.1). */
+    CompletableFuture<long[]> fullBuckets(String peer, String db, String table) {
+        String path = "/internal/v3/buckets?db=" + enc(db) + "&table=" + enc(table);
+        return send(request(peer, path, CALL_TIMEOUT).GET().build(), true).thenApply(PeerClient::sums);
+    }
+
+    private static long[] sums(Map<String, Object> m) {
+        if (!(m.get("sums") instanceof List<?> l) || l.size() != com.ataiva.serengeti.core.storage.Store.BUCKETS) {
+            throw new IllegalStateException("peer sent bad bucket sums");
+        }
+        long[] out = new long[l.size()];
+        for (int i = 0; i < out.length; i++) {
+            if (!(l.get(i) instanceof Number n)) {
                 throw new IllegalStateException("peer sent bad bucket sums");
             }
-            long[] out = new long[l.size()];
-            for (int i = 0; i < out.length; i++) {
-                out[i] = ((Number) l.get(i)).longValue();
-            }
-            return out;
-        });
+            out[i] = n.longValue();
+        }
+        return out;
     }
 
     CompletableFuture<List<Op>> rows(String peer, String db, String table, java.util.Collection<Integer> buckets) {

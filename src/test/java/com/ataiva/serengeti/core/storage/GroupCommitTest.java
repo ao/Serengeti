@@ -87,15 +87,17 @@ class GroupCommitTest {
 
     @Test
     void tombstonesAreCollectedAfterTheirTtl() throws IOException {
-        long now = System.currentTimeMillis();
+        long cutoff = Store.expiryAt(System.currentTimeMillis(), 5_000);
         try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
             e.apply(List.of(new Op.CreateDb("d", new Stamp(1, 0, "n1")), new Op.CreateTable("d", "t", new Stamp(2, 0, "n1")),
                     new Op.Put("d", "t", "old", Map.of(), new Stamp(3, 0, "n1")),
-                    new Op.Delete("d", "t", "old", new Stamp(now - 10_000, 0, "n1")),
-                    new Op.Put("d", "t", "new", Map.of(), new Stamp(now - 9_000, 0, "n1")),
-                    new Op.Delete("d", "t", "new", new Stamp(now - 1_000, 0, "n1"))));
+                    new Op.Delete("d", "t", "old", new Stamp(cutoff - 1, 0, "n1")),
+                    new Op.Put("d", "t", "new", Map.of(), new Stamp(cutoff, 0, "n1")),
+                    new Op.Delete("d", "t", "new", new Stamp(cutoff + 1, 0, "n1"))));
             assertEquals(2, (long) e.read(Store::tombstones));
-            assertEquals(1, e.collectTombstones(5_000));
+            assertEquals(0, e.expireTombstones(cutoff, false), "a node that may not collect yet keeps them");
+            assertEquals(2, (long) e.read(Store::tombstones));
+            assertEquals(1, e.expireTombstones(cutoff, true));
             assertEquals(1, (long) e.read(Store::tombstones));
             assertEquals(0, (long) e.read(s -> s.rowCount("d", "t")));
         }

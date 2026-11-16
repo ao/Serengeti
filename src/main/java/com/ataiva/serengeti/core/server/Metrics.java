@@ -19,7 +19,7 @@ final class Metrics {
             "/ready", "/v1/backup", "/v1/changes", "/v1/password", "/v1/query", "/v1/setup", "/v1/status", "/v1/users",
             "/internal/apply", "/internal/digests", "/internal/hello", "/internal/state",
             "/internal/v2/buckets", "/internal/v2/roots", "/internal/v2/rows", "/internal/v2/schema",
-            "/internal/v3/hashes", "/internal/v3/rows", "/internal/v3/users");
+            "/internal/v3/buckets", "/internal/v3/hashes", "/internal/v3/rows", "/internal/v3/users");
 
     /** Upper bounds in seconds, as they appear in the le label, and in nanoseconds for the comparison. */
     private static final String[] BOUND_LABELS = {"0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1",

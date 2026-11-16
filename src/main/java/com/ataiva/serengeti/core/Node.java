@@ -13,6 +13,7 @@ import com.ataiva.serengeti.core.server.Users;
 import com.ataiva.serengeti.core.storage.Hlc;
 import com.ataiva.serengeti.core.storage.Op;
 import com.ataiva.serengeti.core.storage.StorageEngine;
+import com.ataiva.serengeti.core.storage.Store;
 import com.ataiva.serengeti.core.storage.Wal;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -244,6 +245,8 @@ public final class Node implements AutoCloseable {
                 + config.scheme() + "://" + (config.bind.contains(":") ? "[" + config.bind + "]" : config.bind)
                 + ":" + api.address().getPort()
                 + (cluster == null ? "" : ", cluster of " + cluster.size() + " (writes need " + cluster.quorum() + ")"));
+        // Before the first sync: what sync compares depends on the expiry, and peers have theirs set already.
+        expireTombstones(false);
         if (cluster != null) {
             cluster.setAccounts(users);
             cluster.start();
@@ -262,24 +265,43 @@ public final class Node implements AutoCloseable {
         });
         maintenance.scheduleWithFixedDelay(() -> {
             try {
-                if (cluster != null && !cluster.mayCollectTombstones()) {
-                    return; // a peer not yet seen syncing by buckets could bring back what was deleted
-                }
-                int n = storage.collectTombstones(config.tombstoneTtlMillis);
-                if (n > 0) {
-                    LOG.info("dropped " + n + " tombstones older than " + config.tombstoneTtlMillis / 3_600_000 + " h");
-                }
+                // A peer not yet seen syncing by buckets could bring back what was deleted: no collection then.
+                expireTombstones(cluster == null || cluster.mayCollectTombstones());
             } catch (RuntimeException e) {
                 LOG.log(java.util.logging.Level.WARNING, "tombstone collection failed", e);
             }
-        }, 1, 10, java.util.concurrent.TimeUnit.MINUTES);
+        }, EXPIRY_CHECK_SECONDS, EXPIRY_CHECK_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     private java.util.concurrent.ScheduledExecutorService maintenance;
 
-    /** Runs tombstone collection now, for tests. */
-    int collectTombstonesNow() {
-        return storage.collectTombstones(config.tombstoneTtlMillis);
+    /** How often the expiry is checked: it moves on every 10 minutes, at :00, :10, ... */
+    static final long EXPIRY_CHECK_SECONDS = 5;
+    /** The expiry last set, and the one tombstones were last collected at. */
+    private long expiredAt = Long.MIN_VALUE;
+    private long collectedAt = Long.MIN_VALUE;
+
+    /**
+     * Moves the store's expiry to the last 10-minute boundary less the TTL and, if {@code mayCollect}, drops
+     * the tombstones it covers. Every node takes its cutoff from the same boundary, so all collect the same
+     * tombstones within seconds of each other, and sync leaves them out on every node from then on, also on a
+     * node that may not collect them yet.
+     */
+    private synchronized void expireTombstones(boolean mayCollect) {
+        long cutoff = Store.expiryAt(System.currentTimeMillis(), config.tombstoneTtlMillis);
+        boolean collect = mayCollect && cutoff != collectedAt;
+        if (cutoff == expiredAt && !collect) {
+            return;
+        }
+        int n = storage.expireTombstones(cutoff, collect);
+        expiredAt = cutoff;
+        if (collect) {
+            collectedAt = cutoff;
+        }
+        if (n > 0) {
+            LOG.info("dropped " + n + " tombstones of deletes made before " + java.time.Instant.ofEpochMilli(cutoff)
+                    + " (tombstone_ttl_hours " + config.tombstoneTtlMillis / 3_600_000 + ")");
+        }
     }
 
     /** The storage engine, for tests. */
