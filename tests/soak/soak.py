@@ -594,8 +594,18 @@ class OpLog:
             self.f.flush()
 
 
+def pad(rid, n):
+    """The padding of a row: its id repeated to n characters, so the checker can tell it is intact."""
+    return ((rid + ":") * (n // (len(rid) + 1) + 1))[:n]
+
+
+def pad_token(n):
+    """How the logs and the checker write a padding of n characters that is intact."""
+    return f"#pad{n}"
+
+
 def run_logged(log, conn, rec, q, ack=None, consistency=None):
-    rec["q"] = q
+    rec["q"] = q[:300]
     rec["n"] = conn.i
     rec["t0"] = round(now_ms(), 1)
     status, body = conn.query(q, ack, consistency)
@@ -745,15 +755,20 @@ def client(ci, node, stats, stop_at):
             nrows = 1 if rng.random() < 0.8 else rng.randint(2, 4)
             with_m = rng.random() < 0.85
             rows = []
+            pads = []
             for j in range(nrows):
                 rid = cid if nrows == 1 else f"{cid}.{j}"
                 row = {"n": seq, "k": rng.randrange(40), "s": rng.choice(STRINGS)}
                 if with_m:
                     row["m"] = mixed(rng)
+                # 1 KB on average, so each node's log passes the 64 MiB checkpoint a few times an hour.
+                n_pad = rng.randrange(2000)
+                row["p"] = pad_token(n_pad)
+                pads.append(pad(rid, n_pad))
                 rows.append([rid, row])
-            cols = ["_id", "n", "k", "s"] + (["m"] if with_m else [])
-            tuples = ", ".join("(" + ", ".join(lit(x) for x in [rid] + [row[c] for c in cols[1:]]) + ")"
-                               for rid, row in rows)
+            cols = ["_id", "n", "k", "s"] + (["m"] if with_m else []) + ["p"]
+            tuples = ", ".join("(" + ", ".join(lit(x) for x in [rid] + [row[c] for c in cols[1:-1]] + [p]) + ")"
+                               for (rid, row), p in zip(rows, pads))
             rec.update({"op": "ins", "tb": tb, "rows_in": rows, "a": ack})
             q = f"INSERT INTO {tb} ({', '.join(cols)}) VALUES {tuples}"
             for rid, row in rows:
@@ -785,7 +800,7 @@ def client(ci, node, stats, stop_at):
             elif w < 0.8:
                 tb, rid = mine[rng.randrange(len(mine))]
                 rec.update({"op": "rd", "tb": tb, "id": rid, "cons": cons})
-                q = f"SELECT * FROM {tb} WHERE _id = '{rid}'"
+                q = f"SELECT _id, n, k, s, m FROM {tb} WHERE _id = '{rid}'"
             else:
                 tb = rng.choice(COLD)
                 rec.update({"op": "cnt", "tb": tb, "cons": cons})
@@ -818,8 +833,10 @@ def node_metrics(ctx):
             out.append(f"n{i}=-")
             continue
         m = re.search(r"^serengeti_data_bytes (\S+)", b, re.M)
+        w = re.search(r"^serengeti_wal_bytes (\S+)", b, re.M)
         k = re.search(r"^serengeti_conflicts (\S+)", b, re.M)
-        out.append(f"n{i}={float(m.group(1)) / 2**20:.0f}MiB/{int(float(k.group(1)))}c" if m and k else f"n{i}=?")
+        out.append(f"n{i}={float(m.group(1)) / 2**20:.0f}/{float(w.group(1)) / 2**20:.0f}MiB/{int(float(k.group(1)))}c"
+                   if m and w and k else f"n{i}=?")
     return " ".join(out)
 
 
@@ -839,8 +856,8 @@ def cmd_work():
     nxt = T0 + 60
     while any(t.is_alive() for t in ts):
         if time.time() >= nxt:
-            # Metrics are fetched outside the window below, so the next minute's line is not late.
-            event(f"minute {int((nxt - T0) // 60)}: {fmt_counts(stats.take())} | data/conflicts {node_metrics(ctx)}")
+            event(f"minute {int((nxt - T0) // 60)}: {fmt_counts(stats.take())} | data/log MiB, conflicts "
+                  f"{node_metrics(ctx)}")
             nxt += 60
         time.sleep(0.2)
     rest = stats.take()
@@ -1056,6 +1073,9 @@ class Checker:
                 for r in b["rows"]:
                     row = dict(zip(cols, r))
                     rid = row.pop("_id")
+                    p = row.get("p")
+                    if isinstance(p, str) and p == pad(rid, len(p)):
+                        row["p"] = pad_token(len(p))  # intact; anything else is kept as it is and will not match
                     rows[rid] = {k: v for k, v in row.items() if v is not None}
                     last = rid
                 if len(b["rows"]) < 10000:
@@ -1399,7 +1419,7 @@ class Checker:
                                         f"{w.name()}")
                     elif w.t0 >= t1:
                         problems.append(f"read c{r['c']}#{r['i']} on n{node} saw {key} before it was sent")
-                    elif rid != r["id"] or not same_row(got, row):
+                    elif rid != r["id"] or not same_row(got, {c: v for c, v in row.items() if c in got}):
                         problems.append(f"read c{r['c']}#{r['i']} on n{node} asked for {key}, got {rows[0]}, "
                                         f"written as {row}")
                 elif must:

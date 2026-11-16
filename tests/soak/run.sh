@@ -14,7 +14,7 @@
 #   SEED           the fault schedule and each client's operations follow from it (default: random, printed)
 #   IMAGE          the image to test; without it, serengeti:soak is built from this tree
 #   CLIENTS        concurrent clients, spread over the nodes (default 2 per node)
-#   NODE_MEM       memory limit of each node container (default 1g)
+#   NODE_MEM       memory limit of each node container (default 1536m)
 #   CLIENT_MEM     memory limit of the client container, which also runs the checker (default 3g)
 #   CONVERGE_SECS  how long the nodes get to converge once the faults are undone (default 300)
 #   NETEM=0        leave out the packet delay and loss faults (tc netem)
@@ -35,7 +35,7 @@ SCENARIO=${SCENARIO:-}
 PER_NODE=2
 [ -z "$SCENARIO" ] || PER_NODE=4
 CLIENTS=${CLIENTS:-$(( PER_NODE * NODES ))}
-NODE_MEM=${NODE_MEM:-1g}
+NODE_MEM=${NODE_MEM:-1536m}
 CLIENT_MEM=${CLIENT_MEM:-3g}
 CONVERGE_SECS=${CONVERGE_SECS:-300}
 NETEM=${NETEM:-1}
