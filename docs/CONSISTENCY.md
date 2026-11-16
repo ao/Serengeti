@@ -150,7 +150,8 @@ side 503, on the majority side 200, it catches up after healing), one node's fsy
 conflict listed on every node, then resolved by one write), and all three restarted. Every insert that
 got a 200 must be on every node at the end. Three runs of 2.1 on an EC2 c7g.4xlarge (Ubuntu 24.04, Docker
 29): 37 of 37 checks each time, with 626, 623 and 549 acknowledged inserts and none lost. One run of 2.2
-(8970539) on the same kind of machine: 37 of 37, 548 acknowledged inserts, none lost.
+(8970539) on the same kind of machine: 37 of 37, 548 acknowledged inserts, none lost; and of 2.2 at bde4274
+(two more checks, on the cluster metrics during the partition) on a c7g.2xlarge: 39 of 39.
 
 `tests/upgrade/run.sh` opens a 2.0.0 node's data directory with this build, and upgrades a 3-node 2.0.0
 cluster one node at a time while a writer inserts through all three; every acknowledged insert must be on
@@ -158,4 +159,5 @@ every node afterwards, with no conflicts listed. It also creates an index while 
 rolls a node that has an index back to 2.0.0: every row must still be there. 44 of 44 for 2.1 on the same
 machine. For 2.2 it also makes a write account and a read account before the rollback: on 2.0.0 the admin
 and the write account sign in from `users.json`, the read account cannot, and it is back once the node is
-upgraded again. 54 of 54 for 2.2 (8970539), with 144 inserts acknowledged during the upgrade.
+upgraded again. 54 of 54 for 2.2 (8970539), with 144 inserts acknowledged during the upgrade; 61 of 61 at
+bde4274, from 2.0.0 and from a 2.1 image built from engine/2.1-fixes (a limited account added).

@@ -192,20 +192,22 @@ Serengeti is smaller than both, and young: 2.0 was its first usable release.
 
 GitHub Actions runs these on every change:
 
-- 329 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
+- 410 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
   syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
   the writes no other write had seen, and others that compare index lookups and GROUP BY with scans;
-- 98 checks against the built image on amd64 and arm64, including `kill -9` during writes, account roles,
-  a second node refused on a data directory in use, the shell and backup commands, and scheduled backups;
+- 111 checks against the built image on amd64 and arm64, including `kill -9` during writes, account roles
+  and accounts limited to some databases, a second node refused on a data directory in use, the shell and
+  backup commands, and scheduled backups;
 - 39 checks on a 3-node TLS cluster in Docker: nodes killed and restarted, one partitioned with iptables,
   one with fsync slowed by a second, local writes on both sides of a partition. Every write that was
   acknowledged must be on every node at the end;
-- 54 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster, one node at a time under writes, and
-  roll a node back to 2.0.0 after it has made an index and accounts;
-- a conformance suite of about 970 checks on the HTTP API and the query language, with 5,000 generated
+- 61 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster (and the same from 2.1), one node at a
+  time under writes, and roll a node back to 2.0.0 after it has made an index and accounts;
+- a conformance suite of about 1,010 checks on the HTTP API and the query language, with 5,000 generated
   statements per run, concurrent schema changes, `kill -9` rounds and a backup across three nodes;
 - a node filled to its memory limit in a 512 MiB container, with large rows and with small rows under two
-  indexes, that must refuse writes, back up, restart, delete every row and restart again;
+  indexes, that must refuse writes, back up, restart, delete every row and restart again; and three
+  768 MiB nodes, one of which misses 6,000 writes of 1 KB and must catch up without any running out of heap;
 - a soak test: 3 to 7 TLS nodes under client load while nodes are killed, stopped, paused, partitioned
   and slowed at random, then every node checked against what the clients were told (5 minutes in CI;
   hours in the runs [docs/SOAK.md](docs/SOAK.md) lists);
