@@ -227,12 +227,19 @@ on the node pulling and on the peers building the answers. `tests/memory/catchup
 120,000 rows of 1 KB, one node stopped while 6,000 more are written, then started) ran the two other nodes
 out of heap within 3 s of the restart, every time.
 
-The fix: a node runs at most two row pulls at once, over every peer and table; a table's pages are pulled
-one after another, the first with 16 buckets and each next one sized from the last to about 2,000 rows or 4
-MiB; and a node builds at most two row pages for its peers at once, answering 503 to more (the peer asks
-again at its next sync, a second later). While a sync with a peer takes longer than a second, a hello keeps
-the peer counted as reachable. With it, the repro's nodes all stayed up and the restarted one caught up in
-about 10 s.
+The fix (2926825): a node runs at most two row pulls at once, over every peer and table; a table's pages
+are pulled one after another, the first with 16 buckets and each next one sized from the last to about
+2,000 rows or 4 MiB; and a node builds at most two row pages for its peers at once, answering 503 to more
+(the peer asks again at its next sync, a second later). While a sync with a peer takes longer than a
+second, a hello keeps the peer counted as reachable. With it, the repro's nodes all stayed up and the
+restarted one caught up in about 10 s.
+
+The same hour on 2926825 had no unexpected exit, but its clients spent 13,900 s waiting on 503s against
+8,700 s on 36230d2, most of them majority reads that waited the full 5 s: a majority read syncs with every
+peer, and its pulls queued behind the background catch-up's two. A second change gives reads' pulls four
+of their own, allows four row pages to be built for peers at once (waiting 1 s, not 2, before a 503), and
+makes a background sync whose pages stopped for a newer one count as failed: it had counted as complete,
+so a node could take itself for synced with a peer while rows were still missing.
 
 ## Runs
 

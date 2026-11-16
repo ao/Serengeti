@@ -16,9 +16,11 @@ GitHub release notes and tags.
   cluster (pods ready, a write on every pod, a deleted pod back with its data); CI runs it.
 - Metrics for the cluster and the node's state: `serengeti_ready`, `serengeti_disk_failed`,
   `serengeti_cluster_nodes`, `serengeti_cluster_reachable_nodes`, `serengeti_cluster_quorum`,
-  `serengeti_cluster_caught_up`, `serengeti_cluster_stale` and `serengeti_sync_ops_pulled_total`.
+  `serengeti_cluster_caught_up`, `serengeti_cluster_stale` and `serengeti_sync_ops_pulled_total`; and
+  `serengeti_tls_expiry_time_seconds{store}`, when the first certificate of the key store or trust store
+  expires (a start also logs a warning within 30 days of it, and an error once it has passed).
 - `examples/monitoring/`: Prometheus and Grafana for the Compose cluster. Prometheus scrapes every node
-  over HTTPS with an account of the new `metrics` role; 16 alert rules, each with a promtool unit test; a dashboard of 14
+  over HTTPS with an account of the new `metrics` role; 18 alert rules, each with a promtool unit test; a dashboard of 14
   panels. `run.sh` checks the scrapes, every dashboard query and an alert for a stopped node; CI runs it.
 - A change feed: `GET /v1/changes?db=&table=&after=&wait=` returns the changes a node applied after a
   cursor (rows written there or merged from peers, tables and databases dropped or created), long-polling
@@ -157,9 +159,10 @@ GitHub release notes and tags.
   The node now waits for it 3 s at most, then closes its cluster layer and storage and exits.
 - A node that had missed writes could run itself and its peers out of heap while catching up (2.1 too):
   it asked every peer at once for the rows of every differing bucket, in pages of 200 buckets, and a few
-  thousand missed inserts touch most buckets. A node now runs at most two row pulls at once, sizes each
-  page from the last (about 2,000 rows or 4 MiB), and builds at most two pages for its peers at once,
-  answering 503 to more. Found by the 5-node soak hour; `tests/memory/catchup.sh` reproduces it.
+  thousand missed inserts touch most buckets. A node now runs at most two background row pulls at once,
+  and four more for majority reads, sizes each page from the last (about 2,000 rows or 4 MiB), and builds
+  at most four pages for its peers at once, answering 503 to more. Found by the 5-node soak hour;
+  `tests/memory/catchup.sh` reproduces it.
 - An admin password of more than 72 bytes in `SERENGETI_ADMIN_PASSWORD` or its file passed the settings
   check, and the node then exited with status 1 and a stack trace; it is now refused with exit status 2 and
   a one-line message, like a short one.
