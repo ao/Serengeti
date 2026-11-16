@@ -115,6 +115,17 @@ jobs:
       - name: Certificates, three TLS nodes, a write and a read, one node stopped
         run: IMAGE=serengeti:cluster-example examples/cluster/run.sh
 
+  kubernetes:
+    name: Kubernetes example on kind (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1.10.0
+        with:
+          install_only: true
+      - name: Three pods with TLS, a write on every pod, a pod deleted and back
+        run: IMAGE=serengeti:k8s examples/kubernetes/run.sh
+
   clients:
     name: Python and JavaScript clients (amd64)
     runs-on: ubuntu-24.04

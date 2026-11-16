@@ -10,6 +10,9 @@ GitHub release notes and tags.
 - `serengeti-certs` in the image makes a cluster's CA, node key stores, trust store and password with
   keytool, and deletes the CA key afterwards unless asked to keep it. `examples/cluster/compose.yaml` runs
   three TLS nodes with Docker Compose, publishing to 127.0.0.1 only; CI runs it.
+- `examples/kubernetes/`: a three-node cluster as a StatefulSet with TLS, a volume per pod, a ClusterIP
+  Service and a disruption budget, pods as uid 10001 on a read-only root. `run.sh` runs it on a kind
+  cluster (pods ready, a write on every pod, a deleted pod back with its data); CI runs it.
 - A change feed: `GET /v1/changes?db=&table=&after=&wait=` returns the changes a node applied after a
   cursor (rows written there or merged from peers, tables and databases dropped or created), long-polling
   up to 60 s. A change is listed once the node has it on disk, and the feed answers 503 after a write to

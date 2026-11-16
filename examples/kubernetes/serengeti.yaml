@@ -1,0 +1,137 @@
+# Serengeti on Kubernetes: a three-node cluster in a StatefulSet, with TLS between the nodes and for clients.
+# Nothing here is reachable from outside the cluster: the Service is a ClusterIP. README.md next to this file
+# has the steps; in short:
+#
+#   1. Certificates, once, with the image's own tool. Each pod is serengeti-N, reached as
+#      serengeti-N.serengeti; clients use the Service, serengeti-client:
+#        mkdir certs && docker run --rm --user "$(id -u)" -v "$PWD/certs:/certs" --entrypoint serengeti-certs \
+#          ataiva/serengeti:latest \
+#          serengeti-0=serengeti-0.serengeti,serengeti-client \
+#          serengeti-1=serengeti-1.serengeti,serengeti-client \
+#          serengeti-2=serengeti-2.serengeti,serengeti-client
+#        kubectl create secret generic serengeti-certs --from-file=certs/
+#   2. The admin password and the cluster key, from files (not the command line):
+#        kubectl create secret generic serengeti-secrets \
+#          --from-file=admin-password=./admin-password --from-file=cluster-key=./cluster-key
+#   3. kubectl apply -f serengeti.yaml
+#
+# The names are short, so the same certificates work in any namespace.
+apiVersion: v1
+kind: Service
+metadata:
+  name: serengeti
+  labels: {app: serengeti}
+spec:
+  # Headless: gives each pod the name serengeti-N.serengeti, which the nodes use to reach each other.
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {app: serengeti}
+  ports:
+    - {name: api, port: 1985}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: serengeti-client
+  labels: {app: serengeti}
+spec:
+  type: ClusterIP
+  selector: {app: serengeti}
+  ports:
+    - {name: api, port: 1985}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: serengeti
+spec:
+  # Writes need a majority: let voluntary disruptions (node drains, upgrades) take one pod at a time.
+  maxUnavailable: 1
+  selector:
+    matchLabels: {app: serengeti}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: serengeti
+spec:
+  serviceName: serengeti
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app: serengeti}
+  template:
+    metadata:
+      labels: {app: serengeti}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: serengeti
+          image: ataiva/serengeti:latest
+          imagePullPolicy: IfNotPresent
+          # Every pod gets the same environment, and a node's peers are the others: each builds its own list
+          # from its name. Change the 3 here and replicas together, to at most 7.
+          command: ["sh", "-c"]
+          args:
+            - |
+              peers=""
+              for i in $(seq 0 $((NODES - 1))); do
+                [ "serengeti-$i" = "$HOSTNAME" ] || peers="$peers,serengeti-$i.serengeti:1985"
+              done
+              export SERENGETI_PEERS="${peers#,}"
+              exec java -jar /opt/serengeti/serengeti.jar
+          env:
+            - {name: NODES, value: "3"}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            # In the spec, not the start script, so that "kubectl exec ... serengeti shell" finds it too.
+            - {name: SERENGETI_TLS_KEYSTORE, value: "/certs/$(POD_NAME).p12"}
+            - {name: SERENGETI_ADMIN_PASSWORD_FILE, value: /secrets/admin-password}
+            - {name: SERENGETI_CLUSTER_KEY_FILE, value: /secrets/cluster-key}
+            - {name: SERENGETI_TLS_KEYSTORE_PASSWORD_FILE, value: /certs/password}
+            - {name: SERENGETI_TLS_TRUSTSTORE, value: /certs/trust.p12}
+            - {name: SERENGETI_TLS_TRUSTSTORE_PASSWORD_FILE, value: /certs/password}
+          ports:
+            - {name: api, containerPort: 1985}
+          readinessProbe:
+            # Ready once it can take a write: caught up with the cluster and a majority reachable.
+            httpGet: {path: /ready, port: api, scheme: HTTPS}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: api, scheme: HTTPS}
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            # The heap is 60% of the limit (the image's setting), and writes that add data are refused at
+            # 60% of the heap (memory_limit_percent): size the limit for about three times the data.
+            requests: {memory: 1Gi, cpu: 250m}
+            limits: {memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: certs, mountPath: /certs, readOnly: true}
+            - {name: secrets, mountPath: /secrets, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: certs
+          secret: {secretName: serengeti-certs, defaultMode: 0440}
+        - name: secrets
+          secret: {secretName: serengeti-secrets, defaultMode: 0440}
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 10Gi}
