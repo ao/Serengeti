@@ -691,63 +691,82 @@ public final class HttpApi implements AutoCloseable {
                 }
             }
         }
-        boolean heavy = HEAVY_INTERNAL.contains(path);
-        if (heavy) {
-            if (heavyBytesUnsent.get() > HEAVY_UNSENT_BYTES) {
-                // Answers stuck on peers that stopped reading still hold their bytes; more would add to them.
-                throw new HttpError(503, "busy sending rows to other nodes; try again");
-            }
-            boolean got;
+        if (!HEAVY_INTERNAL.contains(path)) {
+            byte[] answer;
             try {
-                got = heavyInternal.tryAcquire(HEAVY_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                got = false;
+                answer = (Json.write(routes.handle(method, path, query, body)) + "\n").getBytes(StandardCharsets.UTF_8);
+            } catch (QueryService.Rejected r) {
+                throw new HttpError(r.status(), r.getMessage());
             }
-            if (!got) {
-                // The peer tries again at its next sync; answering it now would hold one more page of rows.
-                throw new HttpError(503, "busy sending rows to other nodes; try again");
-            }
-        }
-        byte[] answer;
-        try {
-            answer = (Json.write(routes.handle(method, path, query, body)) + "\n").getBytes(StandardCharsets.UTF_8);
-        } catch (QueryService.Rejected r) {
-            throw new HttpError(r.status(), r.getMessage());
-        } finally {
-            if (heavy) {
-                // Building the answer is what takes the memory. Sending it is not bounded in time: a peer cut
-                // off mid-answer by a partition can hold the write for minutes, and with the permit it would
-                // have closed these routes to every other peer for that long (review 22d).
-                heavyInternal.release();
-            }
-        }
-        if (!heavy) {
             send(ex, 200, "application/json; charset=utf-8", answer);
             return;
         }
-        // Until it is sent, the answer is counted, so answers stuck on peers that stopped reading bound
-        // themselves: past HEAVY_UNSENT_BYTES, new ones get 503 instead of adding to the heap (review 22d).
-        heavyBytesUnsent.addAndGet(answer.length);
+        heavy(ex, routes, method, path, query, body);
+    }
+
+    /**
+     * A node-to-node answer that holds many rows: a page of rows, or a whole database for a 2.0 peer.
+     *
+     * <p>At most {@link #HEAVY_INTERNAL_AT_ONCE} are built at once, whatever asks: several peers catching up
+     * at the same time, each asking for pages of 200 buckets (2.1 does), once took a node's whole heap. A
+     * built answer stays in the heap until it is sent, and a send to a peer cut off by a partition can take
+     * as long as TCP retransmits (about 15 minutes), so answers being sent are counted too: at most
+     * {@link #HEAVY_UNSENT_PER_PEER} per peer address, and {@link #HEAVY_UNSENT_BYTES} in all. Over either,
+     * the request gets 503 and the peer asks again at its next sync. A stalled peer so holds a few pages and
+     * leaves the routes open to the others; only several stalled at once reach the shared bound. Both are
+     * checked after the build permit is taken, so requests that arrive together cannot all pass them before
+     * the first answer is counted (review 22d).
+     */
+    private void heavy(HttpExchange ex, InternalRoutes routes, String method, String path, Map<String, String> query,
+            Map<String, Object> body) throws IOException {
+        String peer = ex.getRemoteAddress().getAddress().getHostAddress();
+        boolean got;
+        try {
+            got = heavyInternal.tryAcquire(HEAVY_WAIT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            got = false;
+        }
+        if (!got) {
+            throw new HttpError(503, "busy sending rows to other nodes; try again");
+        }
+        java.util.concurrent.atomic.AtomicInteger mine = unsentByPeer.computeIfAbsent(peer,
+                k -> new java.util.concurrent.atomic.AtomicInteger());
+        byte[] answer;
+        try {
+            if (mine.get() >= HEAVY_UNSENT_PER_PEER || heavyBytesUnsent.get() > HEAVY_UNSENT_BYTES) {
+                throw new HttpError(503, "busy sending rows to other nodes; try again");
+            }
+            try {
+                answer = (Json.write(routes.handle(method, path, query, body)) + "\n").getBytes(StandardCharsets.UTF_8);
+            } catch (QueryService.Rejected r) {
+                throw new HttpError(r.status(), r.getMessage());
+            }
+            mine.incrementAndGet();
+            heavyBytesUnsent.addAndGet(answer.length);
+        } finally {
+            heavyInternal.release();
+        }
         try {
             send(ex, 200, "application/json; charset=utf-8", answer);
         } finally {
             heavyBytesUnsent.addAndGet(-answer.length);
+            // Kept at zero rather than removed, so a count is never split between two objects. Only peers
+            // with the cluster key get here, so the map holds one entry per peer address.
+            mine.decrementAndGet();
         }
     }
 
-    /**
-     * Node-to-node routes whose answer holds many rows. At most {@link #HEAVY_INTERNAL_AT_ONCE} are built at
-     * once, whatever asks: several peers catching up at the same time, each asking for pages of 200 buckets
-     * (2.1 does), once took a node's whole heap. Built answers not yet sent may hold at most
-     * {@link #HEAVY_UNSENT_BYTES} between them before new ones are refused.
-     */
     static final java.util.Set<String> HEAVY_INTERNAL = java.util.Set.of("/internal/v2/rows", "/internal/state");
     static final int HEAVY_INTERNAL_AT_ONCE = 4;
     static final long HEAVY_WAIT_MILLIS = 1_000;
-    static final long HEAVY_UNSENT_BYTES = Math.max(16L << 20, Runtime.getRuntime().maxMemory() / 16);
+    /** A peer pulls at most 2 background and 4 read pages at once; one that stopped reading holds no more. */
+    static final int HEAVY_UNSENT_PER_PEER = 6;
+    static final long HEAVY_UNSENT_BYTES = Math.max(32L << 20, Runtime.getRuntime().maxMemory() / 8);
     private final java.util.concurrent.Semaphore heavyInternal = new java.util.concurrent.Semaphore(HEAVY_INTERNAL_AT_ONCE, true);
     private final java.util.concurrent.atomic.AtomicLong heavyBytesUnsent = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger> unsentByPeer =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private Users.Access authenticate(HttpExchange ex, Caller caller) {
         String address = ex.getRemoteAddress().getAddress().getHostAddress();
