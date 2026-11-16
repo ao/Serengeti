@@ -173,7 +173,7 @@ public final class Json {
                     }
                     int cp = 0;
                     for (int i = 0; i < 4; i++) {
-                        int d = Character.digit(s.charAt(pos + i), 16);
+                        int d = hexDigit(s.charAt(pos + i));
                         if (d < 0) {
                             throw new JsonException("bad \\u escape", pos - 2);
                         }
@@ -261,6 +261,20 @@ public final class Json {
 
     private static boolean isDigit(char c) {
         return c >= '0' && c <= '9';
+    }
+
+    /** An ASCII hex digit's value, or -1. Not Character.digit, which also takes full-width and other digits. */
+    private static int hexDigit(char c) {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'F') {
+            return c - 'A' + 10;
+        }
+        return -1;
     }
 
     private void skipWs() {
