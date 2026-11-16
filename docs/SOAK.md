@@ -298,3 +298,16 @@ Engine 8970539 (the stop bounded at 3 s), each stop and restart timed:
 
 All 28 stops and restarts exited on SIGTERM (code 143), in 0.2 to 3.5 s; the three at 3.5 s are the 3 s
 wait running out.
+
+The hour on 5 nodes (2 GiB each) with seed 20261116, on each step of finding 3. "Waiting on 503" is the
+clients' time from sending a request to getting a 503, summed over all ten clients:
+
+| Engine | Operations | Acknowledged writes, majority / local | Faults | Waiting on 503 | Checks |
+|---|---:|---|---|---:|---|
+| 36230d2 (before) | 254,353 | 71,840 / 44,081 | 675 (9) | 8,731 s | 9 of 10: n5 out of heap at 55 min |
+| 2926825 (pull limit) | 180,425 | 49,008 / 31,033 | 675 (9) | 15,577 s | 10 of 10 |
+| 75aa8dd (reads' own pulls) | 224,261 | 61,727 / 38,563 | 675 (9) | 11,025 s | 10 of 10 |
+| 33622c3 (a read's pulls stop with it) | 248,021 | 70,077 / 42,944 | 675 (9) | 10,142 s | 10 of 10 |
+
+The same seed starts the same faults at the same times; how many operations fit between them depends on
+how fast the nodes answer.
