@@ -81,8 +81,9 @@ GitHub release notes and tags.
 - `DROP INDEX IF EXISTS` on a table or database that does not exist answers 0 affected, as `DROP TABLE IF
   EXISTS` does (was 400).
 - The node served 16 requests at a time, so 16 clients sending slowly held every thread; it now serves 64,
-  and threads stop when idle. A client that stalls is still dropped after 30 s. README, "When not to use
-  it", says to put a buffering proxy in front of a node that untrusted networks reach.
+  and threads stop when idle (`http_threads` sets the number). A client that stalls is still dropped after
+  30 s. README, "When not to use it", says to put a buffering proxy in front of a node that untrusted
+  networks reach.
 - Starting, checkpointing and taking a backup each held a second copy of all the data in memory (the
   whole snapshot as a list, the log's batches, every row as an operation), so a node near its memory limit
   could run out of memory while doing them. They now read and write one operation at a time, a backup is

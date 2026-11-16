@@ -79,14 +79,15 @@ public final class HttpApi implements AutoCloseable {
     private final Metrics metrics = new Metrics();
     private final Static pages = new Static();
 
-    private HttpApi(HttpServer server, Deps deps) {
+    private HttpApi(HttpServer server, Deps deps, int threads) {
         this.server = server;
         this.deps = deps;
         this.limiter = new LoginLimiter(deps.clock());
         // The JDK server reads a request's headers and body on these threads, so a client that sends slowly
         // holds one until it finishes or the node's request time limit (30 s, Serengeti.main) closes it.
         // Threads are started as needed and stop after a minute idle.
-        java.util.concurrent.ThreadPoolExecutor p = new java.util.concurrent.ThreadPoolExecutor(THREADS, THREADS,
+        this.maxWaiting = Math.max(1, threads / 2);
+        java.util.concurrent.ThreadPoolExecutor p = new java.util.concurrent.ThreadPoolExecutor(threads, threads,
                 60, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
                     Thread t = new Thread(r, "http");
                     t.setDaemon(true);
@@ -115,6 +116,12 @@ public final class HttpApi implements AutoCloseable {
 
     /** With {@code tls} set, serves HTTPS only (TLS 1.2 and 1.3); there is no plaintext listener. */
     public static HttpApi start(String bind, int port, javax.net.ssl.SSLContext tls, Deps deps) throws IOException {
+        return start(bind, port, tls, deps, THREADS);
+    }
+
+    /** As above, answering on {@code threads} request threads ({@code http_threads}). */
+    public static HttpApi start(String bind, int port, javax.net.ssl.SSLContext tls, Deps deps, int threads)
+            throws IOException {
         HttpServer s;
         InetSocketAddress addr = new InetSocketAddress(bind, port);
         if (tls == null) {
@@ -129,7 +136,7 @@ public final class HttpApi implements AutoCloseable {
             });
             s = https;
         }
-        HttpApi api = new HttpApi(s, deps);
+        HttpApi api = new HttpApi(s, deps, threads);
         s.start();
         return api;
     }
@@ -422,11 +429,11 @@ public final class HttpApi implements AutoCloseable {
         }
     }
 
-    /** Request threads. */
+    /** Request threads, by default (http_threads). */
     static final int THREADS = 64;
 
     /** At most this many /v1/changes requests wait at once; the rest answer at once. Half the threads stay free. */
-    static final int MAX_WAITING = THREADS / 2;
+    private final int maxWaiting;
     private final java.util.concurrent.atomic.AtomicInteger waiting = new java.util.concurrent.atomic.AtomicInteger();
 
     /**
@@ -453,7 +460,7 @@ public final class HttpApi implements AutoCloseable {
             sendJson(ex, 200, page(List.of(), feed.now()));
             return;
         }
-        boolean mayWait = wait > 0 && waiting.incrementAndGet() <= MAX_WAITING;
+        boolean mayWait = wait > 0 && waiting.incrementAndGet() <= maxWaiting;
         com.ataiva.serengeti.core.storage.ChangeFeed.Page page;
         try {
             page = feed.read(after, db, q.get("table"), limit, mayWait ? wait * 1000L : 0);

@@ -183,7 +183,7 @@ public final class Node implements AutoCloseable {
         QueryService qs = queries.create(storage, clock, cluster);
         try {
             this.api = HttpApi.start(config.bind, config.port, tls, new HttpApi.Deps(users, token, qs, this::status,
-                    System::currentTimeMillis, cluster, operations()));
+                    System::currentTimeMillis, cluster, operations()), config.httpThreads);
         } catch (IOException e) {
             if (cluster != null) {
                 cluster.close();
