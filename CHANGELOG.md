@@ -22,8 +22,8 @@ GitHub release notes and tags.
   panels. `run.sh` checks the scrapes, every dashboard query and an alert for a stopped node; CI runs it.
 - A change feed: `GET /v1/changes?db=&table=&after=&wait=` returns the changes a node applied after a
   cursor (rows written there or merged from peers, tables and databases dropped or created), long-polling
-  up to 60 s. A change is listed once the node has it on disk, and the feed answers 503 after a write to
-  the disk fails. A node keeps the last `changes_buffer` (10,000) changes, fewer when together they would
+  up to 60 s. A change is listed once the node has it on disk, and the feed answers 503 after an fsync of
+  the log fails. A node keeps the last `changes_buffer` (10,000) changes, fewer when together they would
   take more than a sixteenth of the heap (metrics `serengeti_changes_held` and `serengeti_changes_bytes`);
   an older cursor, or one from before a restart, gets 410. See
   docs/API.md, "Changes".
