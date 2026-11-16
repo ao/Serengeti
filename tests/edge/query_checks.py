@@ -5,8 +5,9 @@ import functools
 import json
 import random
 import re
+from fractions import Fraction
 
-from common import Client, bad, check, compare, expect, lit, section, short, sort_key_cmp, utf16_len
+from common import Client, bad, check, compare, expect, lit, section, short, sort_key_cmp, utf16, utf16_len
 
 KEYWORDS = ["and", "asc", "by", "count", "create", "database", "databases", "delete", "desc", "drop", "exists",
             "false", "from", "if", "in", "insert", "into", "is", "limit", "not", "null", "or", "order", "select",
@@ -45,6 +46,8 @@ def run(host):
     ordering(c)
     nesting(c)
     comparisons(c)
+    in_and_like(c, random.Random(11))
+    aggregates(c, random.Random(13))
     index_model(c, random.Random(7))
     conflicts(c)
     big_insert(c)
@@ -117,6 +120,18 @@ def words(c):
     refused("SHOW INDEX (singular)", c, "SHOW INDEX IN conflicts.index")
     refused("SHOW CONFLICT (singular)", c, "SHOW CONFLICTS conflicts.index")
     c.ok("DROP DATABASE conflicts")
+    # Nor are GROUP, LIKE and the aggregate names other than COUNT.
+    steps = ["CREATE DATABASE group", "CREATE TABLE group.like", "CREATE INDEX ON group.like (sum)",
+             "INSERT INTO group.like (_id, sum, min, max, avg, group, like) VALUES ('a', 1, 2, 3, 4, 'g', 'x'), "
+             "('b', 5, 6, 7, 8, 'g', 'y')", "UPDATE group.like SET like = 'z' WHERE group = 'g' AND like LIKE 'y%'"]
+    for s in steps:
+        accepted(f"new non-reserved words as names: {s}", c, s)
+    expect("SELECT sum, min, max, avg, group, like", [[1, 2, 3, 4, "g", "x"], [5, 6, 7, 8, "g", "z"]],
+           c.rows("SELECT sum, min, max, avg, group, like FROM group.like"))
+    expect("sum(sum), max(group) and a GROUP BY group", [["g", 6, "g", 2]],
+           c.rows("SELECT group, sum(sum), max(group), COUNT(like) FROM group.like GROUP BY group ORDER BY sum(sum)"))
+    expect("like LIKE and like IN", [["b"]], c.rows("SELECT _id FROM group.like WHERE like LIKE 'z' AND like IN ('z')"))
+    c.ok("DROP DATABASE group")
 
     section("keywords, blanks and comments")
     c.ok("CREATE TABLE IF NOT EXISTS q.t")
@@ -291,8 +306,23 @@ def statements(c):
             ("SELECT with no columns", "SELECT FROM q.t", 400, None),
             ("SELECT * and a column", "SELECT *, a FROM q.t", 400, None),
             ("SELECT with a trailing comma", "SELECT a, FROM q.t", 400, None),
-            ("SELECT COUNT(a)", "SELECT COUNT(a) FROM q.t", 400, None),
-            ("SELECT COUNT(*) and a column", "SELECT COUNT(*), a FROM q.t", 400, None),
+            ("SELECT COUNT(*) and a column", "SELECT COUNT(*), a FROM q.t", 400, "GROUP BY"),
+            ("SUM(*)", "SELECT SUM(*) FROM q.t", 400, "only COUNT takes *"),
+            ("COUNT() of nothing", "SELECT COUNT() FROM q.t", 400, None),
+            ("an aggregate of two columns", "SELECT SUM(a, b) FROM q.t", 400, None),
+            ("an aggregate of an expression", "SELECT SUM(a + 1) FROM q.t", 400, None),
+            ("aggregates without GROUP BY and ORDER BY", "SELECT SUM(a) FROM q.t ORDER BY a", 400, "ORDER BY"),
+            ("aggregates without GROUP BY and LIMIT", "SELECT MIN(a), MAX(a) FROM q.t LIMIT 1", 400, "LIMIT"),
+            ("GROUP BY with *", "SELECT * FROM q.t GROUP BY a", 400, "GROUP BY"),
+            ("a column that is not grouped", "SELECT a, b FROM q.t GROUP BY a", 400, "not in GROUP BY"),
+            ("GROUP BY a column twice", "SELECT a FROM q.t GROUP BY a, A", 400, "twice"),
+            ("GROUP BY without a column", "SELECT a FROM q.t GROUP BY", 400, None),
+            ("GROUP BY before WHERE", "SELECT a FROM q.t GROUP BY a WHERE a = 1", 400, None),
+            ("ORDER BY a column that is not grouped", "SELECT a FROM q.t GROUP BY a ORDER BY b", 400, "GROUP BY"),
+            ("ORDER BY an aggregate not listed", "SELECT a FROM q.t GROUP BY a ORDER BY count(*)", 400, "select list"),
+            ("ORDER BY an aggregate without GROUP BY", "SELECT a FROM q.t ORDER BY SUM(a)", 400, "needs GROUP BY"),
+            ("HAVING", "SELECT a, COUNT(*) FROM q.t GROUP BY a HAVING COUNT(*) > 1", 400, None),
+            ("COUNT(DISTINCT a)", "SELECT COUNT(DISTINCT a) FROM q.t", 400, None),
             ("COUNT(*) with ORDER BY", "SELECT COUNT(*) FROM q.t ORDER BY a", 400, "ORDER BY"),
             ("COUNT(*) with LIMIT", "SELECT COUNT(*) FROM q.t LIMIT 1", 400, "LIMIT"),
             ("ORDER BY two columns", "SELECT * FROM q.t ORDER BY a, b", 400, None),
@@ -312,8 +342,19 @@ def statements(c):
             ("== as an operator", "SELECT * FROM q.t WHERE a == 1", 400, None),
             ("=< as an operator", "SELECT * FROM q.t WHERE a =< 1", 400, None),
             ("! alone", "SELECT * FROM q.t WHERE a ! 1", 400, None),
-            ("IN (list)", "SELECT * FROM q.t WHERE a IN (1, 2)", 400, None),
-            ("LIKE", "SELECT * FROM q.t WHERE a LIKE 'x'", 400, None),
+            ("an empty IN list", "SELECT * FROM q.t WHERE a IN ()", 400, None),
+            ("IN without parentheses", "SELECT * FROM q.t WHERE a IN 1", 400, None),
+            ("IN of a column", "SELECT * FROM q.t WHERE a IN (b)", 400, None),
+            ("IN with a trailing comma", "SELECT * FROM q.t WHERE a IN (1,)", 400, None),
+            ("IN of a subquery", "SELECT * FROM q.t WHERE a IN (SELECT a FROM q.t)", 400, None),
+            ("1,001 IN values", "SELECT * FROM q.t WHERE a IN (" + ", ".join(["1"] * 1001) + ")", 400, "at most 1000"),
+            ("NOT without IN or LIKE", "SELECT * FROM q.t WHERE a NOT = 1", 400, "IN or LIKE"),
+            ("LIKE with an unknown escape", "SELECT * FROM q.t WHERE a LIKE 'a\\b'", 400, "LIKE pattern"),
+            ("LIKE ending in a backslash", "SELECT * FROM q.t WHERE a LIKE 'a\\'", 400, "at the end"),
+            ("LIKE a number", "SELECT * FROM q.t WHERE a LIKE 1", 400, None),
+            ("LIKE NULL", "SELECT * FROM q.t WHERE a LIKE NULL", 400, None),
+            ("LIKE a column", "SELECT * FROM q.t WHERE a LIKE b", 400, None),
+            ("LIKE with ESCAPE", "SELECT * FROM q.t WHERE a LIKE 'x!%' ESCAPE '!'", 400, None),
             ("UPDATE of a missing table", "UPDATE q.nosuch SET a = 1", 400, "does not exist"),
             ("UPDATE with a column twice", "UPDATE q.t SET a = 1, a = 2", 400, "set twice"),
             ("UPDATE without SET", "UPDATE q.t WHERE a = 1", 400, None),
@@ -522,6 +563,279 @@ def comparisons(c):
                         ("NOT (v = 1 OR v = 2)", {r for r, v in model.items() if v is not None
                                                   and not compare(v, "=", 1) and not compare(v, "=", 2)})]:
         expect(f"three-valued: {where}", want, set(c.ids(f"SELECT _id FROM q.cmp WHERE {where}")))
+
+
+def like_match(s, p):
+    """LIKE as docs/QUERY.md has it, on UTF-16 code units: % any run, _ one unit, \\%, \\_ and \\\\ themselves."""
+    s, units = utf16(s), []
+    i = 0
+    while i < len(p):
+        ch = p[i]
+        if ch == "\\":
+            units.append(("lit", utf16(p[i + 1])))
+            i += 2
+            continue
+        units.append(("any",) if ch == "%" else ("one",) if ch == "_" else ("lit", utf16(ch)))
+        i += 1
+    flat = []
+    for u in units:  # a literal outside the BMP is two code units, each matched on its own
+        if u[0] == "lit":
+            flat += [("lit", u[1][k:k + 2]) for k in range(0, len(u[1]), 2)]
+        else:
+            flat.append(u)
+    n = len(s) // 2
+
+    @functools.lru_cache(maxsize=None)
+    def m(i, j):
+        if j == len(flat):
+            return i == n
+        u = flat[j]
+        if u[0] == "any":
+            return m(i, j + 1) or (i < n and m(i + 1, j))
+        if i >= n:
+            return False
+        return (u[0] == "one" or s[2 * i:2 * i + 2] == u[1]) and m(i + 1, j + 1)
+
+    return m(0, 0)
+
+
+def three(op_result, negated):
+    return None if op_result is None else (not op_result if negated else op_result)
+
+
+def in_and_like(c, rng):
+    section("IN and LIKE across types and NULL, without and with an index")
+    c.ok("CREATE TABLE IF NOT EXISTS q.il")
+    c.ok("DROP INDEX IF EXISTS ON q.il (v)")
+    c.ok("DELETE FROM q.il")
+    stored = [MISSING, None, True, False, -1, 0, -0.0, 1, 1.0, 1.5, 9007199254740993, 9007199254740992.0, "", "a",
+              "A", "ab", "abc", "b", "a%", "a_b", "a\\b", "%", "_", "it's", "1", chr(0xE9), chr(0x1F600),
+              chr(0x1F600) + "a", "a" + chr(0x1F600), chr(0xFFFF), "a" + chr(0xFFFF), chr(0xFFFF) + "a"]
+    model = {}
+    for i, v in enumerate(stored):
+        rid = f"l{i:02d}"
+        if v is MISSING:
+            c.ok(f"INSERT INTO q.il (_id) VALUES ('{rid}')")
+            model[rid] = None
+        else:
+            c.ok(f"INSERT INTO q.il (_id, v) VALUES ('{rid}', {lit(v)})")
+            model[rid] = v
+    literals = [None, True, False, -1, 0, -0.0, 1, 1.0, 1.5, 9007199254740993, 9007199254740993.0, "a", "A", "",
+                "1", "a%", chr(0x1F600), chr(0xFFFF), "zz"]
+    pieces = ["a", "b", "A", "%", "_", "\\%", "\\_", "\\\\", "''", chr(0x1F600), chr(0xFFFF), "1", "c"]
+    patterns = ["", "%", "_", "a", "a%", "%a", "%a%", "_a", "a_", "__", "a\\%", "a\\_b", "a\\\\b", "\\%", "\\_",
+                "%\\%%", chr(0x1F600) + "%", "__a", "_" + chr(0x1F600), chr(0xFFFF) + "%", "a" + chr(0xFFFF) + "%",
+                "it''s", "A%", "%b%"]
+    patterns += ["".join(rng.choice(pieces) for _ in range(rng.randint(1, 5))) for _ in range(40)]
+    lists = [[rng.choice(literals) for _ in range(rng.randint(1, 5))] for _ in range(40)] + [[1], [None], ["a", None]]
+
+    def want_in(v, values, negated):
+        if v is None:
+            return None
+        hit, unknown = False, False
+        for x in values:
+            r = compare(v, "=", x)
+            hit |= r is True
+            unknown |= r is None
+        return three(True if hit else None if unknown else False, negated)
+
+    def want_like(v, p, negated):
+        if v is None:
+            return None
+        return three(isinstance(v, str) and like_match(v, p.replace("''", "'")), negated)
+
+    for indexed in (False, True):
+        if indexed:
+            c.ok("CREATE INDEX ON q.il (v)")
+        tag = "with an index" if indexed else "by scan"
+        for column in ("v", "_id"):
+            mism = []
+            conds = []
+            for vals in lists:
+                for neg in (False, True):
+                    conds.append((f"{column} {'NOT ' if neg else ''}IN ({', '.join(lit(x) for x in vals)})",
+                                  lambda v, vals=vals, neg=neg: want_in(v, vals, neg)))
+            for p in patterns:
+                for neg in (False, True):
+                    conds.append((f"{column} {'NOT ' if neg else ''}LIKE '{p}'",
+                                  lambda v, p=p, neg=neg: want_like(v, p, neg)))
+            for where, rule in conds:
+                want = sorted(r for r, v in model.items() if rule(r if column == "_id" else v) is True)
+                got = c.ids(f"SELECT _id FROM q.il WHERE {where}")
+                n = c.count("q.il", where)
+                both = c.ids(f"SELECT _id FROM q.il WHERE ({where}) OR ({where})")
+                anded = c.ids(f"SELECT _id FROM q.il WHERE {where} AND _id >= 'l10'")
+                if got != want or n != len(want) or both != want or anded != [r for r in want if r >= "l10"]:
+                    mism.append((where, want, got, n))
+            check(f"{column} [NOT] IN and [NOT] LIKE, {tag}: {len(conds)} conditions match the rules", not mism,
+                  repr(mism[:2]))
+    expect("IN with a null never makes NOT IN true", [], c.ids("SELECT _id FROM q.il WHERE v NOT IN (1, NULL)"))
+    expect("LIKE '%' is every string", sorted(r for r, v in model.items() if isinstance(v, str)),
+           c.ids("SELECT _id FROM q.il WHERE v LIKE '%'"))
+    expect("NOT LIKE '%' is every value that is not a string or null",
+           sorted(r for r, v in model.items() if v is not None and not isinstance(v, str)),
+           c.ids("SELECT _id FROM q.il WHERE v NOT LIKE '%'"))
+    expect("an emoji is two UTF-16 code units: '__' matches it, '_' does not", (True, False),
+           ("l26" in c.ids("SELECT _id FROM q.il WHERE v LIKE '__'"),
+            "l26" in c.ids("SELECT _id FROM q.il WHERE v LIKE '_'")))
+    values = ", ".join(str(i) for i in range(1000))
+    accepted("an IN list of 1,000 values", c, f"SELECT COUNT(*) FROM q.il WHERE v IN ({values})")
+
+
+def agg_model(fn, values):
+    """One aggregate over a group's values in _id order, as docs/QUERY.md says: (value, None) or (None, error)."""
+    if fn == "count(*)":
+        return len(values), None
+    if fn == "count":
+        return sum(1 for v in values if v is not None), None
+    if fn in ("min", "max"):
+        best = None
+        for v in values:
+            if v is not None and (best is None or (sort_key_cmp(v, best) < 0 if fn == "min" else sort_key_cmp(v, best) > 0)):
+                best = v
+        return best, None
+    ints = [v for v in values if isinstance(v, int) and not isinstance(v, bool)]
+    dbls = [v for v in values if isinstance(v, float)]
+    if not ints and not dbls:
+        return None, None
+    if fn == "sum" and not dbls:
+        s = sum(ints)
+        return (s, None) if -2 ** 63 <= s < 2 ** 63 else (None, "SUM overflows a 64-bit integer")
+    total = -0.0
+    for d in dbls:
+        total += d
+    if ints:
+        total += float(sum(ints))
+    if fn == "avg":
+        total /= len(ints) + len(dbls)
+    if total in (float("inf"), float("-inf")):
+        return None, f"{fn.upper()} overflows a double"
+    return total, None
+
+
+def group_key(v):
+    """Values are one group when = holds between them; Python's True == 1 must not merge booleans and numbers."""
+    if v is None:
+        return (0,)
+    if isinstance(v, bool):
+        return (1, v)
+    if isinstance(v, (int, float)):
+        return (2, Fraction(v))
+    return (3, utf16(v))
+
+
+def aggregates(c, rng):
+    section("aggregates and GROUP BY against a model")
+    c.ok("CREATE TABLE IF NOT EXISTS q.agg")
+    c.ok("DROP INDEX IF EXISTS ON q.agg (g)")
+    c.ok("DELETE FROM q.agg")
+    gs = [MISSING, None, True, False, 0, -0.0, 1, 1.0, 2.5, "", "a", "A", "b", chr(0x1F600)]
+    ns = [MISSING, None, 1, 2, -3, 0, 0.5, -0.0, 1e300, 0.1, 9007199254740993, "7", True, False, 2 ** 62]
+    rows = {}
+    tuples = []
+    for i in range(300):
+        rid = f"a{(i * 7) % 300:03d}"
+        g, h, n = rng.choice(gs), rng.choice(gs[:6] + ["x", "y"]), rng.choice(ns)
+        rows[rid] = {"g": g, "h": h, "n": n}
+        tuples.append((rid, g, h, n))
+    for rid, g, h, n in tuples:
+        cols = ["_id"] + [k for k, v in (("g", g), ("h", h), ("n", n)) if v is not MISSING]
+        vals = [lit(rid)] + [lit(v) for v in (g, h, n) if v is not MISSING]
+        c.ok(f"INSERT INTO q.agg ({', '.join(cols)}) VALUES ({', '.join(vals)})")
+    ordered = sorted(rows)
+
+    def val(r, col):
+        v = rows[r][col] if col != "_id" else r
+        return None if v is MISSING else v
+
+    fns = ["count(*)", "count", "sum", "min", "max", "avg"]
+    specs = [([], ["count(*)", "count", "sum", "min", "max", "avg"], None), (["g"], fns, None), (["h", "g"], fns, None),
+             (["g"], ["count(*)"], ("count(*)", True)), (["g"], ["sum", "count(*)"], ("sum", False)),
+             (["h"], ["max", "min"], ("h", True)), (["n"], ["count(*)"], None), (["g", "h"], [], None)]
+    for indexed in (False, True):
+        if indexed:
+            c.ok("CREATE INDEX ON q.agg (g)")
+        tag = "with an index on g" if indexed else "by scan"
+        for where, keep in [(None, lambda r: True), ("g IN (1, 'a', NULL, TRUE)", lambda r: compare(val(r, "g"), "=", 1)
+                                                      or compare(val(r, "g"), "=", "a") or val(r, "g") is True),
+                            ("g LIKE 'a%'", lambda r: isinstance(val(r, "g"), str) and val(r, "g").startswith("a"))]:
+            mism = []
+            for by, aggs, order in specs:
+                items = [b for b in by] + [("COUNT(*)" if f == "count(*)" else f"{f.upper()}(n)") for f in aggs]
+                labels = by + ["count" if f == "count(*)" else f"{f}(n)" for f in aggs]
+                q = f"SELECT {', '.join(items)} FROM q.agg" + (f" WHERE {where}" if where else "")
+                if by:
+                    q += " GROUP BY " + ", ".join(by)
+                if order:
+                    key = order[0]
+                    q += " ORDER BY " + (key if key in by else "COUNT(*)" if key == "count(*)" else f"{key.upper()}(n)")
+                    q += " DESC" if order[1] else ""
+                groups = {}
+                for r in ordered:
+                    if not keep(r):
+                        continue
+                    k = tuple(group_key(val(r, b)) for b in by)
+                    if k not in groups:
+                        groups[k] = ([val(r, b) for b in by], [])
+                    groups[k][1].append(r)
+                if not by and not groups:
+                    groups[()] = ([], [])
+                keys = sorted(groups, key=functools.cmp_to_key(
+                    lambda a, b: next((x for x in (sort_key_cmp(p, q_) for p, q_ in zip(groups[a][0], groups[b][0])) if x), 0)))
+                out, error = [], None
+                for k in keys:
+                    gv, members = groups[k]
+                    res = {}
+                    for f in aggs:
+                        v, e = agg_model(f, [True if f == "count(*)" else val(r, "n") for r in members])
+                        if e and not error:
+                            error = e
+                        res[f] = v
+                    out.append((gv, res))
+                if order:
+                    key = order[0]
+                    out.sort(key=functools.cmp_to_key(lambda a, b: sort_key_cmp(
+                        a[0][by.index(key)] if key in by else a[1][key], b[0][by.index(key)] if key in by else b[1][key])),
+                        reverse=order[1])
+                want = [gv + [res[f] for f in aggs] for gv, res in out]
+                s, j, data = c.q(q)
+                if error:
+                    if s != 400 or error not in (j or {}).get("error", ""):
+                        mism.append((q, error, s, short(data)))
+                elif s != 200 or j["columns"] != labels or j["rows"] != want:
+                    mism.append((q, want[:3], s, short(data)))
+            check(f"aggregates and GROUP BY{' WHERE ' + where if where else ''}, {tag}: {len(specs)} statements "
+                  "match the model", not mism, repr(mism[:2]))
+    c.ok("INSERT INTO q.agg (_id, g, n) VALUES ('zz1', 'over', 9223372036854775807), ('zz2', 'over', 1)")
+    refused("a SUM of integers that leaves 64 bits", c, "SELECT SUM(n) FROM q.agg WHERE g = 'over'",
+            "SUM overflows a 64-bit integer")
+    expect("its AVG is a double", [[4.611686018427388e18]], c.rows("SELECT AVG(n) FROM q.agg WHERE g = 'over'"))
+    c.ok("INSERT INTO q.agg (_id, g, n) VALUES ('zz3', 'over', -1)")
+    expect("and back in range, it is exact", [[9223372036854775807]], c.rows("SELECT SUM(n) FROM q.agg WHERE g = 'over'"))
+    j = c.ok("SELECT n, COUNT(*) FROM q.big GROUP BY n")
+    expect("10,001 groups: 10,000 returned, truncated", (10000, True, [0, 1]), (j["count"], j["truncated"], j["rows"][0]))
+    j = c.ok("SELECT n, COUNT(*) FROM q.big GROUP BY n ORDER BY n DESC LIMIT 2")
+    expect("ORDER BY a GROUP BY column DESC with LIMIT", ([[10000, 1], [9999, 1]], False), (j["rows"], j["truncated"]))
+    c.ok("CREATE TABLE IF NOT EXISTS q.groups")
+    if c.count("q.groups") < 100001:
+        c.ok("DELETE FROM q.groups")
+        for start in range(0, 100001, 50000):
+            c.ok("INSERT INTO q.groups (_id) VALUES " + ", ".join(f"('{i:06d}')" for i in range(start, min(start + 50000, 100001))))
+    refused("100,001 groups are refused", c, "SELECT _id, COUNT(*) FROM q.groups GROUP BY _id",
+            "GROUP BY would make more than 100,000 groups")
+    accepted("100,000 are not", c, "SELECT COUNT(*) FROM q.groups WHERE _id < '100000' GROUP BY _id LIMIT 1")
+    expect("COUNT(*) of the whole table is not capped", 100001, c.count("q.groups"))
+    pages, seen, last = 0, [], None
+    while True:
+        where = "" if last is None else f" WHERE _id > '{last}'"
+        page = c.ids(f"SELECT _id FROM q.big{where} ORDER BY _id LIMIT 1000")
+        seen += page
+        pages += 1
+        if len(page) < 1000:
+            break
+        last = page[-1]
+    expect("keyset pages of 1,000 read every row once, in order", (11, sorted(c.ids("SELECT _id FROM q.big") + ["r10000"])),
+           (pages, seen))
 
 
 def index_model(c, rng):

@@ -118,8 +118,9 @@ q "CREATE INDEX ON shop.items (qty)"
 q "SELECT name FROM shop.items WHERE qty > 200"
 ```
 
-A `WHERE` that compares an indexed column with a value, alone or as one term of an AND, reads only the
-matching rows; anything else scans the table. Lookups by `_id` never scan. Indexes change how fast a
+A `WHERE` that compares an indexed column with a value, checks it against an IN list or a LIKE prefix
+(`name LIKE 'bo%'`), alone or as one term of an AND, reads only the matching rows; anything else scans
+the table. Lookups by `_id` never scan. Indexes change how fast a
 query runs, not what it returns. [docs/QUERY.md](docs/QUERY.md) has the rules.
 
 ## Accounts

@@ -32,9 +32,14 @@ JUNK = KEYWORDS + SYMBOLS + VALUES + [
     "-", "!", "@", "#", "`", "\"a\"", "'unterminated", "''''", "--", "/*", "*/", "\\", "$1", "?", "%", "&", "|",
     "[", "]", "{", "}", ":", "::", "==", "=<", "<<", "!==", chr(0), chr(0xA0), chr(0x1F600), chr(0xFF0A),
     chr(0x2028), "\t", "\x0b", "N'x'", "X'00'", "0x10", "1_0", "NaN", "Infinity", "LIKE", "JOIN", "GROUP", "ALL",
-    "(" * 70, "NOT " * 70, "SELECT * FROM f.t"]
+    "(" * 70, "NOT " * 70, "SELECT * FROM f.t", "IN", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\b'", "'\\'", "BY",
+    "HAVING", "DISTINCT", "OFFSET", "ILIKE", "ESCAPE"]
 SEMANTIC = ("does not exist", "already exists", "already has an index", "has no index", "_id must be",
-            "_id cannot be changed", "_id needs no index", "over the maximum", "nested more than")
+            "_id cannot be changed", "_id needs no index", "over the maximum", "nested more than", "overflows a",
+            "would make more than")
+AGGREGATES = ["COUNT", "SUM", "MIN", "MAX", "AVG"]
+# Pieces of LIKE patterns: wildcards, the three escapes, and characters the stored values hold.
+LIKE_PIECES = ["%", "_", "\\%", "\\_", "\\\\", "a", "A", "b", "1", "z", "''", " ", chr(0xE9), chr(0x1F600)]
 
 
 class Gen:
@@ -69,7 +74,46 @@ class Gen:
         col = self.name()
         if k < 0.46:
             return [col, "IS"] + (["NOT"] if r.random() < 0.5 else []) + ["NULL"]
+        neg = ["NOT"] if r.random() < 0.3 else []
+        if k < 0.56:
+            vals = [self.value() for _ in range(r.randint(1, 5))]
+            return [col] + neg + ["IN", "("] + sum(([v, ","] for v in vals), [])[:-1] + [")"]
+        if k < 0.66:
+            return [col] + neg + ["LIKE", self.pattern()]
         return [col, r.choice(CMP), self.value()]
+
+    def pattern(self):
+        """A LIKE pattern that follows the rules, as a string literal."""
+        return "'" + "".join(self.r.choice(LIKE_PIECES) for _ in range(self.r.randint(0, 5))) + "'"
+
+    def item(self, column):
+        """An aggregate: COUNT(*), or one of COUNT, SUM, MIN, MAX, AVG of a column; any case."""
+        fn = self.r.choice(AGGREGATES)
+        fn = fn.lower() if self.r.random() < 0.2 else fn
+        arg = "*" if fn.upper() == "COUNT" and self.r.random() < 0.4 else column
+        return [fn, "(", arg, ")"]
+
+    def select_list(self):
+        """Tokens of a SELECT's list and what follows FROM's table, following every parse rule."""
+        r = self.r
+        k = r.random()
+        if k < 0.25:
+            return ["*"], None
+        if k < 0.35:
+            return ["COUNT", "(", "*", ")"], None
+        if k < 0.6:
+            cols = [self.name() for _ in range(r.randint(1, 3))]
+            return sum(([c, ","] for c in cols), [])[:-1], None
+        if k < 0.75:
+            items = [self.item(self.name()) for _ in range(r.randint(1, 3))]
+            return sum((i + [","] for i in items), [])[:-1], []
+        by = r.sample(["a", "b", "v", "_id", "on", "index", "conflicts", "x" * 63], r.randint(1, 3))
+        items = [[c] for c in by if r.random() < 0.6] + [self.item(self.name()) for _ in range(r.randint(0, 3))]
+        r.shuffle(items)
+        if not items:
+            items = [["COUNT", "(", "*", ")"]]
+        group = ["GROUP", "BY"] + sum(([c.upper() if r.random() < 0.1 else c, ","] for c in by), [])[:-1]
+        return sum((i + [","] for i in items), [])[:-1], (group, by, [i for i in items if len(i) > 1])
 
     def deep(self):
         """A condition nested close to the limit."""
@@ -92,20 +136,19 @@ class Gen:
         r = self.r
         k = r.random()
         if k < 0.30:
-            proj = r.random()
-            if proj < 0.3:
-                toks = ["SELECT", "*"]
-            elif proj < 0.45:
-                toks = ["SELECT", "COUNT", "(", "*", ")"]
-            else:
-                cols = [self.name() for _ in range(r.randint(1, 3))]
-                toks = ["SELECT"] + sum(([c, ","] for c in cols), [])[:-1]
-            toks += ["FROM"] + self.table() + self.where()
-            if toks[1] != "COUNT":
-                if r.random() < 0.4:
-                    toks += ["ORDER", "BY", self.name()] + ([r.choice(["ASC", "DESC"])] if r.random() < 0.6 else [])
-                if r.random() < 0.4:
-                    toks += ["LIMIT", str(r.choice([0, 1, 2, 5, 100, 10000]))]
+            items, grouping = self.select_list()
+            toks = ["SELECT"] + items + ["FROM"] + self.table() + self.where()
+            if grouping == [] or (grouping is None and items[:1] == ["COUNT"]):
+                return toks, "select"  # aggregates without GROUP BY: one row, no ORDER BY or LIMIT
+            order = [self.name()]
+            if grouping is not None:
+                group, by, aggs = grouping
+                toks += group
+                order = r.choice([[r.choice(by)]] + aggs)
+            if r.random() < 0.4:
+                toks += ["ORDER", "BY"] + order + ([r.choice(["ASC", "DESC"])] if r.random() < 0.6 else [])
+            if r.random() < 0.4:
+                toks += ["LIMIT", str(r.choice([0, 1, 2, 5, 100, 10000]))]
             return toks, "select"
         if k < 0.45:
             cols = r.sample(["a", "b", "v", "on", "_id"], r.randint(1, 3))
@@ -252,10 +295,10 @@ def run(host, n=None, seed=None):
                 break
         else:
             counts[("valid" if valid else "mutated") + ("-200" if s == 200 else "-400")] += 1
-        # The same rows without the index: (e) OR (e) never uses one.
-        if valid and s == 200 and kind == "select" and "WHERE" in toks and "COUNT" not in toks[:2]:
+        # The same rows (or groups and aggregates) without the index: (e) OR (e) never uses one.
+        if valid and s == 200 and kind == "select" and "WHERE" in toks:
             w = toks.index("WHERE")
-            end = next((k for k in range(w + 1, len(toks)) if toks[k] in ("ORDER", "LIMIT")), len(toks))
+            end = next((k for k in range(w + 1, len(toks)) if toks[k] in ("GROUP", "ORDER", "LIMIT")), len(toks))
             cond = toks[w + 1:end]
             depth = cond.count("(") + cond.count("NOT")
             if depth < 60:
@@ -301,5 +344,12 @@ def run(host, n=None, seed=None):
                         b = c.count(f"f.{t}", f"{col} {op} {v} OR {col} {op} {v}")
                         if a != b:
                             mism.append((t, col, op, v, a, b))
+                for cond in [f"{col} IN ({', '.join(VALUES[i:i + 4])})" for i in range(0, len(VALUES), 4)] + \
+                        [f"{col} LIKE {p}" for p in ("'a%'", "'%'", "''", "'z%'", "'1'", "'" + chr(0xE9) + "%'",
+                                                     "'" + chr(0x1F600) + "'", "'\\\\%'", "'x y'", "'It''%'")]:
+                    a = c.count(f"f.{t}", cond)
+                    b = c.count(f"f.{t}", f"{cond} OR {cond}")
+                    if a != b:
+                        mism.append((t, cond, a, b))
         check(f"index lookups equal scans on every table, {stage}", not mism, repr(mism[:5]))
     c.close()

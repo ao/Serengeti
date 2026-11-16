@@ -50,6 +50,18 @@ GitHub release notes and tags.
 - `tests/edge/run.sh`, a conformance and limits suite for the HTTP API and the query language: about 900
   checks plus 5,000 generated statements per run, concurrency, kill -9 and backup cases. It found the bugs
   listed under Fixed; CI runs it.
+- `c [NOT] IN (v1, v2, ...)`, 1 to 1,000 values: exactly `c = v1 OR c = v2 ...`, so a null in the list
+  makes NOT IN never true. On an indexed column or `_id`, IN reads the rows of each value.
+- `c [NOT] LIKE 'pattern'`, with `%` for any run of characters, `_` for one UTF-16 code unit, and `\%`,
+  `\_` and `\\`; case-sensitive. A value that is not a string makes LIKE false. On an indexed column or
+  `_id`, a pattern that starts with a literal prefix reads only the strings with that prefix.
+- Aggregates and GROUP BY: `COUNT(*)`, `COUNT(c)`, `SUM`, `MIN`, `MAX` and `AVG`, `GROUP BY` one or more
+  columns, and ORDER BY a GROUP BY column or an aggregate of the select list. SUM and AVG skip values that
+  are not numbers; a SUM of integers is exact and fails with 400 if it does not fit in 64 bits. MIN and MAX
+  use the ORDER BY order. At most 10,000 groups are returned and 100,000 held while a statement runs.
+  `sum`, `min`, `max`, `avg`, `group` and `like` still work as names. See docs/QUERY.md, "Aggregates and
+  GROUP BY".
+- docs/QUERY.md, "Reading a large table": keyset paging with `WHERE _id > 'last' ORDER BY _id LIMIT n`.
 
 ### Fixed
 - Nothing stopped a second node from opening a data directory in use, for example a second container on the
@@ -83,6 +95,9 @@ GitHub release notes and tags.
   and the storage. Found by `tests/soak`, in every run with graceful stops.
 
 ### Changed
+- A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past
+  the LIMIT or the cap) instead of visiting the rest of the table, and `ORDER BY _id` ascending no longer
+  sorts, since rows are read in that order. A keyset page reads only its own rows.
 - The image sets `MALLOC_ARENA_MAX=2`. glibc otherwise keeps a malloc arena per thread: filling a node in a
   512 MiB container, that memory reached about 150 MB the JVM does not count (measured with Native Memory
   Tracking against the container's anonymous memory), and the kernel killed the node before its memory
