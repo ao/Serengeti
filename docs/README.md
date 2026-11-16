@@ -5,6 +5,7 @@
 - [CONFIGURATION.md](CONFIGURATION.md): settings, secrets, the data directory and restore.
 - [CONSISTENCY.md](CONSISTENCY.md): replication, conflicts and what a cluster promises.
 - [BENCHMARKS.md](BENCHMARKS.md): throughput and latency, with the machine and method.
+- [SOAK.md](SOAK.md): the randomized fault test, what it checks, what it cannot do, and its runs.
 - [demo.sh](demo.sh): three nodes, one cut off, writes on both sides, convergence; recorded in demo.svg.
 - [RELEASING.md](RELEASING.md): how a release is made.
 
