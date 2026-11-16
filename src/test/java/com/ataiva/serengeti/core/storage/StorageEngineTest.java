@@ -36,6 +36,25 @@ class StorageEngineTest {
     }
 
     @Test
+    void aDirectoryInUseIsRefusedUntilItsEngineCloses() throws IOException {
+        try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
+            seed(e, 3);
+            IOException in = assertThrows(IOException.class, () -> StorageEngine.open(dir, FsyncPolicy.ALWAYS));
+            assertTrue(in.getMessage().contains("in use by another node"), in.getMessage());
+            // A restore into it is refused too, and writes nothing.
+            Path backup = dir.resolve("a-backup.jsonl");
+            Snapshot.writeAtomically(List.of(new Op.CreateDb("x", at(1))), backup);
+            IOException r = assertThrows(IOException.class,
+                    () -> com.ataiva.serengeti.core.server.Backup.restore(backup, dir));
+            assertTrue(r.getMessage().contains("already holds"), r.getMessage());
+            seed(e, 2);
+        }
+        try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
+            assertEquals(3L, count(e), "the rows are as written, with nothing from the refused restore");
+        }
+    }
+
+    @Test
     void stateSurvivesReopen() throws IOException {
         try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
             seed(e, 50);

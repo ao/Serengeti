@@ -32,6 +32,22 @@ GitHub release notes and tags.
   acknowledged while cut off are not lost.
 
 ### Fixed
+- A running node sometimes answered nothing for 20 to 83 s (2.0.0 has this too). It set the JDK server's
+  60 s limit on reading a response; the server closes an overdue connection while holding the set that
+  every request passes through, and closing a TLS connection waits for a write blocked on a peer that
+  stopped reading, so every request thread waited. There is no response limit now; the 30 s limit on
+  sending a request stays. A graceful stop, which could hang the same way until docker killed the node,
+  waits for the HTTP server 3 s at most. Found by the soak test on the 2.2 branch.
+- A node that was stopping answered 500 for about a second, also to writes it had already logged: it closed
+  its cluster layer before its HTTP server. It now stops the HTTP server first and answers what still
+  arrives with 503 "this node is stopping".
+- A string holding an unpaired UTF-16 surrogate (`'\ud800'`) was stored as `?`, so two such `_id`s became one
+  row after a restart. JSON with an unpaired surrogate, a body that is not valid UTF-8, and a body that
+  cannot be read (a malformed chunked body) are now refused with 400; `\u` escapes take ASCII hex only.
+- Nothing stopped a second node from opening a data directory in use (a second container on the same
+  volume), and both would write the same log. A node holds a lock on `data_dir/lock`; a second one stops
+  with exit status 2. `serengeti restore` takes the lock too.
+- A SELECT listing tens of thousands of columns ran the node out of memory; a SELECT lists at most 256.
 - A peer that does not answer no longer makes the others look unreachable. Each sync round waited for
   every peer in turn, so while a cut-off peer's calls ran to their timeout the reachable peers went
   uncontacted for longer than the 3-second window, and a node that had a majority refused writes with
