@@ -67,7 +67,8 @@ kept in `last-sync`; `serengeti restore` sets it to the backup's newest change, 
 a backup older than the TTL starts stale too.
 
 2.0 does not write `last-sync`. After running a node on 2.0 for longer than the TTL (a rollback), delete
-its `last-sync` before starting it on 2.1 again: the other nodes did not drop tombstones while it ran 2.0.
+its `last-sync` before starting it on 2.1 or 2.2 again: the other nodes did not drop tombstones while it ran
+2.0.
 
 ## Conflicts
 
@@ -99,8 +100,9 @@ node that was concurrent and older than the row's last 15 writers would count as
 Merging versions is order-independent, so every node ends up with the same versions; a property test
 checks this against the true causal history of random writes and syncs on three replicas
 (`ConflictProperties`). Writes from 2.0 nodes carry no record of what they had seen. They are ordered by
-version among themselves, as 2.0 did, and a 2.1 write covers the older ones; during a rolling upgrade, a
-2.0 node's write to a row last written by a 2.1 node is kept as a conflict even when it was not concurrent.
+version among themselves, as 2.0 did, and a write from 2.1 or later covers the older ones; during a rolling
+upgrade, a 2.0 node's write to a row last written by a newer node is kept as a conflict even when it was not
+concurrent.
 
 Schema changes resolve by version alone; a table dropped at version D removes every row version older
 than D.
@@ -138,9 +140,13 @@ side 503, on the majority side 200, it catches up after healing), one node's fsy
 (writes through the others are not slowed), local writes on both sides of a partition (both kept, the
 conflict listed on every node, then resolved by one write), and all three restarted. Every insert that
 got a 200 must be on every node at the end. Three runs of 2.1 on an EC2 c7g.4xlarge (Ubuntu 24.04, Docker
-29): 37 of 37 checks each time, with 626, 623 and 549 acknowledged inserts and none lost.
+29): 37 of 37 checks each time, with 626, 623 and 549 acknowledged inserts and none lost. One run of 2.2
+(8970539) on the same kind of machine: 37 of 37, 548 acknowledged inserts, none lost.
 
 `tests/upgrade/run.sh` opens a 2.0.0 node's data directory with this build, and upgrades a 3-node 2.0.0
 cluster one node at a time while a writer inserts through all three; every acknowledged insert must be on
 every node afterwards, with no conflicts listed. It also creates an index while 2.0.0 nodes remain, and
-rolls a node that has an index back to 2.0.0: every row must still be there. 44 of 44 on the same machine.
+rolls a node that has an index back to 2.0.0: every row must still be there. 44 of 44 for 2.1 on the same
+machine. For 2.2 it also makes a write account and a read account before the rollback: on 2.0.0 the admin
+and the write account sign in from `users.json`, the read account cannot, and it is back once the node is
+upgraded again. 54 of 54 for 2.2 (8970539), with 144 inserts acknowledged during the upgrade.
