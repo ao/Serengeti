@@ -406,6 +406,20 @@ The writes, through n1, and what followed them:
 | 10000 | 1.94 (1.94-1.94) | 1.94 (1.94-1.94) | 1.20 (1.10-1.30) | 1.90 (1.80-1.90) | 222 / 207 / 197 | 162 / 143 / 148 |
 | 100000 | 19.5 (19.5-19.5) | 19.5 (19.5-19.5) | 7.00 (6.60-7.30) | 6.50 (6.50-6.50) | 453 / 319 / 319 | 432 / 241 / 246 |
 
+### COUNT(*) from a kept count
+
+After the runs above, `SELECT COUNT(*)` without WHERE was changed to answer from a count of the table's rows
+that the store keeps with every change, instead of visiting the rows. Scenario c with that change, on the
+soak test's c7g.2xlarge (same type, disk and method, nothing else running), 2.2 at the commit after 0ad9153.
+Requests/s, the median run of 3:
+
+| Query | Rows | 2.2 cafb490 (above) | 2.2 with the kept count |
+|---|---:|---:|---:|
+| SELECT COUNT(*) | 1000 | 14253 | 15047 |
+| SELECT COUNT(*) | 10000 | 8336 | 15223 |
+| SELECT COUNT(*) | 100000 | 973 | 15100 |
+| SELECT * WHERE _id = x | 100000 | 14618 | 14123 |
+
 ### Variants of 2.2, scenario c
 
 The same machine, after the runs above: `serial75` is 2.2 at cafb490 with `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75`

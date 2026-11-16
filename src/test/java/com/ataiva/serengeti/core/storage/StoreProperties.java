@@ -50,6 +50,23 @@ class StoreProperties {
     }
 
     @Property(tries = 500)
+    void theVisibleRowCountIsTheRowsAScanVisits(@ForAll("ops") List<Op> ops, @ForAll("ops") List<Op> more,
+            @ForAll boolean collect) {
+        Store s = new Store();
+        s.applyAll(ops);
+        s.applyAll(otherNodes(more)); // conflicts between nodes, as sync brings them
+        if (collect) {
+            s.collectTombstones(Long.MAX_VALUE);
+        }
+        for (String db : s.allDatabaseNames()) {
+            for (String t : List.of("t", "u", "missing")) {
+                assertEquals(s.rowCount(db, t), s.visibleRows(db, t), db + "." + t);
+            }
+        }
+        assertEquals(0, s.visibleRows("no such db", "t"));
+    }
+
+    @Property(tries = 500)
     void bucketSumsEqualAFreshRebuild(@ForAll("ops") List<Op> ops) {
         Store s = new Store();
         s.applyAll(ops);

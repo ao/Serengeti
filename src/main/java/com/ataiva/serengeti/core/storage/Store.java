@@ -37,6 +37,8 @@ public final class Store {
         final TreeMap<String, RowState> rows = new TreeMap<>();
         /** Estimated heap bytes of the rows held (see Weight), kept in step with every change. */
         long weight;
+        /** Rows a SELECT sees (the winning version holds a value), kept in step with every change. */
+        long visible;
         final long[] buckets = new long[BUCKETS];
         /**
          * Per bucket, the sum of {@link RowState#versionsHash} over its rows, tombstones included, except
@@ -110,6 +112,7 @@ public final class Store {
             }
             Map<String, Object> was = old == null ? null : old.winner().value();
             Map<String, Object> now = next == null ? null : next.winner().value();
+            visible += (now != null ? 1 : 0) - (was != null ? 1 : 0);
             if (was != now) {
                 for (IndexState ix : indexes.values()) {
                     if (ix.exists()) {
@@ -1486,6 +1489,17 @@ public final class Store {
         long[] n = {0};
         forEachRow(db, table, (id, row) -> n[0]++);
         return n[0];
+    }
+
+    /**
+     * The rows {@link #forEachRow} visits, from a count kept with every change: what {@code SELECT COUNT(*)}
+     * without WHERE answers, without visiting the rows. 0 for a table that does not exist.
+     */
+    public long visibleRows(String db, String table) {
+        if (!tableExists(db, table)) {
+            return 0;
+        }
+        return dbs.get(db).tables.get(table).visible;
     }
 
     /** The whole state as ops; applying them to an empty store rebuilds it exactly. */

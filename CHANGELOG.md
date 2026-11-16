@@ -206,6 +206,8 @@ GitHub release notes and tags.
   c7g.4xlarge). Peers on 2.1 answer 404 to these routes and are pulled from by whole buckets as before.
 - `cluster_plaintext` takes only `allow`. Another value (`yes`, `true`) meant "not allowed" without a word;
   it now stops the node with exit status 2, like any other invalid setting.
+- `SELECT COUNT(*)` without WHERE answers from a count of the table's rows kept with every change, instead
+  of visiting them: on 100,000 rows, 15,100 requests/s at 8 clients against 973 (docs/BENCHMARKS.md).
 - A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past
   the LIMIT or the cap) instead of visiting the rest of the table, and `ORDER BY _id` ascending no longer
   sorts, since rows are read in that order. A keyset page reads only its own rows.

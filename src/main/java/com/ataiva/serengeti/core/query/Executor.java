@@ -365,6 +365,11 @@ public final class Executor {
     private Result select(Store store, Statement.Select q) {
         requireTable(store, q.db(), q.table());
         if (q.projection() instanceof Statement.Projection.Count && q.groupBy().isEmpty() && q.having() == null) {
+            if (q.where() == null) {
+                // Kept with every change, so counting a table does not visit its rows.
+                return new Result.Rows(List.of("count"), List.of(List.<Object>of(store.visibleRows(q.db(), q.table()))),
+                        false);
+            }
             long[] n = {0};
             scan(store, q.db(), q.table(), q.where(), (id, row) -> {
                 if (matches(q.where(), id, row)) {
