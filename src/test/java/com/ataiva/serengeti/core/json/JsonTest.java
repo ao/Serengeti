@@ -65,6 +65,16 @@ class JsonTest {
     }
 
     @Test
+    void unicodeEscapesTakeAsciiHexDigitsOnly() {
+        assertEquals("Aéé", Json.parse("\"\\u0041\\u00e9\\u00E9\""));
+        // Full-width, Arabic-Indic and Devanagari digits, which Character.digit accepts.
+        for (String digits : new String[] {"００４１", "٠٠٤١", "००४१",
+            "00ＡＡ"}) {
+            assertThrows(JsonException.class, () -> Json.parse("\"\\u" + digits + "\""), digits);
+        }
+    }
+
+    @Test
     void rejectsDeepNesting() {
         String deep = "[".repeat(Json.MAX_DEPTH + 1) + "]".repeat(Json.MAX_DEPTH + 1);
         assertThrows(JsonException.class, () -> Json.parse(deep));
