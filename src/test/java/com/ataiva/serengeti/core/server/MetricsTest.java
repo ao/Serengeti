@@ -127,11 +127,50 @@ class MetricsTest {
         assertEquals(12, before.value("serengeti_changes_held"));
         assertEquals(3400, before.value("serengeti_changes_bytes"));
         assertEquals(3, before.value("serengeti_http_request_duration_seconds_count", "route", "/v1/status"));
+        // A node without peers: ready (no readiness check fails), a cluster of one that is its own majority.
+        assertEquals(1, before.value("serengeti_ready"));
+        assertEquals(0, before.value("serengeti_disk_failed"));
+        assertEquals(1, before.value("serengeti_cluster_nodes"));
+        assertEquals(1, before.value("serengeti_cluster_reachable_nodes"));
+        assertEquals(1, before.value("serengeti_cluster_quorum"));
+        assertEquals(1, before.value("serengeti_cluster_caught_up"));
+        assertEquals(0, before.value("serengeti_cluster_stale"));
+        assertEquals(0, before.value("serengeti_sync_ops_pulled_total"));
 
         assertEquals(200, send("GET", "/health", null, null).statusCode());
         Exposition after = settled(7);
         assertEquals(2, after.value("serengeti_http_requests_total", "route", "/health", "code", "200"));
         assertTrue(after.value("serengeti_http_requests_total", "route", "/metrics", "code", "200") >= 1);
+    }
+
+    @Test
+    void clusterAndReadinessGaugesComeFromTheNode() throws Exception {
+        api.close();
+        NodeOps clustered = new NodeOps() {
+            @Override
+            public NodeOps.Gauges gauges() {
+                return new NodeOps.Gauges(0, 0, 0, 0, 0, 0, 0, false, 0, 0, true,
+                        new NodeOps.Cluster(5, 2, 3, false, true, 42));
+            }
+
+            @Override
+            public List<java.util.function.BooleanSupplier> readiness() {
+                return List.of(() -> true, () -> false);
+            }
+        };
+        api = HttpApi.start("127.0.0.1", 0, new HttpApi.Deps(users, new AtomicReference<>(SetupToken.create(dir)),
+                (q, r) -> Map.of("echo", q), () -> Map.of("node", "test"), now::get, clustered));
+        setUp();
+        Exposition e = scrape();
+        assertEquals(0, e.value("serengeti_ready"));
+        assertEquals(503, send("GET", "/ready", null, null).statusCode(), "the gauge and /ready agree");
+        assertEquals(1, e.value("serengeti_disk_failed"));
+        assertEquals(5, e.value("serengeti_cluster_nodes"));
+        assertEquals(2, e.value("serengeti_cluster_reachable_nodes"));
+        assertEquals(3, e.value("serengeti_cluster_quorum"));
+        assertEquals(0, e.value("serengeti_cluster_caught_up"));
+        assertEquals(1, e.value("serengeti_cluster_stale"));
+        assertEquals(42, e.value("serengeti_sync_ops_pulled_total"));
     }
 
     @Test

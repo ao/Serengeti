@@ -66,7 +66,23 @@ public interface NodeOps {
      * start, so they are counters; the others are gauges.
      */
     record Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases, long conflicts,
-            long dataBytes, long dataBudget, boolean memoryFull, long changesHeld, long changesBytes) {
+            long dataBytes, long dataBudget, boolean memoryFull, long changesHeld, long changesBytes,
+            boolean diskFailed, Cluster cluster) {
         public static final Gauges ZERO = new Gauges(0, 0, 0, 0, 0, 0, 0, false, 0, 0);
+
+        /** A node without peers, on a disk that has not failed. */
+        public Gauges(long walBytes, long walFsyncs, long walFsyncNanos, long databases, long conflicts,
+                long dataBytes, long dataBudget, boolean memoryFull, long changesHeld, long changesBytes) {
+            this(walBytes, walFsyncs, walFsyncNanos, databases, conflicts, dataBytes, dataBudget, memoryFull,
+                    changesHeld, changesBytes, false, Cluster.SINGLE);
+        }
+    }
+
+    /**
+     * The cluster as this node sees it. {@code nodes}, {@code reachable} and {@code quorum} count this node;
+     * {@code syncOpsPulled} counts row versions pulled from peers since start, so it is a counter.
+     */
+    record Cluster(int nodes, int reachable, int quorum, boolean caughtUp, boolean stale, long syncOpsPulled) {
+        public static final Cluster SINGLE = new Cluster(1, 1, 1, true, false, 0);
     }
 }

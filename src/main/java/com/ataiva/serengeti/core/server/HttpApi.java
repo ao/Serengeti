@@ -274,7 +274,7 @@ public final class HttpApi implements AutoCloseable {
             }
             case "/metrics" -> {
                 requireMethod(method, "GET");
-                send(ex, 200, Metrics.CONTENT_TYPE, metrics.render(deps.ops().gauges())
+                send(ex, 200, Metrics.CONTENT_TYPE, metrics.render(deps.ops().gauges(), ready())
                         .getBytes(StandardCharsets.UTF_8));
             }
             case "/v1/backup" -> {

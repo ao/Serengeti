@@ -74,12 +74,32 @@ final class Metrics {
         loginLimited++;
     }
 
-    synchronized String render(NodeOps.Gauges g) {
+    synchronized String render(NodeOps.Gauges g, boolean ready) {
         StringBuilder b = new StringBuilder();
         family(b, "serengeti_build_info", "gauge", "The version of the running node.");
         b.append("serengeti_build_info{version=\"").append(escape(Version.current())).append("\"} 1\n");
         family(b, "serengeti_start_time_seconds", "gauge", "Unix time at which the node started.");
         sample(b, "serengeti_start_time_seconds", startSeconds);
+        family(b, "serengeti_ready", "gauge", "1 while GET /ready answers 200.");
+        sample(b, "serengeti_ready", ready ? 1 : 0);
+        family(b, "serengeti_disk_failed", "gauge",
+                "1 after a write to disk failed: the node serves nothing from its data until it is restarted.");
+        sample(b, "serengeti_disk_failed", g.diskFailed() ? 1 : 0);
+        NodeOps.Cluster c = g.cluster();
+        family(b, "serengeti_cluster_nodes", "gauge", "Nodes in the cluster, this one included (1 without peers).");
+        sample(b, "serengeti_cluster_nodes", c.nodes());
+        family(b, "serengeti_cluster_reachable_nodes", "gauge",
+                "Nodes that answered this one in the last 3 seconds, this one included.");
+        sample(b, "serengeti_cluster_reachable_nodes", c.reachable());
+        family(b, "serengeti_cluster_quorum", "gauge", "Nodes that make a majority: majority writes and reads need this many reachable.");
+        sample(b, "serengeti_cluster_quorum", c.quorum());
+        family(b, "serengeti_cluster_caught_up", "gauge", "1 once this node has synced with a majority since it started (1 without peers).");
+        sample(b, "serengeti_cluster_caught_up", c.caughtUp() ? 1 : 0);
+        family(b, "serengeti_cluster_stale", "gauge",
+                "1 if this node was away longer than tombstone_ttl_hours: it neither syncs nor takes writes.");
+        sample(b, "serengeti_cluster_stale", c.stale() ? 1 : 0);
+        family(b, "serengeti_sync_ops_pulled_total", "counter", "Row versions this node pulled from its peers while syncing.");
+        sample(b, "serengeti_sync_ops_pulled_total", c.syncOpsPulled());
         family(b, "serengeti_http_requests_total", "counter", "Requests answered, by route and status code.");
         requests.forEach((r, n) -> b.append("serengeti_http_requests_total{route=\"").append(escape(r.route()))
                 .append("\",code=\"").append(r.code()).append("\"} ").append(n).append('\n'));

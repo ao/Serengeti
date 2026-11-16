@@ -202,6 +202,14 @@ sleep 5
 st3=$(docker exec "$RUN-client" curl -s --max-time 5 --cacert /tmp/ca.pem -u "admin:$PW" https://c3:1985/v1/status)
 case "$st3" in *'"reachable":1,'*) ok "the partition is real: n3 reaches no peer" ;;
   *) bad "partition" "n3 still reaches peers: $st3" ;; esac
+metric() { # i name -> the value of an unlabelled sample on node i
+  docker exec "$RUN-client" curl -s --max-time 5 --cacert /tmp/ca.pem -u "admin:$PW" "https://c$1:1985/metrics" \
+    | awk -v n="$2" '$1 == n {print $2}'
+}
+expect "the cut-off node's metrics say one node of three is reachable" "1 3 2 0" \
+  "$(metric 3 serengeti_cluster_reachable_nodes) $(metric 3 serengeti_cluster_nodes) $(metric 3 serengeti_cluster_quorum) $(metric 3 serengeti_ready)"
+expect "and the majority side's say two reachable, and ready" "2 2 1 1" \
+  "$(metric 1 serengeti_cluster_reachable_nodes) $(metric 2 serengeti_cluster_reachable_nodes) $(metric 1 serengeti_ready) $(metric 2 serengeti_ready)"
 minority=$(q 3 "INSERT INTO d.t (_id) VALUES ('minority')")
 expect "write on the minority side (n3) is 503" 503 "$minority"
 if [ "$minority" != 503 ]; then

@@ -60,8 +60,19 @@ Needs Basic credentials of any account. The body is Prometheus text format 0.0.4
 | `serengeti_memory_full` | gauge | 1 while writes that add data are refused (`memory_limit_percent`). |
 | `serengeti_changes_held` | gauge | Changes the feed holds for `GET /v1/changes` (`changes_buffer`, fewer when they are large). |
 | `serengeti_changes_bytes` | gauge | Estimated heap bytes of the changes the feed holds, at most a sixteenth of the heap. |
+| `serengeti_ready` | gauge | 1 while `GET /ready` answers 200. |
+| `serengeti_disk_failed` | gauge | 1 after a write to disk failed; the node serves nothing from its data until it is restarted. |
+| `serengeti_cluster_nodes` | gauge | Nodes in the cluster, this one included; 1 without peers. |
+| `serengeti_cluster_reachable_nodes` | gauge | Nodes that answered this one in the last 3 seconds, this one included. |
+| `serengeti_cluster_quorum` | gauge | Nodes that make a majority. Majority writes and reads get 503 while fewer are reachable. |
+| `serengeti_cluster_caught_up` | gauge | 1 once this node has synced with a majority since it started; 1 without peers. |
+| `serengeti_cluster_stale` | gauge | 1 if the node was away longer than `tombstone_ttl_hours`: it neither syncs nor takes writes (see [CONSISTENCY.md](CONSISTENCY.md)). |
+| `serengeti_sync_ops_pulled_total` | counter | Row versions this node pulled from its peers while syncing. |
 | `serengeti_build_info{version}` | gauge | Always 1. |
 | `serengeti_start_time_seconds` | gauge | Unix time at which the node started. |
+
+[examples/monitoring/](../examples/monitoring/) has Prometheus alert rules and a Grafana dashboard for
+these series.
 
 `route` is one of the paths in the table at the top of this page, or `other` for any other path. No series is
 labelled with a user name, an address or query text. Rows are not counted: that would scan every table on each

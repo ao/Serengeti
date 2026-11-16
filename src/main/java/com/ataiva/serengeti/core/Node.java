@@ -308,9 +308,12 @@ public final class Node implements AutoCloseable {
                 long[] counts = storage.read(s -> new long[] {s.databases().size(), s.conflicts(), s.weight()});
                 com.ataiva.serengeti.core.storage.ChangeFeed f = storage.changes();
                 long[] feed = f == null ? new long[2] : f.held();
+                NodeOps.Cluster c = cluster == null ? NodeOps.Cluster.SINGLE
+                        : new NodeOps.Cluster(cluster.size(), cluster.reachable(), cluster.quorum(),
+                                cluster.caughtUp(), cluster.stale(), cluster.pulledOps());
                 return new NodeOps.Gauges(wal.bytes(), wal.fsyncs(), wal.fsyncNanos(), counts[0], counts[1],
                         counts[2], memory == null ? 0 : memory.budget(), memory != null && counts[2] >= memory.budget(),
-                        feed[0], feed[1]);
+                        feed[0], feed[1], storage.failed(), c);
             }
         };
     }
