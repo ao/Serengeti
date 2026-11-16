@@ -152,7 +152,7 @@ Fixes #123
 
 ### Test Categories
 
-Serengeti has four kinds of test:
+The main kinds of test:
 
 1. Unit and property tests (`src/test/java`, JUnit 5 and jqwik): `mvn verify`, on Java 17 and 21.
 2. Container tests (`tests/container/run.sh`): the image is started on a private Docker network and
@@ -160,8 +160,13 @@ Serengeti has four kinds of test:
    image as `serengeti:it` unless `SKIP_BUILD=1` is set.
 3. Quick start (`docs/quickstart.sh`): runs the commands in the README's Quick start section.
 4. Examples (`examples/run.sh`): runs the curl, Python and JavaScript clients in their own containers.
+5. Conformance and limits (`tests/edge/run.sh`): HTTP and query-language edge cases, concurrent DDL and
+   DML on the same objects, restarts and `kill -9` during writes, backup and restore with indexes and
+   conflicts, and a few thousand statements generated from the grammar. The client is a
+   `python:3.12-alpine` container. The generator prints its seed, and `FUZZ_SEED=N` replays a run.
+   Checks for bugs that are known and reported print `xfail`; they are listed in `tests/edge/common.py`.
 
-Everything except the unit tests needs Docker. CI runs all four.
+Everything except the unit tests needs Docker. CI runs all of them.
 
 ### Writing Tests
 

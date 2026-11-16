@@ -61,6 +61,16 @@ jobs:
       - name: Kill, partition and slow-disk tests on 3 nodes
         run: SKIP_BUILD=1 IMAGE=serengeti:cluster tests/cluster/run.sh
 
+  edge:
+    name: Conformance and limits (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t serengeti:edge .
+      - name: HTTP and query language edges, concurrency, kill -9, backup and restore, generated statements
+        run: SKIP_BUILD=1 IMAGE=serengeti:edge tests/edge/run.sh
+
   upgrade:
     name: Upgrade from 2.0.0
     runs-on: ubuntu-24.04
