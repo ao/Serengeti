@@ -485,7 +485,11 @@ public final class HttpApi implements AutoCloseable {
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] buf = new byte[8192];
-        try (InputStream in = ex.getRequestBody()) {
+        // Not try-with-resources: after a failed read the JDK's request stream throws the same exception
+        // again from close(), and adding an exception to itself as suppressed throws IllegalArgumentException,
+        // which became a 500. The exchange closes the stream.
+        InputStream in = ex.getRequestBody();
+        try {
             int n;
             while ((n = in.read(buf)) > 0) {
                 if (out.size() + n > max) {
@@ -493,6 +497,10 @@ public final class HttpApi implements AutoCloseable {
                 }
                 out.write(buf, 0, n);
             }
+        } catch (IOException e) {
+            // A malformed chunked body, a chunked trailer (which the JDK cannot read), or a client that went
+            // away mid-body; the last one never sees the answer.
+            throw new HttpError(400, "the request body could not be read");
         }
         return out.toByteArray();
     }

@@ -370,6 +370,31 @@ class HttpApiTest {
     }
 
     @Test
+    /** These were 500s: the failed read's exception was thrown again by close() and added to itself. */
+    @Test
+    void aBodyThatCannotBeReadIs400() throws Exception {
+        setUp();
+        for (String chunks : List.of("zz\r\n{}\r\n0\r\n\r\n", "1\r\n{}\r\n0\r\n\r\n", "2\r\n{}\r\n0\r\nX-Trailer: 1\r\n\r\n")) {
+            try (java.net.Socket s = new java.net.Socket("127.0.0.1", api.address().getPort())) {
+                s.setSoTimeout(10_000);
+                s.getOutputStream().write(("POST /v1/query HTTP/1.1\r\nHost: x\r\nAuthorization: " + basic("admin", PASSWORD)
+                        + "\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n" + chunks)
+                        .getBytes(StandardCharsets.UTF_8));
+                java.io.BufferedReader in = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8));
+                String status = in.readLine();
+                assertTrue(status != null && status.startsWith("HTTP/1.1 400 "), chunks + " -> " + status);
+                String line;
+                while ((line = in.readLine()) != null && !line.isEmpty()) {
+                    // headers
+                }
+                assertEquals("{\"error\":\"the request body could not be read\"}", in.readLine(), chunks);
+            }
+        }
+        assertEquals(200, call("GET /v1/status", "admin", PASSWORD).statusCode());
+    }
+
+    @Test
     void listensOnLoopbackOnly() {
         assertTrue(api.address().getAddress().isLoopbackAddress());
     }
