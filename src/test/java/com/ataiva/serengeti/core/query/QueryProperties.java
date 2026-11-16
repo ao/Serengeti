@@ -98,7 +98,8 @@ class QueryProperties {
                 "AND", "OR", "NOT", "(", ")", ",", ";", "'", "''", "'x'", "1", "-1", "1.5e3", "1e999", "1.",
                 "99999999999999999999", "NULL", "IS", "TRUE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
                 "DELETE", "CREATE", "DROP", "DATABASE", "TABLE", "IF", "EXISTS", "SHOW", "TABLES", "IN",
-                "ORDER", "BY", "DESC", "LIMIT", "COUNT", "--", "\n", " ", ".", "!", "x".repeat(70), "é");
+                "ORDER", "BY", "DESC", "LIMIT", "COUNT", "--", "\n", " ", ".", "!", "x".repeat(70), "é",
+                "LIKE", "GROUP", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\'", "'\\%_'", "%", "_", "\\", "IN (1, 2)");
     }
 
     @Provide
@@ -137,7 +138,13 @@ class QueryProperties {
         Arbitrary<Expr> compare = Combinators.combine(names(), Arbitraries.of(Expr.Cmp.class), literals())
                 .as(Expr.Compare::new);
         Arbitrary<Expr> isNull = Combinators.combine(names(), Arbitraries.of(true, false)).as(Expr.IsNull::new);
-        Arbitrary<Expr> leaf = Arbitraries.oneOf(compare, isNull);
+        Arbitrary<Expr> in = Combinators.combine(names(), literals().list().ofMinSize(1).ofMaxSize(4),
+                Arbitraries.of(true, false)).as(Expr.In::new);
+        Arbitrary<String> pattern = Arbitraries.of("a", "%", "_", "\\%", "\\_", "\\\\", "'", "é", "Z", "--")
+                .list().ofMaxSize(5).map(l -> String.join("", l));
+        Arbitrary<Expr> like = Combinators.combine(names(), pattern, Arbitraries.of(true, false))
+                .as((c, p, neg) -> new Expr.Like(c, p, neg));
+        Arbitrary<Expr> leaf = Arbitraries.oneOf(compare, isNull, in, like);
         if (depth == 0) {
             return leaf;
         }
@@ -158,10 +165,59 @@ class QueryProperties {
                 .as(Statement.OrderBy::new).injectNull(0.5);
         Arbitrary<Long> limit = Arbitraries.oneOf(Arbitraries.longs().between(0, 20),
                 Arbitraries.longs().between(0, Long.MAX_VALUE)).injectNull(0.5);
-        return Combinators.combine(names(), names(), projection, exprs(3).injectNull(0.3), order, limit)
+        Arbitrary<Statement> plain = Combinators.combine(names(), names(), projection, exprs(3).injectNull(0.3), order, limit)
                 .as((db, t, p, w, o, l) -> p instanceof Statement.Projection.Count
                         ? new Statement.Select(db, t, p, w, null, null)
                         : new Statement.Select(db, t, p, w, o, l));
+        return Arbitraries.oneOf(plain, grouped());
+    }
+
+    /** SELECTs with aggregates or GROUP BY that follow the rules: built so, not filtered. */
+    private static Arbitrary<Statement> grouped() {
+        Arbitrary<Statement.Item.Aggregate> agg = Arbitraries.oneOf(Arbitraries.just(Statement.Item.Aggregate.COUNT_ALL),
+                Combinators.combine(Arbitraries.of(Statement.Fn.class), names()).as(Statement.Item.Aggregate::new));
+        Arbitrary<Long> limit = Arbitraries.longs().between(0, 20).injectNull(0.5);
+        Arbitrary<Object[]> parts = Combinators.combine(names(), names(),
+                names().list().uniqueElements().ofMaxSize(3), agg.list().ofMaxSize(3),
+                Arbitraries.integers().between(0, 1023), exprs(2).injectNull(0.4), limit)
+                .as((db, t, by, aggs, pick, w, l) -> new Object[] {db, t, by, aggs, pick, w, l});
+        return parts.map(a -> {
+            @SuppressWarnings("unchecked")
+            List<String> by = (List<String>) a[2];
+            @SuppressWarnings("unchecked")
+            List<Statement.Item.Aggregate> aggs = (List<Statement.Item.Aggregate>) a[3];
+            int pick = (Integer) a[4];
+            List<Statement.Item> items = new ArrayList<>();
+            for (int i = 0; i < by.size(); i++) {
+                if ((pick >> i & 1) == 1) {
+                    items.add(new Statement.Item.Column(by.get(i)));
+                }
+            }
+            List<Statement.Item.Aggregate> ordered = new ArrayList<>(aggs);
+            if ((pick & 8) == 8) {
+                java.util.Collections.reverse(ordered);
+            }
+            items.addAll(ordered);
+            if (items.isEmpty()) {
+                items.add(by.isEmpty() ? Statement.Item.Aggregate.COUNT_ALL : new Statement.Item.Column(by.get(0)));
+            }
+            Statement.Projection p = items.equals(List.of(Statement.Item.Aggregate.COUNT_ALL))
+                    ? new Statement.Projection.Count()
+                    : items.stream().allMatch(i -> i instanceof Statement.Item.Column)
+                            ? new Statement.Projection.Columns(items.stream().map(i -> ((Statement.Item.Column) i).name()).toList())
+                            : new Statement.Projection.Items(items);
+            if (by.isEmpty()) {
+                return new Statement.Select((String) a[0], (String) a[1], p, (Expr) a[5], List.of(), null, null);
+            }
+            Statement.OrderBy o = null;
+            if ((pick & 16) == 16) {
+                List<Statement.Item> keys = new ArrayList<>();
+                by.forEach(c -> keys.add(new Statement.Item.Column(c)));
+                items.stream().filter(i -> i instanceof Statement.Item.Aggregate).forEach(keys::add);
+                o = new Statement.OrderBy(keys.get((pick >> 5) % keys.size()), (pick & 4) == 4);
+            }
+            return new Statement.Select((String) a[0], (String) a[1], p, (Expr) a[5], by, o, (Long) a[6]);
+        });
     }
 
     private static Arbitrary<Statement> inserts() {

@@ -22,8 +22,11 @@ import net.jqwik.api.Provide;
  */
 class IndexProperties {
     static final List<Object> VALUES = List.of(1L, 2L, 3L, 1.0, 2.5, -1L, 9007199254740993L, 9007199254740992.0,
-            "a", "b", "B", "", true, false, Map.of("x", 1L), List.of(1L));
+            "a", "b", "B", "", true, false, Map.of("x", 1L), List.of(1L), "ab", "a" + Character.MAX_VALUE,
+            String.valueOf(Character.MAX_VALUE));
     static final List<String> OPS = List.of("=", "<", "<=", ">", ">=");
+    /** U+FFFF, the last UTF-16 code unit: a prefix that ends in it has no next string to stop at. */
+    static final String TOP = String.valueOf(Character.MAX_VALUE);
 
     /** What the query language says for {@code v op lit}: true only for comparable, non-null values. */
     static boolean holds(Object v, String op, Object lit) {
@@ -72,7 +75,72 @@ class IndexProperties {
                     assertEquals(true, s.indexEstimate("a", "t", column, op, lit) >= got.size(), "estimate is an upper bound");
                 }
             }
+            // Any of several values: the union of the = lookups. A prefix: the strings that start with it.
+            List<Store.Lookup> more = new ArrayList<>();
+            more.add(new Store.Lookup.AnyOf(java.util.Arrays.asList(1L, 1.0, "a", null, true)));
+            more.add(new Store.Lookup.AnyOf(List.of("1", "9", "2", "1", 3L)));
+            more.add(new Store.Lookup.AnyOf(VALUES.subList(0, 8)));
+            for (String p : List.of("", "a", "B", "1", "x", TOP, "a" + TOP)) {
+                more.add(new Store.Lookup.Prefix(p));
+            }
+            for (Store.Lookup l : more) {
+                SortedSet<String> got = s.indexLookup("a", "t", column, l);
+                List<String> streamed = new ArrayList<>();
+                boolean used = s.forEachIndexed("a", "t", column, l, (id, row) -> streamed.add(id));
+                if (got == null) {
+                    assertEquals(false, used);
+                    continue;
+                }
+                SortedSet<String> want = new TreeSet<>();
+                s.forEachRow("a", "t", (id, row) -> {
+                    Object v = column.equals("_id") ? id : row.get(column);
+                    boolean hit = l instanceof Store.Lookup.Prefix p
+                            ? v instanceof String str && str.startsWith(p.prefix())
+                            : ((Store.Lookup.AnyOf) l).values().stream().anyMatch(x -> holds(v, "=", x));
+                    if (hit) {
+                        want.add(id);
+                    }
+                });
+                assertEquals(want, got, column + " " + l);
+                assertEquals(true, used);
+                assertEquals(new ArrayList<>(got), streamed, "in id order, once each: " + column + " " + l);
+                assertEquals(true, s.indexEstimate("a", "t", column, l) >= got.size(), "an upper bound: " + l);
+                List<String> firstTwo = new ArrayList<>();
+                s.forEachIndexedWhile("a", "t", column, l, (id, row) -> firstTwo.add(id) && firstTwo.size() < 2);
+                assertEquals(streamed.subList(0, Math.min(2, streamed.size())), firstTwo, "stops when told: " + l);
+            }
         }
+    }
+
+    @Property(tries = 200)
+    void prefixEndBoundsExactlyTheStringsWithThePrefix(@ForAll("prefixy") String p, @ForAll("prefixy") String s) {
+        String end = Store.prefixEnd(p);
+        boolean inRange = s.compareTo(p) >= 0 && (end == null || s.compareTo(end) < 0);
+        assertEquals(s.startsWith(p), inRange, p + " / " + s + " / " + end);
+    }
+
+    @Provide
+    Arbitrary<String> prefixy() {
+        return Arbitraries.of("a", "b", TOP, String.valueOf((char) (Character.MAX_VALUE - 1)), "", "z").list()
+                .ofMaxSize(4).map(l -> String.join("", l));
+    }
+
+    @Property(tries = 300)
+    void mergedSetsGiveTheirSortedUnion(@ForAll("idSets") List<List<String>> sets) {
+        List<SortedSet<String>> sorted = new ArrayList<>();
+        SortedSet<String> union = new TreeSet<>();
+        for (List<String> l : sets) {
+            sorted.add(new TreeSet<>(l));
+            union.addAll(l);
+        }
+        List<String> got = new ArrayList<>();
+        Store.merged(sorted).forEach(got::add);
+        assertEquals(new ArrayList<>(union), got);
+    }
+
+    @Provide
+    Arbitrary<List<List<String>>> idSets() {
+        return Arbitraries.of("a", "b", "c", "d", "e", "aa", "").list().ofMaxSize(5).list().ofMaxSize(6);
     }
 
     @Property(tries = 1000)
