@@ -125,6 +125,10 @@ public final class Executor {
         }
         if (s instanceof Statement.DropIndex d) {
             return engine.update(store -> {
+                // As with DROP TABLE IF EXISTS: no table means no index, so nothing to do.
+                if (d.ifExists() && !store.tableExists(d.db(), d.table())) {
+                    return none();
+                }
                 requireTable(store, d.db(), d.table());
                 if (!store.indexExists(d.db(), d.table(), d.column())) {
                     if (d.ifExists()) {

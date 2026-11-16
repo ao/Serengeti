@@ -33,13 +33,27 @@ GitHub release notes and tags.
   `;`, or at the end of a line once it is complete. In a node's container, `docker exec -it NAME serengeti
   shell` reaches that node, trusting its own certificate, and signs in as admin with
   `SERENGETI_ADMIN_PASSWORD` when it is set.
+- `tests/edge/run.sh`, a conformance and limits suite for the HTTP API and the query language: about 900
+  checks plus 5,000 generated statements per run, concurrency, kill -9 and backup cases. It found the bugs
+  listed under Fixed; CI runs it.
 
 ### Fixed
 - Nothing stopped a second node from opening a data directory in use, for example a second container on the
   same volume, and both would write the same log. A node now holds a lock on `data_dir/lock` while it runs;
   a second one stops with exit status 2 and says the directory is in use. `serengeti restore` takes the
   lock too. On a file system without locks, the node logs a warning and starts.
-
+- A string holding an unpaired UTF-16 surrogate (`'\ud800'`) was accepted and stored as `?`, so two such
+  `_id`s became one row after a restart. JSON with an unpaired surrogate is now refused with 400.
+- A request body that is not valid UTF-8 was stored with U+FFFD in place of the bad bytes; it is now 400.
+  `\u` escapes take ASCII hex digits only (full-width digits were accepted).
+- A request body that could not be read (a malformed chunked body, a chunked trailer) gave 500; it is 400.
+- Any method on a path that is not a route is 404 (was 405), and a 405 names the allowed methods in
+  `Allow`.
+- `DROP INDEX IF EXISTS` on a table or database that does not exist answers 0 affected, as `DROP TABLE IF
+  EXISTS` does (was 400).
+- The node served 16 requests at a time, so 16 clients sending slowly held every thread; it now serves 64,
+  and threads stop when idle. A client that stalls is still dropped after 30 s. README, "When not to use
+  it", says to put a buffering proxy in front of a node that untrusted networks reach.
 ### Changed
 - The image uses G1 and gives the heap 60% of the container's memory (was 75%), leaving room for the log's
   page cache: at 75% a container filling with data was killed by the kernel before the heap was full.

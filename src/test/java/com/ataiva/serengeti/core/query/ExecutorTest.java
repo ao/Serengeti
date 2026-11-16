@@ -388,6 +388,9 @@ class ExecutorTest {
         assertEquals(List.of(List.of("r1000")), rows("SELECT _id FROM shop.items WHERE qty = '0'").rows());
         assertEquals(1, affected("DROP INDEX ON shop.items (qty)"));
         assertEquals(0, affected("DROP INDEX IF EXISTS ON shop.items (qty)"));
+        assertEquals(0, affected("DROP INDEX IF EXISTS ON shop.missing (qty)"), "like DROP TABLE IF EXISTS");
+        assertEquals(0, affected("DROP INDEX IF EXISTS ON nodb.missing (qty)"));
+        assertTrue(fails("DROP INDEX ON shop.missing (qty)").getMessage().contains("does not exist"));
         assertEquals("'shop.items' has no index on qty", fails("DROP INDEX ON shop.items (qty)").getMessage());
         assertEquals(List.of(), rows("SHOW INDEXES IN shop.items").rows());
         assertEquals(List.of(List.of("r1003")), rows("SELECT _id FROM shop.items WHERE qty = 10").rows());

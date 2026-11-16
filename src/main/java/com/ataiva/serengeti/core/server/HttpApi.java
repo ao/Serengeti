@@ -20,7 +20,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
@@ -84,11 +83,17 @@ public final class HttpApi implements AutoCloseable {
         this.server = server;
         this.deps = deps;
         this.limiter = new LoginLimiter(deps.clock());
-        this.pool = Executors.newFixedThreadPool(16, r -> {
-            Thread t = new Thread(r, "http");
-            t.setDaemon(true);
-            return t;
-        });
+        // The JDK server reads a request's headers and body on these threads, so a client that sends slowly
+        // holds one until it finishes or the node's request time limit (30 s, Serengeti.main) closes it.
+        // Threads are started as needed and stop after a minute idle.
+        java.util.concurrent.ThreadPoolExecutor p = new java.util.concurrent.ThreadPoolExecutor(THREADS, THREADS,
+                60, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
+                    Thread t = new Thread(r, "http");
+                    t.setDaemon(true);
+                    return t;
+                });
+        p.allowCoreThreadTimeOut(true);
+        this.pool = p;
         server.setExecutor(pool);
         server.createContext("/", this::handle);
     }
@@ -399,8 +404,11 @@ public final class HttpApi implements AutoCloseable {
         }
     }
 
-    /** At most this many /v1/changes requests wait at once; the rest answer at once (the pool has 16 threads). */
-    static final int MAX_WAITING = 8;
+    /** Request threads. */
+    static final int THREADS = 64;
+
+    /** At most this many /v1/changes requests wait at once; the rest answer at once. Half the threads stay free. */
+    static final int MAX_WAITING = THREADS / 2;
     private final java.util.concurrent.atomic.AtomicInteger waiting = new java.util.concurrent.atomic.AtomicInteger();
 
     /**

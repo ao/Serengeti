@@ -179,6 +179,9 @@ kept-alive connection, and 2.1 sets it itself.
 - You need more than 7 nodes, or nodes that hold only part of the data.
 - You need permissions per database or table: an account's role (read, write or admin) applies to all of
   them.
+- Clients you do not trust can reach the node directly. It serves 64 requests at a time, and a client that
+  sends its request slowly holds one of them for up to 30 s, so 64 such connections, renewed, stall it. Put
+  a proxy that buffers requests (nginx, Caddy, HAProxy) in front of a node that untrusted networks reach.
 
 ## Security defaults
 

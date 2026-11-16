@@ -21,9 +21,6 @@ STRICT = os.environ.get("EDGE_STRICT") == "1"
 # does not fail the run (unless EDGE_STRICT=1); a known failure that passes prints "XPASS" and fails the run,
 # so the entry is removed once the bug is fixed.
 KNOWN = {
-    "with 20 clients stalled mid-body, another client's query is answered":
-        "the HTTP server has 16 request threads and no read timeout, so clients that stop sending a body hold "
-        "them all and every other request waits",
     "chunked body, a trailer":
         "the JDK HTTP server cannot read chunked trailer fields (RFC 9112 section 7.1.2), so the read fails; "
         "the node answers 400 'the request body could not be read'",

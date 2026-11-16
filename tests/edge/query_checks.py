@@ -272,7 +272,7 @@ def statements(c):
             ("CREATE INDEX on _id", "CREATE INDEX ON q.t (_id)", 400, "_id needs no index"),
             ("DROP INDEX that does not exist", "DROP INDEX ON q.t (nosuch)", 400, "has no index"),
             ("DROP INDEX IF EXISTS that does not exist", "DROP INDEX IF EXISTS ON q.t (nosuch)", 0, None),
-            ("DROP INDEX IF EXISTS on a missing table", "DROP INDEX IF EXISTS ON q.nosuch (a)", 400, "does not exist"),
+            ("DROP INDEX IF EXISTS on a missing table", "DROP INDEX IF EXISTS ON q.nosuch (a)", 0, None),
             ("SHOW TABLES IN a missing database", "SHOW TABLES IN nosuchdb", 400, "does not exist"),
             ("SHOW INDEXES IN a missing table", "SHOW INDEXES IN q.nosuch", 400, "does not exist"),
             ("SHOW TABLES without IN", "SHOW TABLES", 400, None),

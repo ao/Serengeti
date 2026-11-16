@@ -271,22 +271,42 @@ def run(host):
     time.sleep(1)
     ok_all = all(c.q("SHOW DATABASES")[0] == 200 for _ in range(20))
     check("after 40 clients left mid-body, queries are answered", ok_all, "")
-    # Clients that stop mid-body and stay connected, more of them than the node has request threads (16).
-    stalled = []
-    for _ in range(20):
-        cn = Conn(host)
-        cn.send(b"POST /v1/query HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{")
-        stalled.append(cn)
-    time.sleep(1)
-    t0 = time.time()
-    probe = Client(host, timeout=10)
-    st = probe.q("SHOW DATABASES")[0]
-    probe.close()
-    check("with 20 clients stalled mid-body, another client's query is answered",
-          st == 200, f"status {st} after {time.time() - t0:.1f} s")
+    # Clients that stop mid-body and stay connected each hold one of the node's 64 request threads, until the
+    # node's request time limit (30 s) drops them.
+    def stall(n):
+        conns = []
+        for _ in range(n):
+            cn = Conn(host)
+            cn.send(b"POST /v1/query HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                    b"Content-Length: 100\r\n\r\n{")
+            conns.append(cn)
+        time.sleep(1)
+        return conns
+
+    def probe(timeout):
+        t0 = time.time()
+        c = Client(host, timeout=timeout)
+        try:
+            return c.q("SHOW DATABASES")[0], time.time() - t0
+        except OSError as e:
+            return repr(e), time.time() - t0
+        finally:
+            c.close()
+
+    stalled = stall(20)
+    st, took = probe(10)
+    check("with 20 clients stalled mid-body, another client's query is answered", st == 200 and took < 5,
+          f"status {st} after {took:.1f} s")
     for cn in stalled:
         cn.close()
     expect("and once they leave, the node answers", 200, Client(host).q("SHOW DATABASES")[0])
+    stalled = stall(70)
+    time.sleep(5)  # so the probe starts well after them, and is not itself near the 30 s limit when they go
+    st, took = probe(60)
+    check("with 70 stalled (more than the threads), a query waits until the node drops them at 30 s",
+          st == 200 and 15 < took < 40, f"status {st} after {took:.1f} s")
+    for cn in stalled:
+        cn.close()
 
     section("Origin")
     for label, origin, want in [("another site", "http://evil.example", 403), ("null", "null", 403),

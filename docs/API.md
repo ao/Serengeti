@@ -171,7 +171,7 @@ from the cursor. A change can then arrive for a row the SELECT already showed; a
 
 A node keeps its last `changes_buffer` changes (10,000 by default) in memory, from when it started. A
 cursor from before a restart, from another node, or older than what the node still holds gets 410: read
-the table again and follow from `after=now`. Cursors belong to the node that gave them. At most 8 requests
+the table again and follow from `after=now`. Cursors belong to the node that gave them. At most 32 requests
 wait at once; more answer at once, with whatever there is.
 
 ## Accounts
@@ -208,6 +208,11 @@ the 2.2 nodes only.
 Errors have a status code and a body of the form `{"error": "message"}`. The message never
 contains a stack trace; unexpected failures say `internal error` and are logged by the node. The
 clients in [examples/](../examples/) print the message and exit non-zero.
+
+One exception: a request the HTTP server cannot parse at all (a malformed request line, a header
+without a colon, a Content-Length that is not a number) gets the server's own 400 with no JSON body,
+and a request whose headers are too large has its connection closed. Such a request never reaches
+Serengeti's code.
 
 | Status | When |
 |---|---|
