@@ -26,25 +26,29 @@ console.log(r.objects());
 for await (const change of db.follow("shop", { table: "items" })) console.log(change);
 ```
 
-Both have the same parts:
+Both have the same parts. Python takes the optional arguments by position or name; JavaScript takes them
+in an object, `query(statement, { ack, consistency })`, and ignores anything else in that place (a bare
+`"local"` sends no `ack`).
 
 - `query(statement, ack, consistency)`: rows (`columns`, `rows`; `dicts()` or `objects()`) for SELECT and
   SHOW, the node's summary for anything else. `ack` and `consistency` are as in
   [docs/CONSISTENCY.md](../docs/CONSISTENCY.md).
-- `changes(db, after, table, wait, limit)` for one page of the change feed, and `follow(db, table)`,
-  which yields changes as they come, from now on. Cursors belong to one node, so both use the first URL.
+- `changes(db, after, table, wait, limit)` for one page of the change feed (Python returns `(changes,
+  cursor)`, JavaScript `{ changes, cursor }`), and `follow(db, table)`, which yields changes as they come,
+  from now on. Cursors belong to one node, so both use the first URL.
 - `users()`, `set_user` / `setUser`, `delete_user` / `deleteUser` (an admin's) and `status()`.
-- Errors carry the HTTP status and the node's message. `Unavailable` is 503, or no answer; `CursorGone`
+- Errors carry the HTTP status and the node's message (Python `serengeti.Error`, JavaScript
+  `SerengetiError`). `Unavailable` is 503, or no answer (status 0, also for a TLS failure); `CursorGone`
   is 410 from the change feed: read the table again and follow from now.
 
-**Several nodes.** List the URLs in order. A read (SELECT or SHOW) that gets no answer or a 503 is tried
+With several nodes, list the URLs in order. A read (SELECT or SHOW) that gets no answer or a 503 is tried
 on the next node. A write is sent once: if it reached a node and the answer was lost, or was 503, it may
 have been written (see "Writes" in docs/CONSISTENCY.md), so trying again is your decision. A
 write goes on to the next node only when it cannot have arrived: the connection was refused or the name
 did not resolve.
 
-**TLS.** For certificates from `serengeti-certs`, give Python `ca_file="ca.pem"`. Node.js reads extra CAs
-only at start: run it with `NODE_EXTRA_CA_CERTS=ca.pem`.
+For certificates from `serengeti-certs`, give Python `ca_file="ca.pem"`. Node.js reads extra CAs only at
+start: run it with `NODE_EXTRA_CA_CERTS=ca.pem`.
 
 `clients/run.sh` tests both, each in its official container, against a node of the image, a TLS node and
 a socket that never answers; CI runs it.
