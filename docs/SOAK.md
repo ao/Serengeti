@@ -212,7 +212,7 @@ and the old close hung there. On be63206 (the first fix), two 30-minute runs on 
 stall; on 8970539 every one of 28 stops and restarts exited on SIGTERM within 3.5 s (on be63206, 4 of 54
 stops were killed after docker's 10 s).
 
-### 3. Catching up after a restart can run a node out of heap (fixed in the commit after 50fda3a)
+### 3. Catching up after a restart can run a node out of heap (fixed in 2926825)
 
 In the hour on 5 nodes with seed 20261116 (engine 36230d2, 2 GiB per node, about 210 MiB of data by the
 node's estimate), n5 exited with `java.lang.OutOfMemoryError: Java heap space` 33 s after one of its
