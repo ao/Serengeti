@@ -1,0 +1,66 @@
+# A three-node Serengeti cluster on one machine, with TLS between the nodes and for clients.
+#
+#   1. Put the secrets in a file named .env next to this one (never commit it):
+#        SERENGETI_ADMIN_PASSWORD=a long admin password
+#        SERENGETI_CLUSTER_KEY=a random string of at least 32 characters
+#   2. Make the certificates once:   docker compose run --rm certs
+#   3. Start the nodes:              docker compose up -d
+#   4. Ask a node:                   curl --cacert ca.pem -u "admin:$SERENGETI_ADMIN_PASSWORD" https://127.0.0.1:19851/v1/status
+#      (copy ca.pem out with: docker compose run --rm --entrypoint cat certs /certs/ca.pem > ca.pem)
+#
+# Each node listens on 1985 inside the cluster's network. The ports below publish them to 127.0.0.1 only;
+# to reach the nodes from other machines, run them on separate hosts instead and list each host's name when
+# making the certificates (serengeti-certs n1=host1.example.com ...).
+x-node: &node
+  image: ${SERENGETI_IMAGE:-ataiva/serengeti:latest}
+  restart: unless-stopped
+  mem_limit: 1g
+  environment: &env
+    SERENGETI_ADMIN_PASSWORD: ${SERENGETI_ADMIN_PASSWORD:?set SERENGETI_ADMIN_PASSWORD in .env}
+    SERENGETI_CLUSTER_KEY: ${SERENGETI_CLUSTER_KEY:?set SERENGETI_CLUSTER_KEY in .env}
+    SERENGETI_TLS_KEYSTORE_PASSWORD_FILE: /certs/password
+    SERENGETI_TLS_TRUSTSTORE: /certs/trust.p12
+    SERENGETI_TLS_TRUSTSTORE_PASSWORD_FILE: /certs/password
+
+services:
+  certs:
+    image: ${SERENGETI_IMAGE:-ataiva/serengeti:latest}
+    profiles: [setup]
+    user: "0"
+    entrypoint: [serengeti-certs]
+    # Each node also answers to localhost and 127.0.0.1, for the ports published below.
+    command: ["n1=localhost,127.0.0.1", "n2=localhost,127.0.0.1", "n3=localhost,127.0.0.1"]
+    volumes: [certs:/certs]
+
+  n1:
+    <<: *node
+    environment:
+      <<: *env
+      SERENGETI_PEERS: n2:1985,n3:1985
+      SERENGETI_TLS_KEYSTORE: /certs/n1.p12
+    volumes: [n1:/data, certs:/certs:ro]
+    ports: ["127.0.0.1:19851:1985"]
+
+  n2:
+    <<: *node
+    environment:
+      <<: *env
+      SERENGETI_PEERS: n1:1985,n3:1985
+      SERENGETI_TLS_KEYSTORE: /certs/n2.p12
+    volumes: [n2:/data, certs:/certs:ro]
+    ports: ["127.0.0.1:19852:1985"]
+
+  n3:
+    <<: *node
+    environment:
+      <<: *env
+      SERENGETI_PEERS: n1:1985,n2:1985
+      SERENGETI_TLS_KEYSTORE: /certs/n3.p12
+    volumes: [n3:/data, certs:/certs:ro]
+    ports: ["127.0.0.1:19853:1985"]
+
+volumes:
+  certs:
+  n1:
+  n2:
+  n3:

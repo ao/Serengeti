@@ -97,6 +97,14 @@ jobs:
       - name: Run the examples
         run: IMAGE=serengeti:examples examples/run.sh
 
+  cluster-example:
+    name: Cluster example with Compose (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Certificates, three TLS nodes, a write and a read, one node stopped
+        run: IMAGE=serengeti:cluster-example examples/cluster/run.sh
+
   demo:
     name: Partition demo (amd64)
     runs-on: ubuntu-24.04

@@ -55,9 +55,7 @@ q "SELECT name, qty FROM shop.items WHERE qty > 200"
 The console is at http://127.0.0.1:1985/ and asks for the same user name and password.
 
 To set the password when the node first starts, pass `-e SERENGETI_ADMIN_PASSWORD` to `docker run`
-(the value is taken from your shell), and skip the setup step. A cluster is the same image with
-`SERENGETI_PEERS` and a shared cluster key; [docs/CONFIGURATION.md](docs/CONFIGURATION.md) has the
-settings and [docs/demo.sh](docs/demo.sh) starts one.
+(the value is taken from your shell), and skip the setup step.
 
 The [examples](examples/) run the same steps from curl, Python (`urllib`) and JavaScript (`fetch`). The
 quick start is run by [docs/quickstart.sh](docs/quickstart.sh), and the examples by
@@ -66,6 +64,22 @@ quick start is run by [docs/quickstart.sh](docs/quickstart.sh), and the examples
 Without Docker, build with `mvn package` (Java 17 or later) and run
 `java -jar target/Serengeti-2.1.0-SNAPSHOT-jar-with-dependencies.jar`. It listens on 127.0.0.1:1985 and
 keeps its data in `./data`.
+
+## A cluster
+
+A cluster is the same image with `SERENGETI_PEERS`, a shared cluster key and TLS between the nodes.
+[examples/cluster/compose.yaml](examples/cluster/compose.yaml) runs three nodes with Docker Compose, and
+the image's `serengeti-certs` makes their certificates:
+
+```sh
+cd examples/cluster
+printf 'SERENGETI_ADMIN_PASSWORD=%s\nSERENGETI_CLUSTER_KEY=%s\n' "$SERENGETI_PASSWORD" "$(head -c 32 /dev/urandom | base64)" > .env
+docker compose run --rm certs
+docker compose up -d
+```
+
+The comments in the Compose file say how to reach the nodes, and
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) has the settings. CI runs this example as written.
 
 ## Writes in a cluster
 
@@ -149,7 +163,8 @@ kept-alive connection, and 2.1 sets it itself.
   an indexed comparison scans its table.
 - You need every write serialised, such as a balance that must never go below zero across nodes.
 - You need more than 7 nodes, or nodes that hold only part of the data.
-- You need more than one user: there is one admin account per node, and accounts are not replicated.
+- You need permissions per database or table: an account's role (read, write or admin) applies to all of
+  them.
 
 ## Security defaults
 

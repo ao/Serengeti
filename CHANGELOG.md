@@ -7,6 +7,18 @@ GitHub release notes and tags.
 ## [Unreleased] - 2.2.0
 
 ### Added
+- `serengeti-certs` in the image makes a cluster's CA, node key stores, trust store and password with
+  keytool, and deletes the CA key afterwards unless asked to keep it. `examples/cluster/compose.yaml` runs
+  three TLS nodes with Docker Compose, publishing to 127.0.0.1 only; CI runs it.
+- A change feed: `GET /v1/changes?db=&table=&after=&wait=` returns the changes a node applied after a
+  cursor (rows written there or merged from peers, drops), long-polling up to 60 s. A node keeps the last
+  `changes_buffer` (10,000) changes; an older cursor, or one from before a restart, gets 410. See
+  docs/API.md, "Changes".
+- Accounts and roles. An admin creates, changes and deletes accounts over `/v1/users`; each account is
+  `read` (SELECT and SHOW), `write` (also writes and schema changes) or `admin` (also accounts and backups),
+  and a write by a read account is refused with 403. In a cluster, accounts replicate: the newest change
+  to a name wins on every node, deletions spread, and a node that was down catches up. `users.json` stays
+  readable by 2.0 and 2.1. See docs/API.md, "Accounts".
 - A memory limit: once the rows and index entries held are estimated to take `memory_limit_percent`
   (default 60) of the heap, writes that add data get 503 instead of the node running out of memory and
   exiting. Reads, deletes and drops are still served, and a delete makes room at once. The estimate is kept

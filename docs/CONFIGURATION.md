@@ -22,6 +22,7 @@ setting makes the node exit with status 2 and a one-line message.
 | `discovery_cidr` | none | Opt-in: find peers by asking `/internal/hello` on `port` at every address in this range, at most 256 addresses (a /24 or /120). Needs TLS and `cluster_size`. |
 | `write_ack` | `majority` | In a cluster: `majority` acknowledges a write once a majority of nodes has it; `local` once this node has it, even with no peer reachable. Requests override it with `"ack"`. See [CONSISTENCY.md](CONSISTENCY.md). |
 | `tombstone_ttl_hours` | `168` | How long a delete's tombstone is kept, and so the longest a cluster node may be away and still rejoin with its data. |
+| `changes_buffer` | `10000` | How many recent changes the node keeps in memory for `GET /v1/changes` (see API.md, "Changes"); `0` turns the feed off. Each held change keeps its row's value alive, so a large buffer of large rows costs memory. |
 | `memory_limit_percent` | `60` | Writes that add data (INSERT, UPDATE, CREATE) are refused with 503 once the rows and index entries held are estimated to take this share of the maximum heap; deletes and drops are always taken and make room at once. `100` turns it off. Every database is held in memory, so this is the node's capacity. The image gives the heap 60% of the container's memory: a 512 MiB container holds an estimated 185 MiB of data with the default. |
 | `cluster_plaintext` | none | `allow` lets a node with peers run without TLS, sending the cluster key and data in clear. For a private network only. |
 | `tls_truststore` | JDK CAs | PKCS#12 file with the CA certificates that peers' certificates must chain to. Needs its password below. |
@@ -36,6 +37,24 @@ keytool -genkeypair -alias node -keyalg EC -groupname secp256r1 -dname CN=db.exa
 
 For anything longer-lived, use a certificate from your own CA, with the host name clients use in its
 subject alternative names.
+
+## Certificates for a cluster
+
+Nodes in a cluster talk TLS to each other and check each other's certificates against one CA. The image
+includes `serengeti-certs`, which makes the CA, a key store per node, the trust store and a random key
+store password with keytool:
+
+```sh
+docker run --rm --user 0 -v serengeti-certs:/certs --entrypoint serengeti-certs ataiva/serengeti \
+  n1=n1.example.com n2=n2.example.com n3=n3.example.com
+```
+
+Each certificate names the node (`n1`) and the names after `=` (host names or IP addresses), which must be
+the names peers and clients use for it. Point each node at its files: `SERENGETI_TLS_KEYSTORE=/certs/n1.p12`,
+`SERENGETI_TLS_TRUSTSTORE=/certs/trust.p12`, and `/certs/password` for both password files; clients use
+`/certs/ca.pem`. The CA's private key is deleted once the node certificates are signed, so no node can
+make more; to add a node, make new certificates for all of them (or pass `--keep-ca` and keep `ca.p12`
+somewhere the nodes cannot read). `examples/cluster/compose.yaml` does all of this for three nodes.
 
 ## Secrets
 
@@ -60,7 +79,7 @@ The admin password is only used when there is no account yet. Once `users.json` 
 | `wal.log` | Write-ahead log: length, CRC32C and JSON per batch. |
 | `snapshot.jsonl` | The state at the last checkpoint. The log is folded into it after 64 MiB. |
 | `indexes.jsonl` | Index definitions, rewritten whenever an index is created or dropped. Kept out of the log so a 2.0 binary can still open the directory. Present once an index has been created. |
-| `users.json` | Accounts as bcrypt hashes (cost 12). Mode 0600; a node refuses to start if others can read it. |
+| `users.json` | Accounts as bcrypt hashes (cost 12) with their roles, the version of each change, and the tombstones of deleted accounts. Mode 0600; a node refuses to start if others can read it. 2.0 and 2.1 can still read it: read accounts are kept where they do not look. |
 | `setup-token` | One-time setup token (mode 0600), present only until the first admin password is set. |
 | `node-id` | A random id for this node, kept across restarts. |
 | `last-sync` | In a cluster: when this node last synced with a majority (Unix milliseconds), written at most once a minute. |

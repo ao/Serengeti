@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# serengeti-certs: certificates for a cluster, made with keytool (no other tool needed).
+#
+#   serengeti-certs [-o DIR] [--days N] [--keep-ca] NODE[=NAME,NAME...] ...
+#
+# For each NODE it writes DIR/NODE.p12, a PKCS#12 key store with the node's key and a certificate for the
+# names peers and clients use to reach it: NODE itself, plus any NAMEs after "=" (host names, or IP
+# addresses). It also writes DIR/trust.p12 (the CA certificate, for SERENGETI_TLS_TRUSTSTORE), DIR/ca.pem
+# (the same, for clients such as curl --cacert) and DIR/password (a random password for the key stores, for
+# SERENGETI_TLS_KEYSTORE_PASSWORD_FILE and SERENGETI_TLS_TRUSTSTORE_PASSWORD_FILE).
+#
+# The CA's private key signs the node certificates and is then deleted, so no node can make more: to add a
+# node later, make new certificates for every node. With --keep-ca it is kept in DIR/ca.p12 instead; keep
+# that file away from the nodes.
+#
+# In Docker, with a named volume for DIR (run as root so the files can be given to the node's user):
+#   docker run --rm --user 0 -v serengeti-certs:/certs --entrypoint serengeti-certs ataiva/serengeti n1 n2 n3
+set -euo pipefail
+
+dir=/certs days=825 keep=0 nodes=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o) dir=$2; shift 2 ;;
+    --days) days=$2; shift 2 ;;
+    --keep-ca) keep=1; shift ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -*) echo "serengeti-certs: unknown option $1" >&2; exit 2 ;;
+    *) nodes+=("$1"); shift ;;
+  esac
+done
+if [ ${#nodes[@]} -eq 0 ]; then
+  echo "serengeti-certs: name at least one node, for example: serengeti-certs n1 n2 n3" >&2
+  exit 2
+fi
+case $days in ''|*[!0-9]*) echo "serengeti-certs: --days wants a number" >&2; exit 2 ;; esac
+for n in "${nodes[@]}"; do
+  case ${n%%=*} in
+    ''|*[!A-Za-z0-9.-]*) echo "serengeti-certs: '$n' is not a node name (letters, digits, '.', '-')" >&2; exit 2 ;;
+  esac
+done
+mkdir -p "$dir"
+cd "$dir"
+if [ -e trust.p12 ] || [ -e password ]; then
+  echo "serengeti-certs: $dir already holds certificates; use an empty directory" >&2
+  exit 1
+fi
+umask 077
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+P=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | cut -c1-24)
+printf '%s' "$P" > password
+k() { keytool "$@" -storepass "$P" >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; exit 1; }; }
+
+k -genkeypair -alias ca -keyalg EC -groupname secp256r1 -dname "CN=Serengeti cluster CA" -ext bc:c \
+  -validity "$days" -storetype PKCS12 -keystore "$tmp/ca.p12"
+k -exportcert -rfc -alias ca -keystore "$tmp/ca.p12" -file ca.pem
+k -importcert -noprompt -alias ca -file ca.pem -storetype PKCS12 -keystore trust.p12
+for n in "${nodes[@]}"; do
+  name=${n%%=*}
+  san="dns:$name"
+  if [ "$n" != "$name" ]; then
+    IFS=, read -ra extra <<< "${n#*=}"
+    for h in "${extra[@]}"; do
+      case $h in
+        *[!0-9.]*|'') san="$san,dns:$h" ;;
+        *) san="$san,ip:$h" ;;
+      esac
+    done
+  fi
+  k -genkeypair -alias node -keyalg EC -groupname secp256r1 -dname "CN=$name" -validity "$days" \
+    -storetype PKCS12 -keystore "$name.p12"
+  k -certreq -alias node -keystore "$name.p12" -file "$tmp/$name.csr"
+  k -gencert -rfc -alias ca -keystore "$tmp/ca.p12" -infile "$tmp/$name.csr" -outfile "$tmp/$name.pem" \
+    -validity "$days" -ext "san=$san" -ext eku=serverAuth,clientAuth
+  k -importcert -noprompt -alias ca -file ca.pem -keystore "$name.p12"
+  k -importcert -noprompt -alias node -file "$tmp/$name.pem" -keystore "$name.p12"
+  echo "$name.p12: $san"
+done
+if [ "$keep" = 1 ]; then
+  cp "$tmp/ca.p12" ca.p12
+  echo "ca.p12: the CA's key, kept (--keep-ca); keep it away from the nodes"
+fi
+chmod 600 ./*.p12 password
+chmod 644 ca.pem
+if [ "$(id -u)" = 0 ]; then
+  # The node files to the image's serengeti user; a kept ca.p12 stays root's, so a node cannot read it.
+  for f in ./*.p12 password; do
+    [ "$f" = ./ca.p12 ] || chown 10001:10001 "$f"
+  done
+fi
+echo "trust.p12, ca.pem, password: in $dir. Valid for $days days."
