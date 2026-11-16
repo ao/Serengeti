@@ -32,12 +32,13 @@ GitHub release notes and tags.
 - Accounts and roles. An admin creates, changes and deletes accounts over `/v1/users`; each account is
   `metrics` (`/metrics` and `/v1/status` only), `read` (SELECT and SHOW), `write` (also writes and schema
   changes) or `admin` (also accounts and backups), and a write by a read account is refused with 403. In a
-  cluster, accounts replicate, and a node that was down, or is out of date, catches up. An account's access
-  (role, databases, deleted) and its password merge apart, each from the newest change to it, so a password
-  reset on one node and a role or list given on another at the same moment both stand. An account's own
-  password change moves only the password, and loses to an admin's reset it had not seen; a delete removes
-  both, so neither a reset nor a role change made elsewhere at the same moment brings the account back. If
-  two admins deleted on two nodes at once leave
+  cluster, accounts replicate, and a node that was down, or is out of date, catches up. An account's role,
+  list of databases and password merge apart, each from the newest change to it, so a password reset, a role
+  and a list given on different nodes at the same moment all stand. An account's own password change moves
+  only the password, and loses to an admin's reset it had not seen. Making and deleting an account each
+  start a new version of it that wins whole, so no change made on a node that had not heard of a delete
+  brings the account back, and an account made again takes nothing done to the one deleted. If two admins
+  deleted on two nodes at once leave
   none, the other accounts keep working, and a restart with `SERENGETI_ADMIN_PASSWORD` (or a setup token)
   makes the admin again (in a cluster, once it has pulled the accounts from a peer, so an admin that was
   replaced does not come back). Account changes stamped more than 60 s ahead of a node's clock are left out

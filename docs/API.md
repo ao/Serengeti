@@ -270,23 +270,28 @@ the cluster's TLS and behind its cluster key. A node that is out of date (see CO
 and passes on account changes. Nodes older than 2.2 do not take part: in a cluster being upgraded, an
 account made on a 2.2 node works on the 2.2 nodes only.
 
-An account has two parts, each with its own version: its access (the role, the list of databases, and
-whether it is deleted) and its password. A change moves the parts it names: a password moves the password,
-a role or `databases` moves the access, a change with both moves both, and a new account starts both. On
-every node each part comes from the newest change to that part. So two admins changing one account on two
-nodes at the same moment, one its password and the other its role or list, both keep their change. Two
-changes to the same part keep the newer one: two lists given at once end as the later list, and a `PUT`
-with a password and a role replaces both parts.
+An account has three parts, each with its own version: the role, the list of databases, and the password.
+A change moves the parts it names: `password` the password, `role` the role, `databases` the list. On every
+node each part comes from the newest change to it. So two admins who change one account on two nodes at the
+same moment, each a different part (a role and a list, a password and a list, a password and a role), both
+keep their change. Two changes to the same part keep the newer one: two lists given at once end as the later
+list.
 
-An account's own password change (`POST /v1/password`) moves only the password. It never changes the access,
-so an account cannot undo its demotion or its list that way, and it loses to a password an admin set on
-another node that it had not heard of yet: the admin's password stands.
+An account's own password change (`POST /v1/password`) moves only the password. It never changes the role
+or the list, so an account cannot undo its demotion or its list that way, and it loses to a password an
+admin set on another node that it had not heard of yet: the admin's password stands.
 
-A delete changes both parts: the account loses its access and its password. A change made on another node
-at the same moment that names only the password, or only the role or list, does not bring it back, even if
-it is stamped later: the account still signs in with nothing, and is not listed. Setting a password then
-makes it again, as a new account (`write` and no list, unless the change gives them). Only a change that
-names both parts, made after the delete by the nodes' clocks, makes the account again on its own.
+Making an account and deleting one each start a new version of the whole account, and the newer of those
+wins whole. A change made on a node that had not heard of a delete belongs to the account deleted, so it
+does not bring it back, however late it is stamped: a reset, a role or a list given there is lost, and the
+account signs in with nothing and is not listed. A `PUT` with a password to a name that has no account on
+the node that takes it (none, or deleted) makes the account again: `write` and no list unless the change
+gives them, and nothing of what was done on other nodes to the account deleted. The admin that the
+recovery path below or `POST /v1/setup` makes is a new account in the same way.
+
+An admin or metrics account reaches what its role reaches, whatever list it holds. A list given on one node
+while another node makes the account admin stays with the account without effect; if a later change makes
+it read or write and leaves `databases` out, that list applies again.
 
 The last-admin rule holds on each node, but two admins deleted on two nodes at once can leave none. The
 other accounts keep working. Restart one node with `SERENGETI_ADMIN_PASSWORD` set: once it has pulled the
