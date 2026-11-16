@@ -75,6 +75,30 @@ class JsonTest {
     }
 
     @Test
+    void refusesUnpairedSurrogates() {
+        String pair = "\ud83d\ude00";
+        assertEquals(pair, Json.parse("\"\\ud83d\\ude00\""));
+        assertEquals(pair, Json.parse("\"" + pair + "\""));
+        assertEquals("\udbff\udfff", Json.parse("\"\\udbff\\udfff\""));
+        assertEquals(Map.of(pair, pair), Json.parse("{\"\\ud83d\\ude00\": \"\\ud83d\\ude00\"}"));
+        for (String s : new String[] {"\"\\ud800\"", "\"\\udfff\"", "\"\\ud83dA\"", "\"\\ud83d\\ud83d\"",
+            "\"\\ude00\\ud83d\"", "\"a\\ud800\"", "{\"\\ud800\": 1}", "[\"x\", \"\\udc00\"]",
+            "\"\ud800\"", "\"" + "\ude00" + "\ud83d\""}) {
+            assertThrows(JsonException.class, () -> Json.parse(s), s);
+        }
+    }
+
+    /** What the writer emits always reads back as the same value. */
+    @Test
+    void writtenStringsReadBackUnchanged() {
+        String s = "\u0000\u001f \"\\/\b\f\n\r\t\u007f\u00e9\u2028\u2029\ufeff\uffff\ud83d\ude00<>&";
+        assertEquals(s, Json.parse(Json.write(s)));
+        String bytes = new String(Json.write(s).getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(s, Json.parse(bytes));
+    }
+
+    @Test
     void rejectsDeepNesting() {
         String deep = "[".repeat(Json.MAX_DEPTH + 1) + "]".repeat(Json.MAX_DEPTH + 1);
         assertThrows(JsonException.class, () -> Json.parse(deep));
