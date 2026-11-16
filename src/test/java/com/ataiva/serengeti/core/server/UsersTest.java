@@ -327,6 +327,9 @@ class UsersTest {
         PrivateFiles.writeAtomically(dir.resolve("a").resolve(Users.FILE), oldUsers.replaceFirst("\"_v\":\\d+",
                 "\"_v\":" + (versionIn(dir.resolve("a")) - 1)));
         assertEquals(digest, Users.open(dir.resolve("a"), 4, now::get).digest());
+        var after = com.ataiva.serengeti.core.json.Json.parseObject(Files.readString(dir.resolve("a").resolve(Users.FILE)));
+        assertEquals(versionIn(dir.resolve("a")), ((Number) after.get("_v")).longValue(),
+                "users.json is brought up to date at once, so a rollback to 2.1 reads the newer one");
     }
 
     private static long versionIn(Path d) throws IOException {
@@ -372,21 +375,26 @@ class UsersTest {
 
     @Test
     void aChangeOnANodeWhoseClockIsBehindStillComesAfterWhatItChanges() throws IOException {
+        now.set(990_000); // the wall clock both nodes check peers' stamps against
         Users a = node("a");
         Users b = node("b");
-        b.setStamps(() -> new com.ataiva.serengeti.core.storage.Stamp(1_000_000, 0, "b")); // ten minutes ahead
+        b.setStamps(() -> new com.ataiva.serengeti.core.storage.Stamp(1_000_000, 0, "b")); // its clock is ahead
         b.setPassword("admin", PW, Users.Role.ADMIN);
         b.setPassword("temp", PW, Users.Role.WRITE);
         a.merge(b.entries());
-        assertTrue(a.delete("temp")); // a's clock reads about 100
+        assertTrue(a.delete("temp")); // a's own stamps read about 100
         b.merge(a.entries());
         assertFalse(b.list().containsKey("temp"), "the delete is after the create although a's clock is behind");
         assertEquals(a.digest(), b.digest());
-        java.util.List<com.ataiva.serengeti.core.storage.Stamp> seen = new java.util.ArrayList<>();
+        // A change stamped more than a minute ahead of the receiving node's clock is left out, not taken, and
+        // the rest of the batch is: it would otherwise move that node's clock as far ahead as the stamp.
         Users c = node("c");
-        c.setObserver(seen::add);
-        c.merge(b.entries());
-        assertTrue(seen.stream().anyMatch(s -> s.wall() >= 1_000_000), "merged stamps reach the node's clock");
+        now.set(900_000);
+        Users.Merged m = c.mergeFrom(b.entries());
+        assertEquals(2, m.ahead(), m.toString());
+        assertEquals(0, m.changed());
+        now.set(990_000);
+        assertEquals(2, c.mergeFrom(b.entries()).changed(), "taken once the clocks agree");
     }
 
     @Test
@@ -419,14 +427,56 @@ class UsersTest {
         Users a = node("a");
         a.setPassword("admin", PW, Users.Role.ADMIN);
         String before = a.digest();
-        String costly = "$2a$31$" + "a".repeat(53);
+        String salt = "a".repeat(53);
+        // Refused whole: a hash too costly to check, one this library cannot read ($2b$, $2y$), or malformed.
         for (var bad : java.util.List.<java.util.Map<String, Object>>of(
-                java.util.Map.of("user", "x", "at", "5.0.n", "hash", costly, "role", "write"),
-                java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2a$12$" + "!".repeat(53), "role", "write"),
-                java.util.Map.of("user", "x", "at", "9999999999999.0.evil", "deleted", true),
-                java.util.Map.of("user", "admin", "at", "5.0.n", "pw_at", "9999999999999.0.evil", "deleted", true))) {
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2a$31$" + salt, "role", "write"),
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2b$12$" + salt, "role", "write"),
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2y$12$" + salt, "role", "write"),
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2a$12$" + "!".repeat(53), "role", "write"))) {
             assertThrows(IllegalArgumentException.class, () -> a.merge(java.util.List.of(bad)), bad.toString());
         }
+        // Left out, with the rest of the batch taken: stamps from the future, also one at the counter's limit.
+        Users.Merged m = a.mergeFrom(java.util.List.of(
+                java.util.Map.of("user", "x", "at", "9999999999999.0.evil", "deleted", true),
+                java.util.Map.of("user", "admin", "at", "5.0.n", "pw_at", "9999999999999.0.evil", "deleted", true),
+                java.util.Map.of("user", "y", "at", "3600000.2147483647.evil", "deleted", true)));
+        assertEquals(new Users.Merged(0, 3), m);
         assertEquals(before, a.digest());
+        // A stamp at the counter's limit within the bound is taken, and the next change still comes after it.
+        a.mergeFrom(java.util.List.of(java.util.Map.of("user", "z", "at", "5000.2147483647.evil", "deleted", true)));
+        a.setPassword("z", PW, Users.Role.WRITE);
+        assertEquals(Optional.of(Users.Role.WRITE), a.verify("z", PW));
+    }
+
+    @Test
+    void aPasswordChangeOnAnOlderVersionDoesNotUndoAnAdminsChange() throws IOException {
+        now.set(System.currentTimeMillis());
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.setPassword("mallory", PW, Users.Role.WRITE);
+        a.setPassword("boss", PW, Users.Role.ADMIN);
+        b.merge(a.entries());
+        assertTrue(a.delete("mallory"));
+        assertTrue(a.setRole("boss", Users.Role.READ));
+        // b runs 2.1 for a while, where both change their own passwords: 2.1 writes users.json alone.
+        String m2 = org.mindrot.jbcrypt.BCrypt.hashpw("mallory again 1", org.mindrot.jbcrypt.BCrypt.gensalt(4));
+        String b2 = org.mindrot.jbcrypt.BCrypt.hashpw("boss again 123", org.mindrot.jbcrypt.BCrypt.gensalt(4));
+        var root = com.ataiva.serengeti.core.json.Json.parseObject(Files.readString(dir.resolve("b").resolve(Users.FILE)));
+        @SuppressWarnings("unchecked")
+        var users = (java.util.Map<String, java.util.Map<String, Object>>) root.get("users");
+        PrivateFiles.writeAtomically(dir.resolve("b").resolve(Users.FILE), "{\"users\": {\"admin\": {\"hash\": \""
+                + users.get("admin").get("hash") + "\", \"role\": \"admin\"}, \"mallory\": {\"hash\": \"" + m2
+                + "\", \"role\": \"user\"}, \"boss\": {\"hash\": \"" + b2 + "\", \"role\": \"admin\"}}}");
+        Users back = Users.open(dir.resolve("b"), 4, now::get);
+        back.merge(a.entries());
+        a.merge(back.entries());
+        assertEquals(a.digest(), back.digest());
+        for (Users u : List.of(a, back)) {
+            assertFalse(u.list().containsKey("mallory"), "the delete stands");
+            assertEquals(Users.Role.READ, u.list().get("boss"), "the demotion stands");
+            assertEquals(Optional.empty(), u.verify("mallory", "mallory again 1"));
+        }
     }
 }

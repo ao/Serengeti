@@ -26,17 +26,20 @@ GitHub release notes and tags.
   An admin's change always wins over an account's own password change on an earlier version, so a deleted
   or demoted account cannot undo that from another node. If two admins deleted on two nodes at once leave
   none, the other accounts keep working, and a restart with `SERENGETI_ADMIN_PASSWORD` (or a setup token)
-  makes the admin again. Accounts are kept in `accounts.json`; `users.json` keeps the admin and write
-  accounts readable by 2.0 and 2.1, and a password an older version changed there is taken back on the
-  next start. See docs/API.md, "Accounts".
+  makes the admin again (in a cluster, once it has pulled the accounts from a peer, so an admin that was
+  replaced does not come back). Account changes stamped more than 60 s ahead of a node's clock are left out
+  until the clocks agree, as row changes are. Accounts are kept in `accounts.json`; `users.json` keeps the
+  admin and write accounts readable by 2.0 and 2.1, and a password one of them changed there is taken back
+  on the next start as the account's own change, so it does not undo a 2.2 admin's delete or role change.
+  See docs/API.md, "Accounts".
 - A memory limit: once the rows and index entries held are estimated to take `memory_limit_percent`
   (default 60) of the heap, writes that add data get 503 instead of the node running out of memory and
   exiting. Reads, deletes and drops are still served, and a delete makes room at once. The estimate is kept
   in step with every change, so it needs no garbage collection to be current. Metrics
   `serengeti_data_bytes`, `serengeti_data_budget_bytes`, `serengeti_memory_full` and `serengeti_heap_bytes`.
   `tests/memory/run.sh` fills a node in a 512 MiB container through its API, with large rows and with small
-  rows under two indexes, and checks that a full node takes a backup, restarts and takes a delete of every
-  row.
+  rows under two indexes, and checks that a full node takes a backup, restarts, takes a delete of every row
+  and restarts again.
 - Clients for Python (standard library only) and JavaScript (`fetch`), one file each, in `clients/`:
   queries, reads that move on to the next node, writes that are never sent twice, the change feed,
   accounts and TLS with a cluster's own CA. `clients/run.sh` tests both against the image; CI runs it.
@@ -88,6 +91,9 @@ GitHub release notes and tags.
 - A statement that changed a few hundred thousand rows built its log record in memory several times over
   (a JSON tree, a string, bytes and a buffer): deleting 286,000 rows from a full 512 MiB node ran it out of
   memory.
+- Starting replayed each log record whole (its bytes, a string, a JSON tree and its ops at once), so a
+  node that deleted its rows when full did not start again: the delete was one record of tens of MB. A
+  record over 1 MiB is now checked against its checksum in pieces and its ops parsed one at a time.
 - A node that was stopping (SIGTERM, `docker stop`) answered 500 for about a second, also to writes it had
   already logged: it closed its cluster layer before its HTTP server, which goes on serving kept-alive
   connections while requests in flight finish. It now stops the HTTP server first, answers what still

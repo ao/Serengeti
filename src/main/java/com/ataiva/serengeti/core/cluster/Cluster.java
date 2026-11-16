@@ -551,30 +551,51 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
         return client.accountDigest(p.address).thenCompose(theirs -> {
             p.noAccounts = false;
             if (theirs.equals(users.digest())) {
+                accountSyncs.incrementAndGet();
                 return CompletableFuture.completedFuture(null);
             }
             return client.accounts(p.address).thenAccept(list -> {
                 try {
-                    int n = users.merge(list);
-                    if (n > 0) {
-                        LOG.info("merged " + n + " account changes from " + p.address);
+                    Users.Merged m = users.mergeFrom(list);
+                    if (m.changed() > 0) {
+                        LOG.info("merged " + m.changed() + " account changes from " + p.address);
                     }
+                    warnAhead(m, p.address);
+                    accountSyncs.incrementAndGet();
                 } catch (IOException e) {
                     throw new java.util.concurrent.CompletionException(e);
                 }
             });
         }).exceptionally(err -> {
-            if (unwrap(err) instanceof PeerClient.NotSupported) {
+            Throwable cause = unwrap(err);
+            if (cause instanceof PeerClient.NotSupported) {
                 if (!p.noAccounts) {
                     LOG.info("peer " + p.address + " runs a version without account replication (before 2.2)");
                 }
                 p.noAccounts = true;
                 p.noAccountsSince = clock.getAsLong();
+            } else if (cause instanceof IllegalArgumentException) {
+                LOG.warning("refused the accounts from " + p.address + ": " + cause.getMessage());
             } else {
                 LOG.fine("account sync with " + p.address + ": " + PeerClient.describe(err));
             }
             return null;
         });
+    }
+
+    private static void warnAhead(Users.Merged m, String from) {
+        if (m.ahead() > 0) {
+            LOG.warning("left out " + m.ahead() + " account changes stamped more than "
+                    + Users.MAX_AHEAD_MILLIS / 1000 + " s ahead of this node's clock, from " + from
+                    + "; they are taken once the clocks agree");
+        }
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong accountSyncs = new java.util.concurrent.atomic.AtomicLong();
+
+    /** How many times accounts were pulled from, or found equal to, a peer's. */
+    public long accountSyncs() {
+        return accountSyncs.get();
     }
 
     /** Pulls every database whose digest differs from the peer's. Completes with true if it worked. */
@@ -849,7 +870,9 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                         throw new QueryService.Rejected(400, "users is required");
                     }
                     try {
-                        return Map.of("node", nodeId, "merged", users.merge(list));
+                        Users.Merged m = users.mergeFrom(list);
+                        warnAhead(m, "a peer's push");
+                        return Map.of("node", nodeId, "merged", m.changed());
                     } catch (IllegalArgumentException e) {
                         throw new QueryService.Rejected(400, e.getMessage());
                     } catch (IOException e) {

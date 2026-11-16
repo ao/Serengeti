@@ -30,8 +30,13 @@ public final class Hlc {
         if (pt > wall) {
             wall = pt;
             counter = 0;
+        } else if (counter == Integer.MAX_VALUE) {
+            // Only a stamp observed from a broken or hostile peer gets here: move to the next millisecond
+            // rather than fail every write.
+            wall++;
+            counter = 0;
         } else {
-            counter = Math.addExact(counter, 1);
+            counter++;
         }
         return new Stamp(wall, counter, node);
     }

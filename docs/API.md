@@ -89,7 +89,8 @@ Restore it with `serengeti restore`, described in [CONFIGURATION.md](CONFIGURATI
 
 The body is the snapshot format: one JSON header line, one line per change, and a trailer that holds the
 number of changes and their SHA-256. The state is written to a file in the data directory under the storage
-lock (writes wait meanwhile, as for a checkpoint), then sent with its length, so the backup is consistent:
+lock (writes wait meanwhile, as for a checkpoint), then sent with its length, and deleted once sent or when the
+client goes away: the node needs free space in its data directory as large as the backup. The backup is consistent:
 every write acknowledged before the request is in it, and no write is partly in it. A response that stops early
 has no trailer, and restore refuses it.
 
@@ -219,7 +220,8 @@ the password the admin's version has. A node that is out of date (see CONSISTENC
 passes on account changes.
 
 The last-admin rule holds on each node, but two admins deleted on two nodes at once can leave none. The
-other accounts keep working. Restart one node with `SERENGETI_ADMIN_PASSWORD` set: it makes the admin again
+other accounts keep working. Restart one node with `SERENGETI_ADMIN_PASSWORD` set: once it has pulled the
+accounts from a peer (or after 30 s without one), and if there is still no admin, it makes the admin again
 with a current version, which replaces the deletions on every node. Or restart it without that setting:
 it writes a setup token, and `POST /v1/setup` makes the admin.
 

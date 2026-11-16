@@ -125,6 +125,10 @@ echo "  estimated data $(echo "$m" | sed -n 's/^serengeti_data_bytes \(.*\)$/\1/
 restart_and_count d.small "$((batches * 2000))"
 expect "deleting them is taken" 200 "$(q 'DELETE FROM d.small')"
 expect "and the node is still running" true "$(docker inspect -f '{{.State.Running}}' "$RUN-node")"
+# The delete is one log record of every row (tens of MB), and the log is not folded into a snapshot until it
+# reaches 64 MiB: the next start replays that record, which must not need several times its size.
+echo "# a restart right after the delete"
+restart_and_count d.small 0
 
 echo
 echo "$passed passed, $failed failed"

@@ -106,6 +106,23 @@ public final class Wal implements AutoCloseable {
             if (len < 2 || len > MAX_RECORD || pos + HEADER + len > total) {
                 break;
             }
+            if (len > STREAM_RECORD) {
+                // A large record (one statement over many rows) is never held whole: its checksum is checked
+                // reading it in pieces, then its ops are parsed and handed over a part at a time. Parsing it at
+                // once took several times its size, and a full node could not start again after a big DELETE.
+                if (!checksumMatches(ch, pos + HEADER, len, crc)) {
+                    break;
+                }
+                try {
+                    streamOps(ch, pos + HEADER, len, sink);
+                } catch (RuntimeException e) {
+                    throw new IOException("write-ahead log record at byte " + pos + " has a valid checksum but cannot be"
+                            + " read (" + e.getMessage() + "). It may have been written by a newer version of"
+                            + " Serengeti. Nothing was discarded; start that version, or move the data directory aside.", e);
+                }
+                pos += HEADER + len;
+                continue;
+            }
             ByteBuffer payload = ByteBuffer.allocate(len);
             readFully(ch, payload, pos + HEADER);
             byte[] bytes = payload.array();
@@ -128,6 +145,155 @@ public final class Wal implements AutoCloseable {
             pos += HEADER + len;
         }
         return new Recovered(List.of(), pos, total - pos);
+    }
+
+    /** Records larger than this are read in pieces (see {@link #read(FileChannel, java.util.function.Consumer)}). */
+    static final int STREAM_RECORD = 1 << 20;
+    /** A large record's ops reach the sink in parts of this many. Applying them in parts or at once is the same. */
+    static final int STREAM_PART = 1000;
+
+    private static boolean checksumMatches(FileChannel ch, long at, int len, int crc) throws IOException {
+        CRC32C c = new CRC32C();
+        ByteBuffer buf = ByteBuffer.allocate(1 << 16);
+        long left = len;
+        while (left > 0) {
+            buf.clear();
+            buf.limit((int) Math.min(left, buf.capacity()));
+            readFully(ch, buf, at);
+            buf.flip();
+            c.update(buf);
+            at += buf.limit();
+            left -= buf.limit();
+        }
+        return (int) c.getValue() == crc;
+    }
+
+    /**
+     * Parses a record's JSON array {@code [op,op,...]} one element at a time and hands the ops to the sink in
+     * parts. The elements are JSON objects as {@link Json#write} makes them; strings are tracked so that braces
+     * and brackets inside them do not count.
+     */
+    private static void streamOps(FileChannel ch, long at, int len, java.util.function.Consumer<List<Op>> sink)
+            throws IOException {
+        // Positional reads of this record only: the log's channel is not moved, and never closed here.
+        java.io.Reader r = new java.io.InputStreamReader(new RegionStream(ch, at, at + len), StandardCharsets.UTF_8);
+        if (next(r) != '[') {
+            throw new IllegalArgumentException("expected a list of ops");
+        }
+        List<Op> part = new ArrayList<>(STREAM_PART);
+        StringBuilder el = new StringBuilder();
+        boolean first = true;
+        for (;;) {
+            int c = next(r);
+            if (c == ']' && first) {
+                break; // []
+            }
+            if (c != '{') {
+                throw new IllegalArgumentException("expected an op object");
+            }
+            el.setLength(0);
+            el.append('{');
+            int depth = 1;
+            boolean inString = false;
+            while (depth > 0) {
+                int d = next(r);
+                el.append((char) d);
+                if (inString) {
+                    if (d == '\\') {
+                        el.append((char) next(r));
+                    } else if (d == '"') {
+                        inString = false;
+                    }
+                } else if (d == '"') {
+                    inString = true;
+                } else if (d == '{' || d == '[') {
+                    depth++;
+                } else if (d == '}' || d == ']') {
+                    depth--;
+                }
+            }
+            Op op = Op.fromJson(Json.parseObject(el.toString()));
+            if (op != null) {
+                part.add(op);
+            }
+            if (part.size() == STREAM_PART) {
+                sink.accept(part);
+                part = new ArrayList<>(STREAM_PART);
+            }
+            first = false;
+            int sep = next(r);
+            if (sep == ']') {
+                break;
+            }
+            if (sep != ',') {
+                throw new IllegalArgumentException("expected ',' or ']' after an op");
+            }
+        }
+        if (r.read() >= 0) {
+            throw new IllegalArgumentException("data after the list of ops");
+        }
+        if (!part.isEmpty()) {
+            sink.accept(part);
+        }
+    }
+
+    private static int next(java.io.Reader r) throws IOException {
+        int c = r.read();
+        if (c < 0) {
+            throw new IllegalArgumentException("the record ends early");
+        }
+        return c;
+    }
+
+    /** Bytes {@code [from, to)} of a file, read with positional reads 64 KiB at a time. */
+    private static final class RegionStream extends java.io.InputStream {
+        private final FileChannel ch;
+        private long pos;
+        private final long end;
+        private final ByteBuffer buf = ByteBuffer.allocate(1 << 16);
+
+        RegionStream(FileChannel ch, long from, long to) {
+            this.ch = ch;
+            this.pos = from;
+            this.end = to;
+            buf.limit(0);
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (!fill()) {
+                return -1;
+            }
+            return buf.get() & 0xff;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int n) throws IOException {
+            if (n == 0) {
+                return 0;
+            }
+            if (!fill()) {
+                return -1;
+            }
+            int k = Math.min(n, buf.remaining());
+            buf.get(b, off, k);
+            return k;
+        }
+
+        private boolean fill() throws IOException {
+            if (buf.hasRemaining()) {
+                return true;
+            }
+            if (pos >= end) {
+                return false;
+            }
+            buf.clear();
+            buf.limit((int) Math.min(buf.capacity(), end - pos));
+            readFully(ch, buf, pos);
+            pos += buf.limit();
+            buf.flip();
+            return true;
+        }
     }
 
     private static void readFully(FileChannel ch, ByteBuffer buf, long at) throws IOException {
@@ -207,7 +373,10 @@ public final class Wal implements AutoCloseable {
                 ch.truncate(start);
                 ch.position(start);
             } catch (IOException suppressed) {
+                // Part of the batch may stay in the file, and a record written after it would be lost behind it
+                // on recovery: the log takes no more writes.
                 e.addSuppressed(suppressed);
+                failure = new IOException("a failed write could not be taken back: " + suppressed.getMessage(), suppressed);
             }
             throw e;
         }

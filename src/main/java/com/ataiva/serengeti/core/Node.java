@@ -149,10 +149,15 @@ public final class Node implements AutoCloseable {
         }
         this.users = Users.open(dir);
         users.setStamps(clock::now);
-        users.setObserver(clock::observe);
         AtomicReference<SetupToken> token = new AtomicReference<>();
+        boolean recoverLater = false;
         if (!users.isSetUp()) {
-            if (config.adminPassword != null) {
+            if (config.adminPassword != null && users.hasAccounts() && config.clustered()) {
+                // Accounts but no admin: either every admin was deleted, or this node has a tombstone and not yet
+                // the admin that replaced it (each change is pushed on its own). Decide after one account pull
+                // from a peer (see recoverAdmin), so a retired admin does not come back.
+                recoverLater = true;
+            } else if (config.adminPassword != null) {
                 if (users.bootstrapAdmin(config.adminPassword)) {
                     LOG.warning("no admin account was left (admins deleted, perhaps on two nodes at once); the admin "
                             + "is made again from SERENGETI_ADMIN_PASSWORD and replaces the deletion on every node");
@@ -193,6 +198,13 @@ public final class Node implements AutoCloseable {
         if (cluster != null) {
             cluster.setAccounts(users);
             cluster.start();
+            if (recoverLater) {
+                String pw = config.adminPassword;
+                Cluster c = cluster;
+                Thread t = new Thread(() -> recoverAdmin(c, pw, dir), "admin-recovery");
+                t.setDaemon(true);
+                t.start();
+            }
         }
         maintenance = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "tombstone-gc");
@@ -321,12 +333,45 @@ public final class Node implements AutoCloseable {
         return id;
     }
 
-    @Override
+    /** How long a node with accounts but no admin waits for an account pull before it remakes the admin. */
+    static final long RECOVERY_WAIT_MILLIS = 30_000;
+
+    /**
+     * Makes the admin from SERENGETI_ADMIN_PASSWORD, after the accounts have been pulled from a peer once (or
+     * {@link #RECOVERY_WAIT_MILLIS} without one), if there is still no admin then. Meanwhile the other accounts
+     * work as usual.
+     */
+    private void recoverAdmin(Cluster c, String password, Path dir) {
+        long before = c.accountSyncs();
+        long deadline = System.currentTimeMillis() + RECOVERY_WAIT_MILLIS;
+        try {
+            while (c.accountSyncs() == before && System.currentTimeMillis() < deadline && !users.isSetUp()) {
+                Thread.sleep(200);
+            }
+            if (users.isSetUp()) {
+                LOG.info("an admin account came from a peer; SERENGETI_ADMIN_PASSWORD is not used");
+                return;
+            }
+            if (users.bootstrapAdmin(password)) {
+                LOG.warning("no admin account was left (admins deleted, perhaps on two nodes at once"
+                        + (c.accountSyncs() == before ? "; no peer answered for accounts in "
+                                + RECOVERY_WAIT_MILLIS / 1000 + " s" : "") + "); the admin is made again from "
+                        + "SERENGETI_ADMIN_PASSWORD and replaces the deletion on every node");
+            }
+            Files.deleteIfExists(dir.resolve(SetupToken.FILE));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (IOException | RuntimeException e) {
+            LOG.log(java.util.logging.Level.WARNING, "could not make the admin from SERENGETI_ADMIN_PASSWORD", e);
+        }
+    }
+
     /**
      * Stops in the order requests depend on things: first the HTTP server (requests in flight finish against
      * a working cluster layer, later ones get 503 "stopping"), then the cluster, then the storage. Closing the
      * cluster first made a stopping node answer 500 for about a second, also to writes already in its log.
      */
+    @Override
     public void close() throws IOException {
         api.close();
         if (maintenance != null) {

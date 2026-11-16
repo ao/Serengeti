@@ -3,6 +3,7 @@ package com.ataiva.serengeti.core.storage;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -47,6 +48,42 @@ class WalTest {
         for (int i = 0; i < 20; i++) {
             assertEquals(batch(i), got.get(i));
         }
+    }
+
+    @Test
+    void aLargeRecordIsReadBackInPartsAndATornOneIsDiscarded() throws IOException {
+        Path p = dir.resolve("wal.log");
+        List<Op> big = new ArrayList<>();
+        for (int i = 0; i < 4500; i++) {
+            // Braces, brackets, quotes and escapes inside values must not confuse the element scanner.
+            big.add(new Op.Put("d", "t", "row-" + i, Map.of("s", (Object) ("{[\"x\\" + i + "]}é "),
+                    "n", (Object) List.of(1L, Map.of("k", "}")), "big", (Object) "z".repeat(300)), new Stamp(10 + i, 0, "n1")));
+        }
+        try (Wal w = Wal.open(p, FsyncPolicy.ALWAYS, 0, new ArrayList<>())) {
+            w.append(batch(0));
+            w.append(big);
+            w.append(batch(1));
+        }
+        assertTrue(Wal.encode(big).length > Wal.STREAM_RECORD, "the batch is over the streaming size");
+        List<List<Op>> parts = reopen(p);
+        assertEquals(batch(0), parts.get(0));
+        List<Op> joined = new ArrayList<>();
+        for (List<Op> part : parts.subList(1, parts.size() - 1)) {
+            assertTrue(part.size() <= Wal.STREAM_PART);
+            joined.addAll(part);
+        }
+        assertEquals(big, joined, "the parts are the batch, in order");
+        assertEquals(batch(1), parts.get(parts.size() - 1));
+        // A byte changed inside the large record: its checksum fails, so it and what follows are a torn tail.
+        long at = Wal.encode(batch(0)).length + Wal.HEADER + 100_000;
+        try (RandomAccessFile f = new RandomAccessFile(p.toFile(), "rw")) {
+            f.seek(at);
+            int b = f.read();
+            f.seek(at);
+            f.write(b ^ 0x01);
+        }
+        assertEquals(List.of(batch(0)), reopen(p));
+        assertEquals(Wal.encode(batch(0)).length, Files.size(p), "truncated after the last whole record");
     }
 
     @Test

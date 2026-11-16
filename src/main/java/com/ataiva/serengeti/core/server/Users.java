@@ -56,9 +56,20 @@ public final class Users {
     private static final int CACHE_MAX = 10_000;
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9._-]{1,64}");
     /** A bcrypt hash at cost 4 to 14: a peer cannot make each login here cost hours. */
-    private static final Pattern HASH = Pattern.compile("\\$2[aby]\\$(0[4-9]|1[0-4])\\$[./A-Za-z0-9]{53}");
-    /** A peer's stamp may be ahead of this node's clock by at most this. */
-    static final long MAX_AHEAD_MILLIS = 24L * 60 * 60 * 1000;
+    /**
+     * A bcrypt hash this library can check ({@code $2a$}; it refuses {@code $2b$} and {@code $2y$}). From a
+     * peer, at cost 4 to 14, so that a peer cannot make each login here cost hours; in this node's own files
+     * any cost, as the operator chose it.
+     */
+    private static final Pattern PEER_HASH = Pattern.compile("\\$2a\\$(0[4-9]|1[0-4])\\$[./A-Za-z0-9]{53}");
+    private static final Pattern LOCAL_HASH = Pattern.compile("\\$2a\\$(0[4-9]|[12][0-9]|3[01])\\$[./A-Za-z0-9]{53}");
+    /**
+     * A peer's account change stamped further ahead of this node's clock than this is left out, as row changes
+     * are (Cluster.MAX_CLOCK_AHEAD_MILLIS), and taken once the clocks agree.
+     */
+    public static final long MAX_AHEAD_MILLIS = 60_000;
+    /** The admin-change stamp of an account first seen in a users.json that 2.0 or 2.1 wrote: after BOOTSTRAP. */
+    static final Stamp LEGACY = new Stamp(1, 0, "legacy");
     /** The stamp of an account made at first start from the environment: older than any change. */
     static final Stamp BOOTSTRAP = new Stamp(0, 0, "bootstrap");
 
@@ -130,7 +141,6 @@ public final class Users {
     private long version;
     private volatile Supplier<Stamp> stamps;
     private volatile Consumer<List<Map<String, Object>>> listener = changed -> { };
-    private volatile Consumer<Stamp> observer = s -> { };
 
     private Users(Path dir, int cost, LongSupplier clock) {
         this.dir = dir;
@@ -183,12 +193,18 @@ public final class Users {
         // written first, so a stop between the two leaves users.json one behind, and accounts.json is right.
         if (v >= 0 && (uv == v || uv == v - 1)) {
             accounts.putAll(base);
+            if (uv == v - 1) {
+                // Bring users.json up to date now: a rollback to 2.1 would otherwise read the older one, with an
+                // account deleted or demoted in the last save.
+                save(new TreeMap<>(accounts));
+            }
             return;
         }
-        // Written or rewritten by 2.0 or 2.1, which know no stamps: an entry that differs from accounts.json
-        // was changed there, so it is stamped with the file's time (after the BOOTSTRAP stamp, and after what
-        // accounts.json had for it). Read accounts and tombstones are not in users.json and stay as they were.
-        Stamp legacy = new Stamp(Math.max(1, Files.getLastModifiedTime(usersFile).toMillis()), 0, "legacy");
+        // Written or rewritten by 2.0 or 2.1, which know no stamps and cannot make or delete accounts or change
+        // roles, only passwords. So an entry whose hash differs from accounts.json is the account's own
+        // password change: it keeps its admin version (at) and gets the file's time as pw_at. An admin change
+        // made on 2.2 anywhere still wins over it. Read accounts and tombstones are not in users.json and stay.
+        Stamp legacy = new Stamp(Math.max(2, Files.getLastModifiedTime(usersFile).toMillis()), 0, "legacy");
         accounts.putAll(base);
         boolean changed = false;
         for (Map.Entry<?, ?> e : m.entrySet()) {
@@ -203,12 +219,21 @@ public final class Users {
             } catch (IllegalArgumentException ex) {
                 throw new IOException(usersFile + ": " + ex.getMessage() + " for " + name);
             }
+            if (!LOCAL_HASH.matcher(h).matches()) {
+                throw new IOException(usersFile + ": the hash of " + name + " is not a bcrypt $2a$ hash this version"
+                        + " can check");
+            }
             Account b = base.get(name);
-            if (b != null && !b.deleted() && b.hash().equals(h) && b.role() == role) {
+            if (b != null && !b.deleted() && b.hash().equals(h)) {
                 continue;
             }
-            Stamp at = b == null ? legacy : Stamp.max(legacy, after(b.at(), b.pwAt(), legacy));
-            accounts.put(name, new Account(h, role, at, Stamp.ZERO));
+            if (b != null && b.deleted()) {
+                continue; // deleted on 2.2; an older version cannot have made it again
+            }
+            Account acct = b == null
+                    ? new Account(h, role, LEGACY, legacy)
+                    : new Account(h, b.role(), b.at(), Stamp.max(legacy, after(b.at(), b.pwAt(), legacy)));
+            accounts.put(name, acct);
             changed = true;
         }
         if (changed || v < 0) {
@@ -235,11 +260,6 @@ public final class Users {
     /** Called, outside any lock, with the entries of every change made on this node (for its peers). */
     public void setListener(Consumer<List<Map<String, Object>>> listener) {
         this.listener = listener == null ? changed -> { } : listener;
-    }
-
-    /** Called with the stamps of accounts merged from peers, so the node's clock moves past them. */
-    public void setObserver(Consumer<Stamp> observer) {
-        this.observer = observer == null ? s -> { } : observer;
     }
 
     /** True while an admin exists: /v1/setup is refused then. */
@@ -329,7 +349,7 @@ public final class Users {
             synchronized (this) {
                 was = accounts.get(user);
             }
-            if (was == null || was.deleted() || current == null || !BCrypt.checkpw(current, was.hash())) {
+            if (was == null || was.deleted() || current == null || !matches(current, was.hash())) {
                 return false;
             }
             Map<String, Object> entry;
@@ -399,7 +419,12 @@ public final class Users {
     /** {@code now}, or just after the later of {@code a} and {@code b} if {@code now} is not after both. */
     private static Stamp after(Stamp a, Stamp b, Stamp now) {
         Stamp last = Stamp.max(a, b);
-        return now.after(last) ? now : new Stamp(last.wall(), Math.addExact(last.counter(), 1), now.node());
+        if (now.after(last)) {
+            return now;
+        }
+        // At the counter's limit (only a hostile or broken peer gets there), the next millisecond instead.
+        return last.counter() == Integer.MAX_VALUE ? new Stamp(last.wall() + 1, 0, now.node())
+                : new Stamp(last.wall(), last.counter() + 1, now.node());
     }
 
     private int admins() {
@@ -446,7 +471,7 @@ public final class Users {
         return m;
     }
 
-    /** One entry, from a peer ({@code fromPeer}: its stamps must not be far ahead of this node's clock). */
+    /** One entry, from a peer ({@code fromPeer}, which bounds the bcrypt cost) or from this node's own file. */
     private Map.Entry<String, Account> parse(Object o, boolean fromPeer) {
         if (!(o instanceof Map<?, ?> m) || !(m.get("user") instanceof String user) || nameProblem(user) != null
                 || !(m.get("at") instanceof String at)) {
@@ -454,16 +479,11 @@ public final class Users {
         }
         Stamp stamp = Stamp.parse(at);
         Stamp pwStamp = m.get("pw_at") instanceof String p ? Stamp.parse(p) : Stamp.ZERO;
-        if (fromPeer) {
-            long limit = clock.getAsLong() + MAX_AHEAD_MILLIS;
-            if (stamp.wall() > limit || pwStamp.wall() > limit) {
-                throw new IllegalArgumentException("account entry for " + user + " is stamped more than a day ahead");
-            }
-        }
+        Pattern hashes = fromPeer ? PEER_HASH : LOCAL_HASH;
         Account a;
         if (Boolean.TRUE.equals(m.get("deleted"))) {
             a = new Account(null, null, stamp, pwStamp);
-        } else if (m.get("hash") instanceof String h && HASH.matcher(h).matches() && m.get("role") instanceof String r) {
+        } else if (m.get("hash") instanceof String h && hashes.matcher(h).matches() && m.get("role") instanceof String r) {
             a = new Account(h, Role.parse(r), stamp, pwStamp);
         } else {
             throw new IllegalArgumentException("malformed account entry for " + user);
@@ -474,20 +494,37 @@ public final class Users {
     /** Most entries taken in one merge, to bound what a peer can make a node hold. */
     static final int MAX_ENTRIES = 10_000;
 
+    /** What a merge did: names changed, and entries left out for being stamped too far ahead. */
+    public record Merged(int changed, int ahead) {}
+
+    /** {@link #mergeFrom}, returning only how many names changed. */
+    public int merge(List<?> entries) throws IOException {
+        return mergeFrom(entries).changed();
+    }
+
     /**
      * Merges accounts from a peer: for each name the newer version wins (see {@link Account#newer}), so merging
-     * is idempotent and order-independent. Returns how many names changed; writes the files when any did.
+     * is idempotent and order-independent. Writes the files when any name changed. An entry stamped more than
+     * {@link #MAX_AHEAD_MILLIS} ahead of this node's clock is left out (and counted), as row changes are: the
+     * peer sends it again once the clocks agree.
      *
      * @throws IllegalArgumentException if an entry is malformed; nothing is merged then
      */
-    public int merge(List<?> entries) throws IOException {
+    public Merged mergeFrom(List<?> entries) throws IOException {
         if (entries.size() > MAX_ENTRIES) {
             throw new IllegalArgumentException("at most " + MAX_ENTRIES + " accounts");
         }
         Map<String, Account> in = new HashMap<>();
+        long limit = clock.getAsLong() + MAX_AHEAD_MILLIS;
+        int ahead = 0;
         for (Object o : entries) {
             Map.Entry<String, Account> e = parse(o, true);
-            in.merge(e.getKey(), e.getValue(), Account::newer);
+            Account a = e.getValue();
+            if (a.at().wall() > limit || a.pwAt().wall() > limit) {
+                ahead++;
+                continue;
+            }
+            in.merge(e.getKey(), a, Account::newer);
         }
         int changed = 0;
         synchronized (this) {
@@ -507,10 +544,7 @@ public final class Users {
                 cache.clear();
             }
         }
-        for (Account a : in.values()) {
-            observer.accept(Stamp.max(a.at(), a.pwAt()));
-        }
-        return changed;
+        return new Merged(changed, ahead);
     }
 
     /** SHA-256 over the entries, to compare with a peer's cheaply. */
@@ -591,11 +625,20 @@ public final class Users {
             }
             // Check against a fixed hash for unknown users, so response time does not reveal which names exist.
             String hash = current != null ? current.hash() : dummyHash();
-            if (!BCrypt.checkpw(password, hash) || current == null) {
+            if (!matches(password, hash) || current == null) {
                 return Optional.empty();
             }
             // The account may change while bcrypt runs (a new password, a merge from a peer): look again.
             a = current;
+        }
+    }
+
+    /** bcrypt's check. A hash it cannot read (another revision, a broken salt) matches nothing. */
+    private static boolean matches(String password, String hash) {
+        try {
+            return BCrypt.checkpw(password, hash);
+        } catch (IllegalArgumentException e) {
+            return false;
         }
     }
 

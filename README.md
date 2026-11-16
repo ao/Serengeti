@@ -76,7 +76,7 @@ quick start is run by [docs/quickstart.sh](docs/quickstart.sh), and the examples
 [examples/run.sh](examples/run.sh); both are run in CI.
 
 Without Docker, build with `mvn package` (Java 17 or later) and run
-`java -jar target/Serengeti-2.1.0-SNAPSHOT-jar-with-dependencies.jar`. It listens on 127.0.0.1:1985 and
+`java -jar target/Serengeti-2.2.0-SNAPSHOT-jar-with-dependencies.jar`. It listens on 127.0.0.1:1985 and
 keeps its data in `./data`.
 
 ## A cluster
