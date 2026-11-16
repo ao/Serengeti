@@ -32,6 +32,11 @@ GitHub release notes and tags.
   acknowledged while cut off are not lost.
 
 ### Fixed
+- A node that had missed writes could run itself and its peers out of heap while catching up: it asked
+  every peer at once for the rows of every differing bucket, in pages of 200 buckets, and a few thousand
+  missed inserts touch most buckets. A node now runs at most two row pulls at once, sizes each page from
+  the last (about 2,000 rows or 4 MiB), and builds at most two pages for its peers at once, answering 503
+  to more. Found by 2.2's soak test; `tests/memory/catchup.sh` reproduces it.
 - A running node sometimes answered nothing for 20 to 83 s (2.0.0 has this too). It set the JDK server's
   60 s limit on reading a response; the server closes an overdue connection while holding the set that
   every request passes through, and closing a TLS connection waits for a write blocked on a peer that

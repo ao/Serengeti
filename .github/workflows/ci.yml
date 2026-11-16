@@ -71,6 +71,14 @@ jobs:
       - name: 2.0.0 data opened by this build; a 3-node cluster upgraded one node at a time
         run: SKIP_BUILD=1 IMAGE=serengeti:upgrade OLD_IMAGE=ataiva/serengeti:2.0.0 tests/upgrade/run.sh
 
+  catchup:
+    name: Catching up within memory (amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: A node that missed writes catches up without running out of memory
+        run: IMAGE=serengeti:catchup tests/memory/catchup.sh
+
   quickstart:
     name: Quick start (amd64)
     runs-on: ubuntu-24.04
