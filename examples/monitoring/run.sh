@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests examples/monitoring as its comments say, with a built image: the alert rules' own unit tests, then
 # the three nodes, Prometheus and Grafana together. Prometheus must scrape every node over HTTPS with the
-# read-only account, load the rules and raise an alert for a stopped node; Grafana must need its password,
+# metrics account, load the rules and raise an alert for a stopped node; Grafana must need its password,
 # have the dashboard and get answers for its queries; the published ports must be on 127.0.0.1 only.
 # Everything it makes is removed at the end.
 #
@@ -63,15 +63,20 @@ done
 expect "every node is ready" "200 200 200" "$(ready 19851) $(ready 19852) $(ready 19853)"
 out=$(dc run --rm metrics-account 2>&1) && rc=0 || rc=$?
 expect "metrics-account makes the account" 0 "$rc"
-contains "with the read role" '"role":"read"' "$out"
+contains "with the metrics role" '"role":"metrics"' "$out"
 expect "running it again changes nothing and still succeeds" 0 "$(dc run --rm metrics-account >/dev/null 2>&1; echo $?)"
 mq() { # port user password query -> status
   curl -s -o /dev/null -w '%{http_code}' --max-time 10 --cacert ca.pem -u "$2:$3" -H 'Content-Type: application/json' \
     --data-binary "{\"query\": \"$4\"}" "https://127.0.0.1:$1/v1/query" || true
 }
-for _ in $(seq 30); do [ "$(mq 19853 metrics "$MPW" 'SHOW DATABASES')" = 200 ] && break; sleep 1; done
-expect "the account reaches n3 too" 200 "$(mq 19853 metrics "$MPW" 'SHOW DATABASES')"
-expect "and cannot write" 403 "$(mq 19851 metrics "$MPW" 'CREATE DATABASE nope')"
+mget() { # port path -> status, as the metrics account
+  curl -s -o /dev/null -w '%{http_code}' --max-time 10 --cacert ca.pem -u "metrics:$MPW" "https://127.0.0.1:$1$2" || true
+}
+for _ in $(seq 30); do [ "$(mget 19853 /metrics)" = 200 ] && break; sleep 1; done
+expect "the account reaches n3's metrics too" 200 "$(mget 19853 /metrics)"
+expect "and cannot read data" 403 "$(mq 19851 metrics "$MPW" 'SHOW DATABASES')"
+expect "or write" 403 "$(mq 19851 metrics "$MPW" 'CREATE DATABASE nope')"
+expect "or open the console" 403 "$(mget 19852 /)"
 
 prom() { curl -s --max-time 10 "http://127.0.0.1:19090$1" || true; }
 pq() { curl -s --max-time 10 --data-urlencode "query=$1" "http://127.0.0.1:19090/api/v1/query" || true; }

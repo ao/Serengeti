@@ -523,4 +523,49 @@ class HttpApiTest {
         assertEquals(Optional.of(Users.Role.READ), users.verify("reader", "reader password 2"));
         assertEquals(Map.of("admin", Users.Role.ADMIN, "reader", Users.Role.READ, "writer", Users.Role.WRITE), users.list());
     }
+
+    @Test
+    void theMetricsRoleReachesMetricsStatusAndItsPasswordAndNothingElse() throws Exception {
+        setUp();
+        String pw = "scraper password 1";
+        java.util.concurrent.atomic.AtomicInteger queriesRun = new java.util.concurrent.atomic.AtomicInteger();
+        queries = (q, r) -> {
+            queriesRun.incrementAndGet();
+            return Map.of("echo", q);
+        };
+        assertEquals(201, as("admin", PASSWORD, "PUT", "/v1/users/scraper",
+                "{\"password\": \"" + pw + "\", \"role\": \"metrics\"}").statusCode());
+        assertEquals(Users.Role.METRICS, users.list().get("scraper"));
+        assertEquals(200, as("scraper", pw, "GET", "/metrics", null).statusCode());
+        assertEquals(200, as("scraper", pw, "GET", "/v1/status", null).statusCode());
+        assertEquals(200, as("admin", PASSWORD, "POST", "/v1/query", "{\"query\": \"SHOW DATABASES\"}").statusCode());
+        assertEquals(1, queriesRun.get(), "the counting query service is in place");
+        int before = queriesRun.get();
+        for (String[] r : new String[][] {
+            {"POST", "/v1/query", "{\"query\": \"SHOW DATABASES\"}"},
+            {"POST", "/v1/query", "{\"query\": \"SELECT * FROM d.t\"}"},
+            {"POST", "/post", "{\"query\": \"SHOW DATABASES\"}"},
+            {"GET", "/v1/changes?db=d&table=t", null},
+            {"GET", "/", null}, {"GET", "/app.js", null}, {"GET", "/app.css", null},
+            {"GET", "/v1/users", null},
+            {"PUT", "/v1/users/scraper", "{\"role\": \"admin\"}"},
+            {"DELETE", "/v1/users/admin", null},
+            {"GET", "/v1/backup", null},
+            {"GET", "/no/such/route", null},
+        }) {
+            HttpResponse<String> resp = as("scraper", pw, r[0], r[1], r[2]);
+            assertEquals(403, resp.statusCode(), r[0] + " " + r[1] + ": " + resp.body());
+            assertTrue(resp.body().contains("metrics role"), resp.body());
+        }
+        assertEquals(before, queriesRun.get(), "no query reached the query service");
+        assertEquals(Users.Role.METRICS, users.list().get("scraper"), "the role is unchanged");
+        // It changes its own password and keeps its role.
+        assertEquals(200, as("scraper", pw, "POST", "/v1/password", "{\"password\": \"scraper password 2\"}").statusCode());
+        assertEquals(Optional.of(Users.Role.METRICS), users.verify("scraper", "scraper password 2"));
+        // An unknown role is refused with the list of roles.
+        HttpResponse<String> bad = send(authed(req("PUT", "/v1/users/x", "application/json",
+                "{\"password\": \"long enough pw 1\", \"role\": \"monitor\"}")));
+        assertEquals(400, bad.statusCode());
+        assertTrue(bad.body().contains("admin, write, read or metrics"), bad.body());
+    }
 }

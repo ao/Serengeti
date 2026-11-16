@@ -12,7 +12,7 @@ here has a date.
   databases, tables and single-column indexes, SHOW, INSERT, SELECT with WHERE (comparisons, IN, LIKE,
   IS NULL), ORDER BY and LIMIT, COUNT, SUM, MIN, MAX and AVG with GROUP BY, UPDATE and DELETE.
 - An HTTP API ([docs/API.md](docs/API.md)) in which every route except `GET /health` and `GET /ready`
-  needs HTTP Basic credentials. Accounts have a role (read, write or admin) and replicate across the
+  needs HTTP Basic credentials. Accounts have a role (metrics, read, write or admin) and replicate across the
   cluster. The first admin password comes from the environment, a file or a one-time setup token.
   Failed logins are limited per address.
 - A change feed: `GET /v1/changes` follows a table's changes with a cursor and a long poll.

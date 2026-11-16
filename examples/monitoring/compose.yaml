@@ -27,21 +27,20 @@ secrets:
 
 services:
   metrics-account:
-    # Makes (or updates) the read-only account "metrics" on n1; the cluster copies it to the others.
+    # Makes (or updates) the account "metrics", with the metrics role, on n1; the cluster copies it to the others.
     image: curlimages/curl:8.11.1
     profiles: [setup]
     volumes: [certs:/certs:ro]
     secrets: [metrics_password]
     environment:
       SERENGETI_ADMIN_PASSWORD: ${SERENGETI_ADMIN_PASSWORD:?set SERENGETI_ADMIN_PASSWORD in .env}
-      SERENGETI_METRICS_PASSWORD: ${SERENGETI_METRICS_PASSWORD:?set SERENGETI_METRICS_PASSWORD in .env}
     entrypoint: [/bin/sh, -c]
     command:
       - |
         set -eu
         esc() { sed 's/\\/\\\\/g; s/"/\\"/g'; }
         printf 'user = "admin:%s"\n' "$$(printf %s "$$SERENGETI_ADMIN_PASSWORD" | esc)" > /tmp/curlrc
-        printf '{"password": "%s", "role": "read"}' "$$(esc < /run/secrets/metrics_password)" > /tmp/body
+        printf '{"password": "%s", "role": "metrics"}' "$$(esc < /run/secrets/metrics_password)" > /tmp/body
         curl -sS --fail-with-body --retry 30 --retry-delay 2 --retry-all-errors -K /tmp/curlrc \
           --cacert /certs/ca.pem -X PUT -H 'Content-Type: application/json' --data-binary @/tmp/body \
           https://n1:1985/v1/users/metrics

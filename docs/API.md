@@ -173,7 +173,7 @@ change is made, and an account deleted meanwhile gets 401.
 (and table `T`, if given) that this node applied after the cursor, in the order it applied them: rows
 written here, rows merged from other nodes, and tables and databases dropped or created. With nothing new it waits up
 to `wait` seconds (0 to 60, default 0) for a change; `limit` is 1 to 10,000 (default 1,000). Any role may
-follow changes.
+follow changes, except `metrics`.
 
 ```
 GET /v1/changes?db=shop&table=items&after=3f9a1c22e07b:41&wait=30
@@ -199,13 +199,18 @@ wait at once; more answer at once, with whatever there is.
 
 ## Accounts
 
-An account has one of three roles:
+An account has one of four roles:
 
 | Role | May |
 |---|---|
-| `read` | SELECT and SHOW, `/v1/status`, `/metrics`, the console, and change its own password. |
+| `metrics` | `GET /metrics`, `GET /v1/status` and change its own password; nothing of the data. Every other route answers 403. |
+| `read` | Also SELECT and SHOW, the change feed and the console. |
 | `write` | Also INSERT, UPDATE, DELETE, and CREATE and DROP of databases, tables and indexes. |
 | `admin` | Also manage accounts (`/v1/users`) and take backups. |
+
+`metrics` is for a monitoring system, which then holds a password that cannot read the data. Read and
+metrics accounts are not in the `users.json` that 2.0 and 2.1 read, so after a rollback to either they do
+not exist.
 
 The first admin comes from `SERENGETI_ADMIN_PASSWORD` or the setup token. An admin then makes the others:
 
@@ -253,7 +258,7 @@ Serengeti's code.
 |---|---|
 | 400 | The body is not the expected JSON, or the query is invalid. Query errors give the position: `expected FROM at position 9`. |
 | 401 | Missing or wrong credentials. The response has `WWW-Authenticate: Basic realm="serengeti"`. |
-| 403 | Wrong setup token, a POST whose `Origin` header names another site, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin). |
+| 403 | Wrong setup token, a POST whose `Origin` header names another site, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin, anything but `/metrics`, `/v1/status` and `/v1/password` by a metrics account). |
 | 404 | No such route, whatever the method. |
 | 405 | Wrong method for the route. `Allow` names the methods it takes. |
 | 409 | Setup when an admin password exists, or deleting or demoting the last admin. |

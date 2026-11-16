@@ -1,8 +1,8 @@
 # Monitoring Serengeti with Prometheus and Grafana
 
 [compose.yaml](compose.yaml) adds Prometheus and Grafana to the three-node cluster of
-[../cluster](../cluster/compose.yaml). Prometheus scrapes `GET /metrics` on every node over HTTPS with a
-read-only account and evaluates [alerts.yml](alerts.yml); Grafana shows the dashboard
+[../cluster](../cluster/compose.yaml). Prometheus scrapes `GET /metrics` on every node over HTTPS as an
+account with the `metrics` role and evaluates [alerts.yml](alerts.yml); Grafana shows the dashboard
 [serengeti.json](grafana/dashboards/serengeti.json). The series are listed in
 [docs/API.md](../../docs/API.md#metrics).
 
@@ -21,7 +21,7 @@ The comments at the top of `compose.yaml` have the same steps.
 
 2. `docker compose run --rm certs` makes the certificates, once.
 3. `docker compose up -d` starts the nodes, Prometheus and Grafana.
-4. `docker compose run --rm metrics-account` makes the account `metrics` with the `read` role on n1; the
+4. `docker compose run --rm metrics-account` makes the account `metrics` with the `metrics` role on n1; the
    cluster copies it to the others within seconds. Run it again after changing
    `SERENGETI_METRICS_PASSWORD`, then `docker compose restart prometheus`.
 5. Grafana is at http://127.0.0.1:13000 (user `admin`), Prometheus at http://127.0.0.1:19090.
@@ -61,13 +61,13 @@ The example evaluates the alerts but sends them nowhere. To be told, add an Aler
 
 ## Notes
 
-- The `read` role may also run SELECT on every table. Serengeti has no role for metrics alone, so the
-  password Prometheus holds can read the data; keep it as safe as the data.
+- The `metrics` role may use `GET /metrics`, `GET /v1/status` and change its own password, and gets 403
+  for everything else, so the password Prometheus holds cannot read or change the data.
 - With nodes on separate hosts, list each host in `static_configs` of `prometheus.yml` and make the
   certificates with those names (`serengeti-certs n1=host1.example.com ...`).
 - Prometheus keeps 15 days of samples in its volume (`--storage.tsdb.retention.time`).
 
 [run.sh](run.sh) runs these steps with a built image and checks the result: the rules' unit tests pass,
-Prometheus scrapes the three nodes and loads 14 rules, the account cannot write, Grafana refuses a wrong
-password, has the dashboard and answers every one of its queries, SerengetiDown is raised for a stopped
-node, and every published port is on 127.0.0.1.
+Prometheus scrapes the three nodes and loads 14 rules, the account cannot read or write data, Grafana
+refuses a wrong password, has the dashboard and answers every one of its queries, SerengetiDown is raised
+for a stopped node, and every published port is on 127.0.0.1.

@@ -153,9 +153,17 @@ class UsersTest {
         assertEquals(Users.Role.WRITE, Users.Role.parse("WRITE"));
         assertEquals(Users.Role.WRITE, Users.Role.parse("user"));
         assertEquals(Users.Role.READ, Users.Role.parse("read"));
+        assertEquals(Users.Role.METRICS, Users.Role.parse("Metrics"));
         assertThrows(IllegalArgumentException.class, () -> Users.Role.parse("root"));
         assertFalse(Users.Role.READ.mayWrite());
         assertTrue(Users.Role.WRITE.mayWrite());
+        assertTrue(Users.Role.ADMIN.mayWrite());
+        assertFalse(Users.Role.METRICS.mayWrite());
+        assertTrue(Users.Role.READ.mayRead());
+        assertFalse(Users.Role.METRICS.mayRead());
+        for (Users.Role r : Users.Role.values()) {
+            assertEquals(r, Users.Role.parse(r.label()));
+        }
     }
 
     @Test
@@ -258,13 +266,14 @@ class UsersTest {
         a.setPassword("admin", PW, Users.Role.ADMIN);
         a.setPassword("writer", PW, Users.Role.WRITE);
         a.setPassword("reader", PW, Users.Role.READ);
+        a.setPassword("scraper", PW, Users.Role.METRICS);
         a.setPassword("gone", PW, Users.Role.WRITE);
         a.delete("gone");
         var root = com.ataiva.serengeti.core.json.Json.parseObject(Files.readString(dir.resolve("a").resolve(Users.FILE)));
         @SuppressWarnings("unchecked")
         var users = (java.util.Map<String, java.util.Map<String, Object>>) root.get("users");
-        // 2.0 and 2.1 read "users" and know only the roles admin and user; read accounts and tombstones are
-        // only in accounts.json, which they do not read.
+        // 2.0 and 2.1 read "users" and know only the roles admin and user (they would take any other role
+        // for user); read and metrics accounts and tombstones are only in accounts.json, which they do not read.
         assertEquals(java.util.Set.of("admin", "writer"), users.keySet());
         assertEquals("user", users.get("writer").get("role"));
         assertEquals(java.util.Set.of("_v", "users"), root.keySet());
@@ -281,6 +290,7 @@ class UsersTest {
         assertEquals(Optional.of(Users.Role.ADMIN), old.verify("admin", PW));
         assertEquals(a.digest(), old.digest(), "nothing changed there: every stamp and the read account are kept");
         assertEquals(Users.Role.READ, old.list().get("reader"));
+        assertEquals(Users.Role.METRICS, old.list().get("scraper"));
         assertFalse(old.list().containsKey("gone"));
     }
 

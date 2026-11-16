@@ -127,8 +127,9 @@ query runs, not what it returns. [docs/QUERY.md](docs/QUERY.md) has the rules.
 
 ## Accounts
 
-The admin makes an account for each application or person, with one of three roles: `read` (SELECT and
-SHOW), `write` (also writes and schema changes) or `admin` (also accounts and backups).
+The admin makes an account for each application or person, with one of four roles: `metrics` (`/metrics`
+and `/v1/status` only, for a monitoring system), `read` (SELECT and SHOW), `write` (also writes and schema
+changes) or `admin` (also accounts and backups).
 
 ```sh
 curl -s -u "admin:$SERENGETI_PASSWORD" -X PUT -H 'Content-Type: application/json' \

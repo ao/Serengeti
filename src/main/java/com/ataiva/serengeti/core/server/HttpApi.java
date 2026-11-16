@@ -174,6 +174,9 @@ public final class HttpApi implements AutoCloseable {
     /** How long close() waits for the JDK server to stop. */
     static final long STOP_MILLIS = 3_000;
 
+    /** The routes an account with the metrics role may use; it gets 403 on every other authenticated one. */
+    static final java.util.Set<String> METRICS_ROUTES = java.util.Set.of("/metrics", "/v1/status", "/v1/password");
+
     private volatile boolean stopping;
 
     private void handle(HttpExchange ex) throws IOException {
@@ -257,6 +260,10 @@ public final class HttpApi implements AutoCloseable {
                     + "from the data directory");
         }
         Users.Role role = authenticate(ex, caller);
+        if (!role.mayRead() && !METRICS_ROUTES.contains(path)) {
+            // Named routes, so anything added later is closed to this role until it is listed here.
+            throw new HttpError(403, "the metrics role may only use GET /metrics, GET /v1/status and POST /v1/password");
+        }
         if (path.equals("/v1/users") || path.startsWith("/v1/users/")) {
             users(ex, method, path, role);
             return;
@@ -397,7 +404,7 @@ public final class HttpApi implements AutoCloseable {
                     Users.Role r = null;
                     if (body.get("role") != null) {
                         if (!(body.get("role") instanceof String s)) {
-                            throw new HttpError(400, "role must be admin, write or read");
+                            throw new HttpError(400, "role must be admin, write, read or metrics");
                         }
                         try {
                             r = Users.Role.parse(s);

@@ -80,24 +80,35 @@ public final class Users {
         /** Reads, writes and schema changes. */
         WRITE,
         /** SELECT and SHOW only. */
-        READ;
+        READ,
+        /** GET /metrics and /v1/status, and its own password: nothing of the data. */
+        METRICS;
 
         public String label() {
             return name().toLowerCase(java.util.Locale.ROOT);
         }
 
-        /** "admin", "write" or "read"; "user", the 2.0 name for an account that is not admin, means write. */
+        /**
+         * "admin", "write", "read" or "metrics"; "user", the 2.0 name for an account that is not admin, means
+         * write.
+         */
         public static Role parse(String s) {
             return switch (s.toLowerCase(java.util.Locale.ROOT)) {
                 case "admin" -> ADMIN;
                 case "write", "user" -> WRITE;
                 case "read" -> READ;
-                default -> throw new IllegalArgumentException("role must be admin, write or read");
+                case "metrics" -> METRICS;
+                default -> throw new IllegalArgumentException("role must be admin, write, read or metrics");
             };
         }
 
         public boolean mayWrite() {
-            return this != READ;
+            return this == ADMIN || this == WRITE;
+        }
+
+        /** Whether the role may see data: queries, the change feed, the console. */
+        public boolean mayRead() {
+            return this != METRICS;
         }
     }
 
@@ -601,7 +612,8 @@ public final class Users {
         Map<String, Object> users = new LinkedHashMap<>();
         next.forEach((name, a) -> {
             all.add(entry(name, a));
-            if (!a.deleted() && a.role() != Role.READ) {
+            // Only the roles 2.0 and 2.1 know: they would take any other one for a write account.
+            if (!a.deleted() && (a.role() == Role.ADMIN || a.role() == Role.WRITE)) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("hash", a.hash());
                 m.put("role", a.role() == Role.WRITE ? "user" : a.role().label());

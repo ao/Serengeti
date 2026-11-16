@@ -1,4 +1,4 @@
-# Scrapes the three nodes of ../cluster/compose.yaml over HTTPS as the read-only account "metrics".
+# Scrapes the three nodes of ../cluster/compose.yaml over HTTPS as the account "metrics" (the metrics role).
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
