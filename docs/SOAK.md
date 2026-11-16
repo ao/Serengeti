@@ -172,7 +172,7 @@ stopping" and `Connection: close`, and has a closed cluster layer refuse writes 
 503. Against an image of e840144 the scenario passed 3 of 3 times (the stopping node answered 9 requests
 with that 503 and none with 500), and three 10-minute runs had no 5xx but 503.
 
-### 2. A running node sometimes answers nothing for 20 to 80 seconds (open)
+### 2. A running node sometimes answers nothing for 20 to 80 seconds (fixed in 5c2426f and 8970539)
 
 Check 10 finds stretches in which a node that the nemesis had running and not paused answered none of
 its clients' requests: they time out after 12 s, and new connections do not get through the TLS
@@ -204,11 +204,13 @@ Related, and not confirmed: in the run with seed 1111, 2 of 23 `docker stop`s of
 and ended with SIGKILL (exit code 137); the other stops took under 2 s. `HttpServer.stop()` closes every
 connection, and would wait on a stuck write in the same way.
 
-Possible fixes: leave the JDK's request and response time limits off (their task closes connections
-while holding the server-wide lock), or serve `/internal/*` from a separate `HttpServer` with its own
-threads, so that a peer that stops reading cannot hold up clients; and bound how much one internal
-response can have unsent (smaller row pages). A unit test could reproduce the convoy with a peer that
-sends an internal request and then stops reading its socket, and a low `maxRspTime`.
+The fix: 5c2426f no longer sets `maxRspTime`, so the task never closes a connection whose response is
+being written; `maxReqTime` (30 s to send a request) stays, for slow senders. 8970539 waits at most 3 s
+for `HttpServer.stop()`, then closes the cluster layer and the storage and exits, so a stop no longer
+waits for a stuck write either; `TlsTest` has a client that asks for a large backup and stops reading,
+and the old close hung there. On be63206 (the first fix), two 30-minute runs on 3 and 5 nodes had no
+stall; on 8970539 every one of 28 stops and restarts exited on SIGTERM within 3.5 s (on be63206, 4 of 54
+stops were killed after docker's 10 s).
 
 ## Runs
 
@@ -246,3 +248,24 @@ before check 10 existed, and it was run on their files afterwards:
 | 1001 | 3 | 10 | 40,961 | 14,025 / 8,072 | 75 (1) | pass | pass |
 | 9009 | 3 | 10 | 42,661 | 14,758 / 8,377 | 75 (2) | pass | pass |
 | 1111 | 3 | 30 | 106,049 | 34,173 / 19,901 | 234 (6) | pass | 1 stall (n1, 21 s, with a thread dump) |
+
+Engine be63206 (the first fix for finding 2):
+
+| Seed | Nodes | Minutes | Operations | Acknowledged writes, majority / local | Faults | Checks 1-9 | Check 10 |
+|---|---:|---:|---:|---|---|---|---|
+| 2626 | 3 | 30 | 116,288 | 37,508 / 21,824 | 229 (6) | pass | pass |
+| 3737 | 5 (2 GiB each) | 30 | 153,656 | 49,989 / 28,861 | 320 (6) | pass | pass |
+| graceful-stop 4 | 3 | 0.3 | 8,878 | 3,866 / 2,103 | 1 stop | pass | pass |
+
+Of the stops in the two 30-minute runs, 4 of 54 ended in docker's SIGKILL after 10 s: the stop waited for
+a stuck write, as described under finding 2.
+
+Engine 8970539 (the stop bounded at 3 s), each stop and restart timed:
+
+| Seed | Nodes | Minutes | Operations | Acknowledged writes, majority / local | Faults | Checks 1-9 | Check 10 |
+|---|---:|---:|---:|---|---|---|---|
+| graceful-stop 5, 6, 7 | 3 | 0.3 each | 8,816; 8,848; 9,000 | 3,971 / 2,055; 3,925 / 2,035; 4,062 / 2,106 | 1 stop each | pass | pass |
+| 4848 | 3 | 30 | 107,195 | 34,459 / 20,016 | 225 (7) | pass | pass |
+
+All 28 stops and restarts exited on SIGTERM (code 143), in 0.2 to 3.5 s; the three at 3.5 s are the 3 s
+wait running out.
