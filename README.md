@@ -225,14 +225,15 @@ the spread and every table.
 
 | | 2.1 | 2.2 |
 |---|---:|---:|
-| One node, each write fsynced, 32 clients | 2,632 writes/s | 4,822 writes/s |
-| Three nodes, majority writes, 32 clients | 1,309 writes/s | 2,349 writes/s |
-| `WHERE n = x` over 100,000 rows (a scan), 8 clients | 228 reads/s | 467 reads/s |
-| Lookup by `_id` in 100,000 rows, 8 clients | 16,546 reads/s | 15,244 reads/s |
+| One node, each write fsynced, 32 clients | 2,640 writes/s | 4,827 writes/s |
+| Three nodes, majority writes, 32 clients | 1,322 writes/s | 2,123 writes/s |
+| `WHERE n = x` over 100,000 rows (a scan), 8 clients | 239 reads/s | 608 reads/s |
+| `COUNT(*)` of 100,000 rows, 8 clients | 1,361 reads/s | 973 reads/s |
+| Lookup by `_id` in 100,000 rows, 8 clients | 16,724 reads/s | 14,618 reads/s |
 
-2.2 answers on 64 request threads instead of 16 and its image uses G1. The cheapest requests are 6 to 12%
-slower, and non-durable writes (`fsync=interval`) at 32 clients 12 to 15% slower; see
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md#22-against-21).
+2.2 answers on 64 request threads instead of 16 and its image uses G1, which scans faster and counts slower
+than the SerialGC 2.1's image ends up with. The cheapest requests are 12 to 16% slower, and non-durable
+writes (`fsync=interval`) 7 to 11% slower; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md#22-against-21).
 
 2.1 against 2.0.0, measured in an earlier session:
 
