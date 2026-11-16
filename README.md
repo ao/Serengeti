@@ -156,8 +156,9 @@ curl -s -u "admin:$SERENGETI_PASSWORD" -X PUT -H 'Content-Type: application/json
 # {"user":"shop-app","role":"write","databases":["shop"]}
 ```
 
-In a cluster, accounts replicate like rows: the newest change to a name wins on every node, and a node that
-was down catches up. [docs/API.md](docs/API.md#accounts) has the rest.
+In a cluster, accounts replicate: an account's password and its access (role and databases) merge apart, the
+newest change to each winning on every node, and a node that was down catches up.
+[docs/API.md](docs/API.md#accounts) has the rest.
 
 ## Following changes
 
