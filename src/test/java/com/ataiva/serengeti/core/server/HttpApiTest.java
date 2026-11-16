@@ -369,7 +369,6 @@ class HttpApiTest {
                 .header("Authorization", basic("admin", "a new long password"))).statusCode());
     }
 
-    @Test
     /** These were 500s: the failed read's exception was thrown again by close() and added to itself. */
     @Test
     void aBodyThatCannotBeReadIs400() throws Exception {
