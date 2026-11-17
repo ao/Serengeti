@@ -347,3 +347,14 @@ clients' time from sending a request to getting a 503, summed over all ten clien
 
 The same seed starts the same faults at the same times; how many operations fit between them depends on
 how fast the nodes answer.
+
+Hours on 5 nodes as the query additions of 2026-11-17 went in, a new seed each, so the rows are not
+comparable with each other. From a07c430 on, check 6 also reads ORDER BY through each index and an OR of two
+indexes (a 10-minute run on 3 nodes, seed 2220, checked it first: 38,002 operations, 10 of 10):
+
+| Engine | Seed | Operations | Acknowledged writes, majority / local | Faults | Checks |
+|---|---:|---:|---|---:|---|
+| 89fecb9 (review 22f: feed durability, the planner) | 2217 | 313,877 | 94,956 / 55,825 | 650 | 10 of 10 |
+| 431166c (UPDATE arithmetic, ON CONFLICT, ORDER BY through an index) | 2218 | 330,728 | 101,901 / 60,030 | 597 | 10 of 10 |
+| 6595ca4 (OR through index unions; reviews 22g, 22h) | 2219 | 315,100 | 95,879 / 56,042 | 653 | 10 of 10 |
+| c026851 (OFFSET, pages that stream first; reviews 22i, 22j; check 6 extended) | 2221 | 292,447 | 87,319 / 51,745 | 624 | 10 of 10 |
