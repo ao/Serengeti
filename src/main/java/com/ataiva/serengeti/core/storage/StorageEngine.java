@@ -205,13 +205,26 @@ public final class StorageEngine implements AutoCloseable {
         if (why == null && rec.wholeRecordDiscarded()) {
             why = "the log lost a record it held whole";
         }
+        List<FeedFiles.Mark> ms = f.marks().marks();
+        FeedFiles.Mark last = ms.isEmpty() ? null : ms.get(ms.size() - 1);
         if (why == null && policy == FsyncPolicy.OFF) {
             // Without fsync, changes are listed before they are on disk, and a crash of the machine can lose
             // them. Only a clean stop says the log holds everything that was listed.
-            List<FeedFiles.Mark> ms = f.marks().marks();
-            FeedFiles.Mark last = ms.isEmpty() ? null : ms.get(ms.size() - 1);
             if (last == null || !last.kind().equals("close") || last.at() != walBytesBefore || rec.discardedBytes() > 0) {
                 why = "with fsync off, only a clean stop keeps the feed";
+            }
+        }
+        if (why == null) {
+            // The run before may have had fsync off, whatever this one has: its changes were listed before they
+            // were on disk, and only its clean stop ("close" after its "open") says the log holds them.
+            FeedFiles.Mark lastRun = null;
+            for (FeedFiles.Mark m : ms) {
+                if (m.kind().equals("open") || m.kind().equals("close")) {
+                    lastRun = m;
+                }
+            }
+            if (lastRun != null && lastRun.kind().equals("open")) {
+                why = "the last run had fsync off and did not stop cleanly";
             }
         }
         String note;
@@ -247,7 +260,10 @@ public final class StorageEngine implements AutoCloseable {
             LOG.warning("cannot write the change feed's files (" + e.getMessage() + "); the next start begins a new"
                     + " epoch");
         }
-        // Everything replayed is on disk.
+        // A record the killed run wrote but never forced may be only in the page cache: force the log before
+        // its changes are listed (review 22f). Linux reports a writeback error once, so after a failed fsync this
+        // force can succeed for a page that never reached the disk; API.md says so.
+        wal.forceReplayed();
         feed.publish(feed.last());
         return note;
     }

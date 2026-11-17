@@ -211,14 +211,19 @@ a machine that loses power): at start the node replays its write-ahead log, whic
 again with the same numbers, after the changes it kept in `changes.jsonl` at its last checkpoint (see
 CONFIGURATION.md, "Data directory"). A cursor from before the restart goes on where it was, and gets the
 same changes it would have got before, as long as they are still held. A write that a crash cut off was
-not acknowledged and not listed, so it changes nothing for cursors.
+not acknowledged and not listed, so it changes nothing for cursors. A record the stopped node had written but
+not yet forced is forced at start, before its change is listed. After a failed fsync that is not enough on
+Linux, which reports a write-back error once: the force at start can succeed for a page that never reached
+the disk, so a node whose fsync failed (it logs that, and its feed answered 503) can list a change that a
+later power cut takes back.
 
 The part of the cursor before the colon is the feed's epoch. The node keeps it in its data directory and
 starts a new one only when it can no longer give the same answers: after `serengeti restore`, on a data
 directory that was emptied or has no `changes.jsonl` (also the first start on 2.2 after an older version),
-after a log that lost a record it had whole (a damaged disk), after a crash in the milliseconds of a
-checkpoint between writing the snapshot and emptying the log, and, with `fsync` `off`, after any stop that
-was not clean. The node logs which at start. A cursor from another epoch, from another node, or older than
+after a log that lost a record it had whole (a damaged disk; a record whose length field was damaged
+reads as a write cut off, and the records after it are dropped without a new epoch), after a crash in the
+milliseconds of a checkpoint between writing the snapshot and emptying the log, and after any stop that was
+not clean of a run with `fsync` `off`, whatever the next run has. The node logs which at start. A cursor from another epoch, from another node, or older than
 what the node still holds gets 410: read the table again and follow from `after=now`. Cursors belong to the
 node that gave them. At most 32 requests wait at once; more answer at once, with whatever there is.
 

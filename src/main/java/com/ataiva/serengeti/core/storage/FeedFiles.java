@@ -219,17 +219,49 @@ final class FeedFiles {
             j.put("cutoff", m.cutoff());
         }
         boolean fresh = !Files.exists(file);
-        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-                StandardOpenOption.APPEND)) {
+        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.READ,
+                StandardOpenOption.WRITE)) {
+            // After an append that a crash cut off, the file does not end its last line. That line was skipped as
+            // torn (nothing was dropped for it): cut it off first, or this mark would be glued to it and skipped
+            // as torn too at the next start (review 22f).
+            long whole = endOfLastWholeLine(ch);
+            if (whole < ch.size()) {
+                ch.truncate(whole);
+                ch.force(true);
+            }
             ByteBuffer b = ByteBuffer.wrap((Json.write(j) + "\n").getBytes(StandardCharsets.UTF_8));
+            long at = whole;
             while (b.hasRemaining()) {
-                ch.write(b);
+                at += ch.write(b, at);
             }
             ch.force(true);
         }
         if (fresh) {
             Snapshot.forceDirectory(file.toAbsolutePath().getParent());
         }
+    }
+
+    /** The length of the file up to and including its last line feed (0 if it has none). */
+    static long endOfLastWholeLine(FileChannel ch) throws IOException {
+        long pos = ch.size();
+        ByteBuffer buf = ByteBuffer.allocate(4096);
+        while (pos > 0) {
+            int n = (int) Math.min(buf.capacity(), pos);
+            buf.clear().limit(n);
+            long from = pos - n;
+            while (buf.hasRemaining()) {
+                if (ch.read(buf, from + buf.position()) < 0) {
+                    break;
+                }
+            }
+            for (int i = n - 1; i >= 0; i--) {
+                if (buf.get(i) == '\n') {
+                    return from + i + 1;
+                }
+            }
+            pos = from;
+        }
+        return 0;
     }
 
     private static void line(Writer w, MessageDigest md, String json) throws IOException {

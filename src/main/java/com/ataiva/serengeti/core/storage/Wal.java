@@ -180,33 +180,32 @@ public final class Wal implements AutoCloseable {
     }
 
     /**
-     * True if the record at {@code at}, which failed, has a plausible length and the record after it passes its
-     * checksum. A write that never finished is the last thing in the log, so nothing whole comes after it; a whole
-     * record after a bad one means bytes the log had were lost or changed. A bad length cannot be skipped, so a
-     * record whose header was damaged reads as a torn tail.
+     * True if a record after the one at {@code at}, which failed, passes its checksum. A write that never finished
+     * is the last thing in the log, so nothing whole comes after it; a whole record after a bad one means bytes the
+     * log had were lost or changed. Records are followed by their lengths, past any number of bad ones (review
+     * 22f), so the walk reads each byte at most once. A bad length cannot be followed: a record whose length was
+     * damaged, and what comes after it, reads as a torn tail.
      */
     static boolean wholeRecordFollows(FileChannel ch, long at, long total) throws IOException {
-        if (at + HEADER > total) {
-            return false;
-        }
         ByteBuffer h = ByteBuffer.allocate(HEADER);
-        readFully(ch, h, at);
-        h.flip();
-        int len = h.getInt();
-        if (len < 2 || len > MAX_RECORD) {
-            return false;
+        long pos = at;
+        boolean first = true;
+        while (pos + HEADER <= total) {
+            h.clear();
+            readFully(ch, h, pos);
+            h.flip();
+            int len = h.getInt();
+            int crc = h.getInt();
+            if (len < 2 || len > MAX_RECORD || pos + HEADER + len > total) {
+                return false;
+            }
+            if (!first && checksumMatches(ch, pos + HEADER, len, crc)) {
+                return true;
+            }
+            first = false;
+            pos += HEADER + len;
         }
-        long next = at + HEADER + len;
-        if (next + HEADER > total) {
-            return false;
-        }
-        h.clear();
-        readFully(ch, h, next);
-        h.flip();
-        int len2 = h.getInt();
-        int crc2 = h.getInt();
-        return len2 >= 2 && len2 <= MAX_RECORD && next + HEADER + len2 <= total
-                && checksumMatches(ch, next + HEADER, len2, crc2);
+        return false;
     }
 
     /** Records larger than this are read in pieces (see {@link #read(FileChannel, java.util.function.Consumer)}). */
@@ -646,6 +645,31 @@ public final class Wal implements AutoCloseable {
         fsyncs.incrementAndGet();
         fsyncNanos.addAndGet(System.nanoTime() - started);
         return covered;
+    }
+
+    /**
+     * Forces what the log holds, once, at start: records a killed run wrote but never forced may still be only
+     * in the page cache, and must not be taken for on disk (review 22f). Does nothing for an empty log.
+     */
+    public void forceReplayed() throws IOException {
+        synchronized (syncLock) {
+            long held;
+            synchronized (this) {
+                held = size;
+            }
+            if (held == 0 || failure != null) {
+                return;
+            }
+            forcing = true;
+        }
+        try {
+            forceNow();
+        } finally {
+            synchronized (syncLock) {
+                forcing = false;
+                syncLock.notifyAll();
+            }
+        }
     }
 
     /** The log's size and its forces so far. Two clock reads per force; nothing is counted per record. */
