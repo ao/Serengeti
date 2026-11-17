@@ -36,6 +36,8 @@ import java.util.logging.Logger;
  */
 public final class HttpApi implements AutoCloseable {
     private static final Logger LOG = Logger.getLogger(HttpApi.class.getName());
+    /** The source class of the request log's records, as the logger would find it on the stack. */
+    private static final String SOURCE = HttpApi.class.getName();
     public static final int MAX_BODY = 1 << 20;
     static final String REALM = "Basic realm=\"serengeti\", charset=\"UTF-8\"";
 
@@ -223,7 +225,11 @@ public final class HttpApi implements AutoCloseable {
             // Peers sync every second; their successful calls would drown the log at INFO.
             Level level = route.startsWith("/internal/") && status == 200 ? Level.FINE : Level.INFO;
             if (LOG.isLoggable(level)) {
-                LOG.log(level, RequestLog.line(ex.getRequestMethod(), route, status, nanos, remote, caller.user));
+                // With the source named here, the record does not walk the stack to find it. The formatter asks
+                // for it inside the console handler's lock, which every request's line passes through: at 8
+                // clients that walk was 44% of the time the lock was held, and the lock bounded the rate.
+                LOG.logp(level, SOURCE, "handle",
+                        RequestLog.line(ex.getRequestMethod(), route, status, nanos, remote, caller.user));
             }
         }
     }

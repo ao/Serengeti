@@ -17,18 +17,45 @@ final class RequestLog {
     private RequestLog() {}
 
     static String line(String method, String route, int status, long nanos, String remote, String user) {
-        return String.format(Locale.ROOT,
-                "request method=%s route=%s status=%d duration_ms=%.3f remote=%s user=%s",
-                field(method), field(route), status, nanos / 1e6, field(remote), user == null ? "-" : field(user));
+        // Built by hand rather than with String.format, which parses the pattern again for every request.
+        StringBuilder b = new StringBuilder(160).append("request method=");
+        field(b, method);
+        b.append(" route=");
+        field(b, route);
+        b.append(" status=").append(status).append(" duration_ms=");
+        millis(b, nanos);
+        b.append(" remote=");
+        field(b, remote);
+        b.append(" user=");
+        if (user == null) {
+            b.append('-');
+        } else {
+            field(b, user);
+        }
+        return b.toString();
     }
 
-    /** Printable ASCII without spaces, at most {@link #MAX_FIELD} characters, so one request is one line. */
-    static String field(String v) {
-        StringBuilder b = new StringBuilder();
-        for (int i = 0; i < v.length() && b.length() < MAX_FIELD; i++) {
+    /** {@code nanos} in milliseconds with three decimals, rounded half up, as {@code %.3f} writes it. */
+    static void millis(StringBuilder b, long nanos) {
+        if (nanos < 0 || nanos >= 1_000_000_000_000_000L) {
+            b.append(String.format(Locale.ROOT, "%.3f", nanos / 1e6)); // not a request's duration
+            return;
+        }
+        long micros = (nanos + 500) / 1000;
+        long frac = micros % 1000;
+        b.append(micros / 1000).append('.');
+        if (frac < 100) {
+            b.append(frac < 10 ? "00" : "0");
+        }
+        b.append(frac);
+    }
+
+    /** Appends {@code v} as printable ASCII without spaces, at most {@link #MAX_FIELD} characters, so one request is one line. */
+    private static void field(StringBuilder b, String v) {
+        int n = Math.min(v.length(), MAX_FIELD);
+        for (int i = 0; i < n; i++) {
             char c = v.charAt(i);
             b.append(c > 0x20 && c < 0x7f ? c : '?');
         }
-        return b.toString();
     }
 }
