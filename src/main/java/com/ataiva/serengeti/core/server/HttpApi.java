@@ -894,8 +894,8 @@ public final class HttpApi implements AutoCloseable {
 
     static byte[] readBody(HttpExchange ex, int max) throws IOException {
         String len = ex.getRequestHeaders().getFirst("Content-Length");
+        long declared = -1;
         if (len != null) {
-            long declared;
             try {
                 declared = Long.parseLong(len.trim());
             } catch (NumberFormatException e) {
@@ -905,8 +905,11 @@ public final class HttpApi implements AutoCloseable {
                 throw tooLarge(ex.getRequestBody(), max);
             }
         }
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
+        // Sized for the declared length when it is small, as a query's is: a fixed 8 KiB buffer was 15% of what
+        // a lookup by _id allocated. The loop reads to the end either way, whatever the header said.
+        int size = declared >= 0 && declared < 8192 ? (int) Math.max(declared + 1, 256) : 8192;
+        ByteArrayOutputStream out = new ByteArrayOutputStream(size);
+        byte[] buf = new byte[size];
         // Not try-with-resources: after a failed read the JDK's request stream throws the same exception
         // again from close(), and adding an exception to itself as suppressed throws IllegalArgumentException,
         // which became a 500. The exchange closes the stream.
