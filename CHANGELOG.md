@@ -128,13 +128,17 @@ GitHub release notes and tags.
   has `=`, IN or a LIKE without wildcards on its first columns, and then any of `<`, `<=`, `>`, `>=` and a
   LIKE prefix on the next, reads only the rows those terms allow (IN lists as every combination of their
   values, up to 1,000); SELECT, COUNT(*), GROUP BY, UPDATE and DELETE use it. Of the indexes that can
-  answer, the one that names the most columns of the condition is used, then the one that reads the
-  fewest rows. Its entries count towards the memory limit. The definition replicates and is kept in
+  answer (and of single-column indexes and `_id`), the read of the fewest rows is used, then the one that
+  names the most columns; a range too large to gather gives way to the next. Its entries count towards
+  the memory limit. The definition replicates and is kept in
   `indexes.jsonl` with the columns joined by commas in the `column` field: a 2.1 node holds it as an index
   on a column no row has (empty and unused) and keeps it, so it is back after a rollback to 2.1 and an
   upgrade. Single-column indexes are unchanged. See docs/QUERY.md, "Indexes on several columns".
 
 ### Fixed
+- An index key kept the value of the row that first had it alive after that row changed or was deleted
+  while another row kept an equal value (2.1 too), and the memory limit did not count it: up to the size of
+  the indexed values. The key now takes a remaining row's value.
 - A newer delete did not reach a node that held an older delete of the same row (2.1 too): sync compared
   sums that count only live rows, and two tombstones count nothing there. A write made on a node that was
   cut off, concurrent with both deletes and older than the newer one, could then show on that node as the

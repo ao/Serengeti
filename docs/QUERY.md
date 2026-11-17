@@ -205,9 +205,10 @@ A row whose first column is missing, null, an object or an array is not in the i
 find it. Past the first column every value is kept, missing and null ones sorting first: a row with a
 `customer` and no `placed` is found by `customer = 'c1'`, and not by a range on `placed`.
 
-When more than one index can answer a condition, the one that names the most columns of it is used (a
-range counts as one column, and a term on `_id` or on a column with its own index as one), and among those
-the one that reads the fewest rows. COUNT(*), GROUP BY, UPDATE and DELETE use it as SELECT does.
+When more than one index can answer a condition, the read of the fewest rows is used, counting a term on
+`_id` or on a column with its own index as a read too, and among reads of as many rows the one that names
+the most columns of it (a range counts as one column). A range that would gather more than 100,000 rows
+gives way to the next read before the table is scanned. COUNT(*), GROUP BY, UPDATE and DELETE use it as SELECT does.
 
 Each row in an index takes an entry, estimated at 40 bytes, and each distinct combination of values about
 130 more; both count towards `memory_limit_percent` (docs/CONFIGURATION.md). In the index definition that
