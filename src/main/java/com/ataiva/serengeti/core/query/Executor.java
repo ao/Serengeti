@@ -951,7 +951,7 @@ public final class Executor {
      * stand. The caller passes the same choice to the scan it falls back on, so no estimate is made twice.
      */
     /** The share of an index read's rows an ordered read may take when the read without order is that index read. */
-    static final int ORDERED_SHARE_OF_INDEX_READ = 5;
+    static final int ORDERED_SHARE_OF_INDEX_READ = 7;
 
     /** As {@link #ORDERED_SHARE_OF_INDEX_READ}, when that index read streams rather than gathers (see gathers). */
     static final int ORDERED_SHARE_OF_STREAMED_READ = 16;

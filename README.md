@@ -195,11 +195,12 @@ Serengeti is smaller than both, and young: 2.0 was its first usable release.
 
 GitHub Actions runs these on every change:
 
-- 489 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
+- 574 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
   syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
   the writes no other write had seen, one that restarts, crashes and checkpoints a node at random and
   checks that every change feed cursor it gave out gets the same changes again or 410, and others that
-  compare index lookups and GROUP BY with scans;
+  compare index lookups, ORDER BY and OR read through indexes, OFFSET pages, upserts and GROUP BY with
+  scans or with a model;
 - 122 checks against the built image on amd64 and arm64, including `kill -9` during writes (and a change
   feed cursor followed across the kills and a `docker restart`), account roles
   and accounts limited to some databases, a second node refused on a data directory in use, the shell and
@@ -210,7 +211,7 @@ GitHub Actions runs these on every change:
 - 76 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster (and the same from 2.1), one node at a
   time under writes, and roll a node back to 2.0.0 after it has made indexes (one on two columns) and
   accounts;
-- a conformance suite of about 1,010 checks on the HTTP API and the query language, with 5,000 generated
+- a conformance suite of about 1,140 checks on the HTTP API and the query language, with 5,000 generated
   statements per run, concurrent schema changes, `kill -9` rounds and a backup across three nodes;
 - a node filled to its memory limit in a 512 MiB container, with large rows and with small rows under two
   indexes, that must refuse writes, back up, restart, delete every row and restart again; and three

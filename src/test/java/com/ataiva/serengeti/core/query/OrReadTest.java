@@ -231,7 +231,7 @@ class OrReadTest {
         ids("SELECT _id FROM @T WHERE (a = 1 OR a = 2) AND (b = 1 OR b = 2)");
         // Of a union and one read that visit as many rows, the one read.
         assertEquals(read("a", new Store.Lookup.Compare("=", 3L)), plan("(a = 4 OR q = 100000) AND a = 3"));
-        // The cheapest union also bounds the share an ordered read may take (1/5 of what that index read would
+        // The cheapest union also bounds the share an ordered read may take (1/7 of what that index read would
         // visit, 1/96 of the table's rows for a scan), and is the read the query falls back on when the ordered
         // read runs out of it.
         query.run("CREATE INDEX ON d.t (p)");

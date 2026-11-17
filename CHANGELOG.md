@@ -88,7 +88,7 @@ GitHub release notes and tags.
   directory inside the data directory (also through a link), or one that cannot be written, stops the node
   at start. `/metrics` reports the time of the newest and the failures; the image has an empty `/backups`
   for a volume.
-- `tests/edge/run.sh`, a conformance and limits suite for the HTTP API and the query language: about 970
+- `tests/edge/run.sh`, a conformance and limits suite for the HTTP API and the query language: about 1,140
   checks plus 5,000 generated statements per run, concurrency, kill -9 and backup cases. It found the bugs
   listed under Fixed; CI runs it.
 - `tests/soak/run.sh`, a randomized fault test for 3- to 7-node TLS clusters: clients write and read through
@@ -159,7 +159,7 @@ GitHub release notes and tags.
   read. On 200,000 rows in-process (c7g.4xlarge container limited to 4 CPUs, JDK 17), `ORDER BY at DESC
   LIMIT 10` takes 0.07 ms instead of 293. The answer is the sort's, row for row. When the WHERE has terms
   the read does not answer, or its keys stop before the index's last column, it reads a share of the rows
-  the query would read without it (1/96 of a scan's, 1/5 of an index read's), then reads and sorts as
+  the query would read without it (1/96 of a scan's, 1/7 to 1/16 of an index read's), then reads and sorts as
   before: a condition that no row meets costs about a sixth more (32 ms instead of 28 on 200,000 rows of 10
   columns, c7g.4xlarge). To place rows
   in that order, an index now also keeps the rows where its column is missing, null, an object or an array
