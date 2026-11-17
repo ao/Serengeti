@@ -321,6 +321,19 @@ class ShellTest {
     }
 
     @Test
+    void aComputedSetGoesOnToTheNextLineUntilItHasItsNumber() {
+        Shell.Splitter s = new Shell.Splitter();
+        assertEquals(List.of(), s.add("UPDATE a.b SET n = n"));
+        assertTrue(s.pending(), "a column alone after = waits for + or -");
+        assertEquals(List.of(), s.add("  -"));
+        assertTrue(s.pending(), "and a - for its number");
+        assertEquals(List.of("UPDATE a.b SET n = n\n  -\n  1 WHERE _id = 'x'"), s.add("  1 WHERE _id = 'x'"));
+        assertFalse(s.pending());
+        assertEquals(List.of("UPDATE a.b SET n = n-1"), s.add("UPDATE a.b SET n = n-1"));
+        assertEquals(List.of("UPDATE a.b SET n = n * 2"), s.add("UPDATE a.b SET n = n * 2"), "the node says what is wrong");
+    }
+
+    @Test
     void cellsEscapeControlCharactersAndShowOtherValuesAsJson() {
         assertEquals("a\\nb\\tc\\u0001", Shell.cell("a\nb\tc\u0001"));
         assertEquals("null", Shell.cell(null));

@@ -73,6 +73,7 @@ final class Shell {
               CREATE TABLE shop.items
               INSERT INTO shop.items (_id, name, qty) VALUES ('bolt', 'bolt', 120)
               SELECT name, qty FROM shop.items WHERE qty > 100 ORDER BY qty LIMIT 10
+              UPDATE shop.items SET qty = qty - 1 WHERE _id = 'bolt' AND qty > 0
             A statement runs when you press Enter on a complete one, or end it with ;. An incomplete statement
             continues on the next line.
             help      this text
