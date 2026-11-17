@@ -120,6 +120,11 @@ class QueryProperties {
         return Arbitraries.oneOf(common, random).filter(Lexer::isValidName);
     }
 
+    /** The columns of CREATE or DROP INDEX: 1 to 4, each once. */
+    private static Arbitrary<List<String>> indexColumns() {
+        return names().list().uniqueElements().ofMinSize(1).ofMaxSize(Parser.MAX_INDEX_COLUMNS);
+    }
+
     private static Arbitrary<Object> literals() {
         Arbitrary<Object> strings = Arbitraries.strings().ofMaxLength(20).map(Object.class::cast);
         Arbitrary<Object> quoty = Arbitraries.of("", "'", "''", "it's", "a\nb", "--", "Mixed CASE")
@@ -305,8 +310,10 @@ class QueryProperties {
                 Combinators.combine(names(), names(), flag).as(Statement.DropTable::new),
                 Arbitraries.just(new Statement.ShowDatabases()),
                 names().map(Statement.ShowTables::new),
-                Combinators.combine(names(), names(), names(), flag).as(Statement.CreateIndex::new),
-                Combinators.combine(names(), names(), names(), flag).as(Statement.DropIndex::new),
+                Combinators.combine(names(), names(), indexColumns(), flag)
+                        .as((db, t, cols, f) -> (Statement) new Statement.CreateIndex(db, t, cols, f)),
+                Combinators.combine(names(), names(), indexColumns(), flag)
+                        .as((db, t, cols, f) -> (Statement) new Statement.DropIndex(db, t, cols, f)),
                 Combinators.combine(names(), names()).as(Statement.ShowIndexes::new),
                 Combinators.combine(names(), names()).as(Statement.ShowConflicts::new),
                 inserts(),

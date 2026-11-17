@@ -15,10 +15,10 @@ statement   = ( create | drop | show | insert | select | update | delete ) [ ";"
 
 create      = "CREATE" "DATABASE" [ "IF" "NOT" "EXISTS" ] name
             | "CREATE" "TABLE" [ "IF" "NOT" "EXISTS" ] table
-            | "CREATE" "INDEX" [ "IF" "NOT" "EXISTS" ] "ON" table "(" name ")" ;
+            | "CREATE" "INDEX" [ "IF" "NOT" "EXISTS" ] "ON" table "(" name { "," name } ")" ;
 drop        = "DROP" "DATABASE" [ "IF" "EXISTS" ] name
             | "DROP" "TABLE" [ "IF" "EXISTS" ] table
-            | "DROP" "INDEX" [ "IF" "EXISTS" ] "ON" table "(" name ")" ;
+            | "DROP" "INDEX" [ "IF" "EXISTS" ] "ON" table "(" name { "," name } ")" ;
 show        = "SHOW" "DATABASES"
             | "SHOW" "TABLES" "IN" name
             | "SHOW" "INDEXES" "IN" table
@@ -76,6 +76,7 @@ Further parse rules:
 
 - An INSERT lists each column once, and each tuple has one value per column.
 - An UPDATE sets each column once.
+- CREATE INDEX and DROP INDEX list 1 to 4 columns, each once.
 - An IN list has 1 to 1,000 values.
 - In a LIKE pattern, `\` comes only before `%`, `_` or `\`.
 - Only COUNT takes `*` or DISTINCT.
@@ -157,7 +158,7 @@ is for values of different types. A quote in the pattern is written `''`, as in 
 `CREATE INDEX ON shop.items (qty)` keeps, for each value of `qty`, the rows that hold it. SELECT (with or
 without aggregates), UPDATE and DELETE then find rows through the index when the WHERE clause is one
 term on an indexed column, or an AND of terms of which one is; with several, the term that matches the
-fewest rows is used. The terms an index answers are:
+fewest rows is used (and see below for indexes on several columns). The terms an index answers are:
 
 - a comparison with a value (`=`, `<`, `<=`, `>`, `>=`);
 - an IN list: the rows of each value;
@@ -175,7 +176,45 @@ no comparison of those with a value is true. `_id` needs no index, and `CREATE I
 
 An index is built from the rows when it is created and kept up to date by every write. In a cluster the
 definition replicates like a table's, and each node builds its own. Dropping the table drops its indexes.
-`SHOW INDEXES IN db.table` returns the column `column`.
+`SHOW INDEXES IN db.table` returns the column `column`, one row per index: `qty`, or `kind, qty` for an
+index on two columns.
+
+### Indexes on several columns
+
+`CREATE INDEX ON shop.orders (customer, placed)` keeps the rows in the order of their `customer`, and
+among rows with the same `customer` in the order of `placed`, each column in the ORDER BY order (see
+Ordering). An index lists 2 to 4 columns, none twice and not `_id`. `(customer, placed)` and
+`(placed, customer)` are two indexes, and both can exist next to one on `customer` alone; `DROP INDEX ON
+shop.orders (customer, placed)` drops the index on exactly those columns in that order.
+
+It answers a WHERE whose top-level AND fixes its first columns, in order, and may limit the next one:
+
+- each of the first columns has a term `=` a value, an IN list, or a LIKE without wildcards. Several IN
+  lists stand for every combination of their values, up to 1,000 combinations; a column whose list would
+  take the count past that ends the columns the index is read for;
+- the next column may then have any number of `<`, `<=`, `>`, `>=` and LIKE terms with a literal prefix,
+  and the index reads the rows that satisfy all of them.
+
+So `WHERE customer = 'c1' AND placed >= '2026-01' AND placed < '2026-02'` reads the rows of one customer in
+January, `WHERE customer IN ('c1', 'c2') AND placed > '2026-06'` those of two customers since June, and
+`WHERE customer = 'c1'` all the rows of `c1`. The index is read only for its first columns that the
+condition fixes: `WHERE placed > '2026-06'` or `customer != 'c1' AND placed = '2026-06-01'` does not use
+it. The rest of the condition is checked on the rows the index finds, as for an index on one column.
+
+A row whose first column is missing, null, an object or an array is not in the index; no lookup could
+find it. Past the first column every value is kept, missing and null ones sorting first: a row with a
+`customer` and no `placed` is found by `customer = 'c1'`, and not by a range on `placed`.
+
+When more than one index can answer a condition, the one that names the most columns of it is used (a
+range counts as one column, and a term on `_id` or on a column with its own index as one), and among those
+the one that reads the fewest rows. COUNT(*), GROUP BY, UPDATE and DELETE use it as SELECT does.
+
+Each row in an index takes an entry, estimated at 40 bytes, and each distinct combination of values about
+130 more; both count towards `memory_limit_percent` (docs/CONFIGURATION.md). In the index definition that
+replicates and that `indexes.jsonl` keeps, the columns are joined by commas in the one `column` field. A
+name cannot hold a comma, so a 2.1 node holds such an index as an index on a column no row has: it lists
+it as `customer,placed`, answers those queries by scan, and keeps the definition, so a node rolled back to
+2.1 and upgraded again has the index back. 2.0 nodes are not sent index definitions.
 
 ## Ordering
 

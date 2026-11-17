@@ -109,12 +109,19 @@ public sealed interface Statement {
         }
     }
 
-    /** {@code CREATE INDEX [IF NOT EXISTS] ON db.table (column)}. */
-    record CreateIndex(String db, String table, String column, boolean ifNotExists) implements Statement {
+    /** {@code CREATE INDEX [IF NOT EXISTS] ON db.table (column, ...)}: one column, or 2 to 4 in order. */
+    record CreateIndex(String db, String table, List<String> columns, boolean ifNotExists) implements Statement {
         public CreateIndex {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
-            Objects.requireNonNull(column, "column");
+            columns = List.copyOf(columns);
+            if (columns.isEmpty()) {
+                throw new IllegalArgumentException("an index has at least one column");
+            }
+        }
+
+        public CreateIndex(String db, String table, String column, boolean ifNotExists) {
+            this(db, table, List.of(column), ifNotExists);
         }
 
         @Override
@@ -123,12 +130,19 @@ public sealed interface Statement {
         }
     }
 
-    /** {@code DROP INDEX [IF EXISTS] ON db.table (column)}. */
-    record DropIndex(String db, String table, String column, boolean ifExists) implements Statement {
+    /** {@code DROP INDEX [IF EXISTS] ON db.table (column, ...)}: the index on exactly these columns, in this order. */
+    record DropIndex(String db, String table, List<String> columns, boolean ifExists) implements Statement {
         public DropIndex {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
-            Objects.requireNonNull(column, "column");
+            columns = List.copyOf(columns);
+            if (columns.isEmpty()) {
+                throw new IllegalArgumentException("an index has at least one column");
+            }
+        }
+
+        public DropIndex(String db, String table, String column, boolean ifExists) {
+            this(db, table, List.of(column), ifExists);
         }
 
         @Override
@@ -137,7 +151,7 @@ public sealed interface Statement {
         }
     }
 
-    /** {@code SHOW INDEXES IN db.table}: the indexed columns. */
+    /** {@code SHOW INDEXES IN db.table}: the indexes, each as its columns ({@code a} or {@code a, b}). */
     record ShowIndexes(String db, String table) implements Statement {
         public ShowIndexes {
             Objects.requireNonNull(db, "db");

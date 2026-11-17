@@ -58,11 +58,15 @@ public final class Store {
             return created.after(dropped);
         }
 
-        /** Indexes by column, dropped ones included (their stamps still replicate). */
+        /**
+         * Indexes by the {@code column} field of their ops (one column, or several joined by commas), dropped
+         * ones included (their stamps still replicate).
+         */
         final TreeMap<String, IndexState> indexes = new TreeMap<>();
 
         IndexState index(String column) {
-            return indexes.computeIfAbsent(column, c -> new IndexState(c, dropped));
+            return indexes.computeIfAbsent(column,
+                    c -> c.indexOf(',') >= 0 ? new TupleIndex(c, dropped) : new ColumnIndex(c, dropped));
         }
 
         void drop(Stamp at, long expiry) {
@@ -200,24 +204,18 @@ public final class Store {
     });
 
     /**
-     * A secondary index on one column: for each boolean, number and string value, the ids of the rows whose
-     * current value holds it. Like a table it exists while its newest create is newer than its newest drop
-     * (or its table's); its entries are rebuilt from the rows when it comes into existence, and only its
-     * create and drop stamps replicate.
+     * A secondary index. Like a table it exists while its newest create is newer than its newest drop (or its
+     * table's); its entries are rebuilt from the rows when it comes into existence, and only its create and
+     * drop stamps replicate.
      */
-    private static final class IndexState {
-        final String column;
+    private abstract static class IndexState {
         Stamp created = Stamp.ZERO;
         Stamp dropped;
-        final TreeMap<Boolean, java.util.TreeSet<String>> bools = new TreeMap<>();
-        final TreeMap<Number, java.util.TreeSet<String>> numbers = new TreeMap<>(ScalarOrder::compareNumbers);
-        final TreeMap<String, java.util.TreeSet<String>> strings = new TreeMap<>();
         /** Ids held across all keys, and distinct keys, for the weight estimate. */
         long entries;
         long keys;
 
-        IndexState(String column, Stamp dropped) {
-            this.column = column;
+        IndexState(Stamp dropped) {
             this.dropped = dropped;
         }
 
@@ -237,12 +235,79 @@ public final class Store {
             boolean was = exists();
             dropped = Stamp.max(dropped, at);
             if (was && !exists()) {
-                bools.clear();
-                numbers.clear();
-                strings.clear();
+                clear();
                 entries = 0;
                 keys = 0;
             }
+        }
+
+        void move(String id, Map<String, Object> was, Map<String, Object> now) {
+            remove(id, was);
+            add(id, now);
+        }
+
+        abstract void clear();
+
+        abstract void add(String id, Map<String, Object> row);
+
+        abstract void remove(String id, Map<String, Object> row);
+
+        /** Estimated heap bytes of the entries (see Weight). */
+        abstract long weight();
+
+        /** True if this index can answer {@code l}; the methods below are called only for such lookups. */
+        abstract boolean answers(Lookup l);
+
+        /** The matching keys' id sets, without copying them. */
+        abstract java.util.Collection<java.util.TreeSet<String>> sets(Lookup l);
+
+        /** The ids in id order, without copying where that can be avoided; null when the caller should scan. */
+        abstract Iterable<String> ids(Lookup l);
+
+        long estimate(Lookup l) {
+            long n = 0;
+            for (java.util.TreeSet<String> s : sets(l)) {
+                n += s.size();
+            }
+            return n;
+        }
+
+        java.util.SortedSet<String> lookup(Lookup l) {
+            java.util.TreeSet<String> out = new java.util.TreeSet<>();
+            for (java.util.TreeSet<String> s : sets(l)) {
+                out.addAll(s);
+            }
+            return out;
+        }
+    }
+
+    /** An index on one column: for each boolean, number and string value, the ids of the rows whose current value holds it. */
+    private static final class ColumnIndex extends IndexState {
+        final String column;
+        final TreeMap<Boolean, java.util.TreeSet<String>> bools = new TreeMap<>();
+        final TreeMap<Number, java.util.TreeSet<String>> numbers = new TreeMap<>(ScalarOrder::compareNumbers);
+        final TreeMap<String, java.util.TreeSet<String>> strings = new TreeMap<>();
+
+        ColumnIndex(String column, Stamp dropped) {
+            super(dropped);
+            this.column = column;
+        }
+
+        @Override
+        void clear() {
+            bools.clear();
+            numbers.clear();
+            strings.clear();
+        }
+
+        @Override
+        long weight() {
+            return entries * Weight.INDEX_ENTRY + keys * Weight.INDEX_KEY;
+        }
+
+        @Override
+        boolean answers(Lookup l) {
+            return l instanceof Lookup.Compare || l instanceof Lookup.AnyOf || l instanceof Lookup.Prefix;
         }
 
         @SuppressWarnings("unchecked")
@@ -251,6 +316,7 @@ public final class Store {
                     : v instanceof Number ? numbers : v instanceof String ? strings : null);
         }
 
+        @Override
         void add(String id, Map<String, Object> row) {
             Object v = row == null ? null : row.get(column);
             TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
@@ -268,6 +334,7 @@ public final class Store {
             }
         }
 
+        @Override
         void remove(String id, Map<String, Object> row) {
             Object v = row == null ? null : row.get(column);
             TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
@@ -282,11 +349,6 @@ public final class Store {
                     keys--;
                 }
             }
-        }
-
-        void move(String id, Map<String, Object> was, Map<String, Object> now) {
-            remove(id, was);
-            add(id, now);
         }
 
         /** The matching keys' id sets, without copying them. */
@@ -308,6 +370,7 @@ public final class Store {
             };
         }
 
+        @Override
         java.util.Collection<java.util.TreeSet<String>> sets(Lookup l) {
             if (l instanceof Lookup.Compare c) {
                 return sets(c.op(), c.value());
@@ -326,26 +389,11 @@ public final class Store {
             return end == null ? strings.tailMap(p, true).values() : strings.subMap(p, true, end, false).values();
         }
 
-        long estimate(String op, Object v) {
-            return estimate(new Lookup.Compare(op, v));
-        }
-
-        long estimate(Lookup l) {
-            long n = 0;
-            for (java.util.TreeSet<String> s : sets(l)) {
-                n += s.size();
-            }
-            return n;
-        }
-
-        Iterable<String> ids(String op, Object v) {
-            return ids(new Lookup.Compare(op, v));
-        }
-
         /**
          * The ids in id order: one key's live set; the sets of several equal-value keys merged as they are
          * read; a range gathered if small enough, else null.
          */
+        @Override
         Iterable<String> ids(Lookup l) {
             java.util.Collection<java.util.TreeSet<String>> sets = sets(l);
             if (sets.size() <= 1) {
@@ -354,59 +402,327 @@ public final class Store {
             if (l instanceof Lookup.AnyOf) {
                 return merged(sets);
             }
-            if (estimate(l) > MATERIALIZE_LIMIT) {
-                return null;
-            }
-            java.util.TreeSet<String> out = new java.util.TreeSet<>();
-            for (java.util.TreeSet<String> s : sets) {
-                out.addAll(s);
-            }
-            return out;
-        }
-
-        /** The ids whose value compares to {@code v} by {@code op} ("=", "<", "<=", ">", ">="), in id order. */
-        java.util.SortedSet<String> lookup(String op, Object v) {
-            java.util.TreeSet<String> out = new java.util.TreeSet<>();
-            TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
-            if (m == null) {
-                return out; // a comparison with null, or with a value of no indexed type, is never true
-            }
-            java.util.Collection<java.util.TreeSet<String>> sets = switch (op) {
-                case "=" -> {
-                    java.util.TreeSet<String> s = m.get(v);
-                    yield s == null ? List.of() : List.of(s);
-                }
-                case "<" -> m.headMap(v, false).values();
-                case "<=" -> m.headMap(v, true).values();
-                case ">" -> m.tailMap(v, false).values();
-                case ">=" -> m.tailMap(v, true).values();
-                default -> throw new IllegalArgumentException("no index lookup for " + op);
-            };
-            for (java.util.TreeSet<String> s : sets) {
-                out.addAll(s);
-            }
-            return out;
-        }
-
-        java.util.SortedSet<String> lookup(Lookup l) {
-            if (l instanceof Lookup.Compare c) {
-                return lookup(c.op(), c.value());
-            }
-            java.util.TreeSet<String> out = new java.util.TreeSet<>();
-            for (java.util.TreeSet<String> s : sets(l)) {
-                out.addAll(s);
-            }
-            return out;
+            return gathered(sets);
         }
     }
 
+    /** The union of {@code sets} copied in id order, or null when they hold more than {@link #MATERIALIZE_LIMIT} ids. */
+    static java.util.SortedSet<String> gathered(java.util.Collection<java.util.TreeSet<String>> sets) {
+        long size = 0;
+        for (java.util.TreeSet<String> s : sets) {
+            size += s.size();
+        }
+        if (size > MATERIALIZE_LIMIT) {
+            return null;
+        }
+        java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        for (java.util.TreeSet<String> s : sets) {
+            out.addAll(s);
+        }
+        return out;
+    }
+
     /**
-     * What an index lookup finds in one column: the values that compare to {@code value} by {@code op} ("=",
-     * "<", "<=", ">", ">="), the values equal to any of {@code values}, or the strings that start with
-     * {@code prefix}. Each is exact by the rules of docs/QUERY.md: null, and values of no indexed type, match
-     * nothing.
+     * An index on 2 to 4 columns: the rows by their values of the columns, in the ORDER BY order of each
+     * (null and missing first, then booleans, numbers and strings; objects and arrays last, all equal), as a
+     * map from each distinct tuple of values to the ids of the rows that hold it. A row whose first value is
+     * missing, null, an object or an array is not in it: no lookup matches it. Its name in {@link #indexes}
+     * and in the index ops is the columns joined by commas ({@link Op#indexKey}).
+     */
+    private static final class TupleIndex extends IndexState {
+        final String[] columns;
+        /** The definition holds 2 to 4 distinct column names, none of them {@code _id}: what the planner may use. */
+        final boolean usable;
+        final TreeMap<Object[], java.util.TreeSet<String>> map = new TreeMap<>(Store::compareTuples);
+
+        TupleIndex(String key, Stamp dropped) {
+            super(dropped);
+            this.columns = key.split(",", -1);
+            java.util.Set<String> distinct = new java.util.HashSet<>(List.of(columns));
+            this.usable = columns.length >= 2 && columns.length <= MAX_INDEX_COLUMNS
+                    && distinct.size() == columns.length && !distinct.contains("_id") && !distinct.contains("");
+        }
+
+        /**
+         * A row's key: its values of the columns, null for a missing one, {@link #OTHER} for an object or an
+         * array (so the key keeps no reference to them); null when the first value is not a boolean, number or
+         * string.
+         */
+        Object[] keyOf(Map<String, Object> row) {
+            if (row == null || !ScalarOrder.scalar(row.get(columns[0]))) {
+                return null;
+            }
+            Object[] k = new Object[columns.length];
+            for (int i = 0; i < k.length; i++) {
+                Object v = row.get(columns[i]);
+                k[i] = v == null || ScalarOrder.scalar(v) ? v : OTHER;
+            }
+            return k;
+        }
+
+        @Override
+        void clear() {
+            map.clear();
+        }
+
+        @Override
+        void add(String id, Map<String, Object> row) {
+            Object[] k = keyOf(row);
+            if (k == null) {
+                return;
+            }
+            java.util.TreeSet<String> ids = map.get(k);
+            if (ids == null) {
+                ids = new java.util.TreeSet<>();
+                map.put(k, ids);
+                keys++;
+            }
+            if (ids.add(id)) {
+                entries++;
+            }
+        }
+
+        @Override
+        void remove(String id, Map<String, Object> row) {
+            Object[] k = keyOf(row);
+            if (k == null) {
+                return;
+            }
+            java.util.TreeSet<String> ids = map.get(k);
+            if (ids != null && ids.remove(id)) {
+                entries--;
+                if (ids.isEmpty()) {
+                    map.remove(k);
+                    keys--;
+                }
+            }
+        }
+
+        @Override
+        long weight() {
+            return entries * Weight.INDEX_ENTRY + keys * Weight.ofTupleKey(columns.length);
+        }
+
+        @Override
+        boolean answers(Lookup l) {
+            if (!usable || !(l instanceof Lookup.Composite c)) {
+                return false;
+            }
+            int named = c.equal().size() + (c.range().isEmpty() ? 0 : 1);
+            if (named == 0 || named > columns.length) {
+                return false;
+            }
+            for (Lookup r : c.range()) {
+                if (!(r instanceof Lookup.Prefix || r instanceof Lookup.Compare x && List.of("=", "<", "<=", ">", ">=").contains(x.op()))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        java.util.Collection<java.util.TreeSet<String>> sets(Lookup l) {
+            Lookup.Composite c = (Lookup.Composite) l;
+            int k = c.equal().size();
+            List<java.util.TreeSet<String>> out = new ArrayList<>();
+            for (Object[] p : tuples(c.equal())) {
+                Object[] lo = bound(p, null, LOW);
+                Object[] hi = bound(p, null, HIGH);
+                for (Lookup r : c.range()) {
+                    Object[][] b = range(p, r);
+                    if (b == null) {
+                        lo = null;
+                        break;
+                    }
+                    if (compareTuples(b[0], lo) > 0) {
+                        lo = b[0];
+                    }
+                    if (compareTuples(b[1], hi) < 0) {
+                        hi = b[1];
+                    }
+                }
+                if (lo != null && compareTuples(lo, hi) <= 0) {
+                    out.addAll(map.subMap(lo, true, hi, true).values());
+                }
+            }
+            return out;
+        }
+
+        /**
+         * The distinct tuples (as ORDER BY compares them, so 1 and 1.0 are one) of the product of the lists,
+         * leaving out null, which no comparison equals.
+         */
+        static java.util.Collection<Object[]> tuples(List<List<Object>> lists) {
+            java.util.TreeSet<Object[]> out = new java.util.TreeSet<>(Store::compareTuples);
+            out.add(new Object[0]);
+            for (List<Object> values : lists) {
+                java.util.TreeSet<Object[]> next = new java.util.TreeSet<>(Store::compareTuples);
+                for (Object[] p : out) {
+                    for (Object v : values) {
+                        if (ScalarOrder.scalar(v)) {
+                            Object[] q = java.util.Arrays.copyOf(p, p.length + 1);
+                            q[p.length] = v;
+                            next.add(q);
+                        }
+                    }
+                }
+                out = next;
+            }
+            return out;
+        }
+
+        /**
+         * A bound: {@code p}, then {@code v} if not null, then {@code fill} for the other columns and once more
+         * past the last, so that it is one longer than a key and never equal to one (see {@link #compareTuples}).
+         */
+        Object[] bound(Object[] p, Object v, Edge fill) {
+            Object[] b = java.util.Arrays.copyOf(p, columns.length + 1);
+            int at = p.length;
+            if (v != null) {
+                b[at++] = v;
+            }
+            java.util.Arrays.fill(b, at, b.length, fill);
+            return b;
+        }
+
+        /**
+         * The lowest and highest key of the rows whose value of the column after {@code p} makes {@code r} true,
+         * after the values {@code p}: {@code [lo, hi]}, or null when no value does. Values of other types never
+         * compare true, so a range stays within its value's type.
+         */
+        Object[][] range(Object[] p, Lookup r) {
+            if (r instanceof Lookup.Prefix x) {
+                String end = prefixEnd(x.prefix());
+                return new Object[][] {bound(p, x.prefix(), LOW),
+                        end == null ? bound(p, after(x.prefix()), HIGH) : bound(p, end, LOW)};
+            }
+            Lookup.Compare c = (Lookup.Compare) r;
+            Object v = c.value();
+            if (!ScalarOrder.scalar(v)) {
+                return null;
+            }
+            return switch (c.op()) {
+                case "=" -> new Object[][] {bound(p, v, LOW), bound(p, v, HIGH)};
+                case "<" -> new Object[][] {bound(p, before(v), LOW), bound(p, v, LOW)};
+                case "<=" -> new Object[][] {bound(p, before(v), LOW), bound(p, v, HIGH)};
+                case ">" -> new Object[][] {bound(p, v, HIGH), bound(p, after(v), HIGH)};
+                default -> new Object[][] {bound(p, v, LOW), bound(p, after(v), HIGH)};
+            };
+        }
+
+        /**
+         * The ids in id order: one key's set; the sets of several keys that name every column merged as they
+         * are read (an IN list); any other range gathered if small enough, else null.
+         */
+        @Override
+        Iterable<String> ids(Lookup l) {
+            java.util.Collection<java.util.TreeSet<String>> sets = sets(l);
+            if (sets.size() <= 1) {
+                return sets.isEmpty() ? List.of() : sets.iterator().next();
+            }
+            Lookup.Composite c = (Lookup.Composite) l;
+            if (c.equal().size() == columns.length) {
+                return merged(sets);
+            }
+            return gathered(sets);
+        }
+    }
+
+    /** The most columns an index may have. */
+    public static final int MAX_INDEX_COLUMNS = 4;
+
+    /** An object or an array in a {@link TupleIndex} key: after every string, and equal to any other (the ORDER BY order). */
+    private static final Object OTHER = new Object() {
+        @Override
+        public String toString() {
+            return "OTHER";
+        }
+    };
+
+    /**
+     * A sentinel in a lookup bound of a {@link TupleIndex}, between the ranks of {@link #tupleRank}: never equal
+     * to a value, so a bound never matches a key exactly.
+     */
+    private record Edge(int at) {}
+
+    private static final Edge LOW = new Edge(-1);
+    private static final Edge HIGH = new Edge(9);
+
+    /** Just below every value of {@code v}'s type. */
+    private static Edge before(Object v) {
+        return new Edge(tupleRank(v) - 1);
+    }
+
+    /** Just above every value of {@code v}'s type. */
+    private static Edge after(Object v) {
+        return new Edge(tupleRank(v) + 1);
+    }
+
+    /** Twice {@link ScalarOrder#rank}, so that a sentinel's odd {@code at} falls between two ranks. */
+    private static int tupleRank(Object v) {
+        if (v instanceof Edge e) {
+            return e.at();
+        }
+        return v == OTHER ? 8 : 2 * ScalarOrder.rank(v);
+    }
+
+    /**
+     * Key tuples (and bounds) in the ORDER BY order, column by column. A bound is one longer than a key and ends
+     * in {@link #LOW} or {@link #HIGH}: past the columns they share, it is just below or just above the key.
+     */
+    static int compareTuples(Object[] a, Object[] b) {
+        int n = Math.min(a.length, b.length);
+        for (int i = 0; i < n; i++) {
+            Object x = a[i];
+            Object y = b[i];
+            int rx = tupleRank(x);
+            int ry = tupleRank(y);
+            if (rx != ry) {
+                return Integer.compare(rx, ry);
+            }
+            if (rx == 2 || rx == 4 || rx == 6) {
+                int c = ScalarOrder.order(x, y);
+                if (c != 0) {
+                    return c;
+                }
+            }
+        }
+        if (a.length == b.length) {
+            return 0;
+        }
+        Object[] longer = a.length > b.length ? a : b;
+        int side = LOW.equals(longer[n]) ? -1 : 1;
+        return a == longer ? side : -side;
+    }
+
+    /**
+     * What an index lookup finds: the values that compare to {@code value} by {@code op} ("=", "<", "<=", ">",
+     * ">="), the values equal to any of {@code values}, the strings that start with {@code prefix}, or on an
+     * index of several columns a {@link Composite}. Each is exact by the rules of docs/QUERY.md: null, and
+     * values of no indexed type, match nothing.
      */
     public sealed interface Lookup {
+        /**
+         * On an index of several columns: for each of its first {@code equal.size()} columns, the values it may
+         * equal (any one; the union); then, on the next column, the comparisons ({@link Compare} with "<",
+         * "<=", ">", ">=" or "=") and prefixes ({@link Prefix}) that must all hold.
+         */
+        record Composite(List<List<Object>> equal, List<Lookup> range) implements Lookup {
+            public Composite {
+                List<List<Object>> copy = new ArrayList<>(equal.size());
+                for (List<Object> values : equal) {
+                    copy.add(java.util.Collections.unmodifiableList(new ArrayList<>(values)));
+                }
+                equal = java.util.Collections.unmodifiableList(copy);
+                range = List.copyOf(range);
+            }
+
+            /** How many columns of the index the lookup names. */
+            public int named() {
+                return equal.size() + (range.isEmpty() ? 0 : 1);
+            }
+        }
+
         record Compare(String op, Object value) implements Lookup {
             public Compare {
                 java.util.Objects.requireNonNull(op, "op");
@@ -1105,7 +1421,7 @@ public final class Store {
             for (TableState t : d.tables.values()) {
                 n += t.weight + t.dead.size() * Weight.DEAD_ENTRY;
                 for (IndexState ix : t.indexes.values()) {
-                    n += ix.entries * Weight.INDEX_ENTRY + ix.keys * Weight.INDEX_KEY;
+                    n += ix.weight();
                 }
             }
         }
@@ -1299,7 +1615,10 @@ public final class Store {
         });
     }
 
-    /** The columns of a table that have an index, in name order. */
+    /**
+     * The indexes of a table, in name order, each by the {@code column} field of its ops: its column, or its
+     * columns joined by commas ({@link Op#indexKey}).
+     */
     public List<String> indexes(String db, String table) {
         List<String> out = new ArrayList<>();
         if (tableExists(db, table)) {
@@ -1314,6 +1633,28 @@ public final class Store {
 
     public boolean indexExists(String db, String table, String column) {
         return indexes(db, table).contains(column);
+    }
+
+    /**
+     * The indexes of a table on several columns that lookups may use (2 to 4 distinct columns, none of them
+     * {@code _id}; one a peer sent otherwise is kept but not used), in name order, each as its columns.
+     */
+    public List<List<String>> compositeIndexes(String db, String table) {
+        List<List<String>> out = new ArrayList<>();
+        if (tableExists(db, table)) {
+            dbs.get(db).tables.get(table).indexes.forEach((key, ix) -> {
+                if (ix.exists() && ix instanceof TupleIndex x && x.usable) {
+                    out.add(List.of(x.columns));
+                }
+            });
+        }
+        return out;
+    }
+
+    /** The index of {@code column} (not {@code _id}) if it exists and answers {@code l}, else null. */
+    private static IndexState answering(TableState t, String column, Lookup l) {
+        IndexState ix = t.indexes.get(column);
+        return ix != null && ix.exists() && ix.answers(l) ? ix : null;
     }
 
     /**
@@ -1333,6 +1674,9 @@ public final class Store {
         }
         TableState t = dbs.get(db).tables.get(table);
         if (column.equals("_id")) {
+            if (l instanceof Lookup.Composite) {
+                return null;
+            }
             java.util.TreeSet<String> out = new java.util.TreeSet<>();
             for (String id : idKeys(t, l)) {
                 RowState r = t.rows.get(id);
@@ -1342,8 +1686,8 @@ public final class Store {
             }
             return out;
         }
-        IndexState ix = t.indexes.get(column);
-        return ix == null || !ix.exists() ? null : ix.lookup(l);
+        IndexState ix = answering(t, column, l);
+        return ix == null ? null : ix.lookup(l);
     }
 
     /**
@@ -1397,6 +1741,9 @@ public final class Store {
         }
         TableState t = dbs.get(db).tables.get(table);
         if (column.equals("_id")) {
+            if (l instanceof Lookup.Composite) {
+                return -1;
+            }
             if (l instanceof Lookup.Compare c) {
                 return c.op().equals("=") ? 1 : t.rows.size();
             }
@@ -1405,8 +1752,8 @@ public final class Store {
             }
             return t.rows.size();
         }
-        IndexState ix = t.indexes.get(column);
-        return ix == null || !ix.exists() ? -1 : ix.estimate(l);
+        IndexState ix = answering(t, column, l);
+        return ix == null ? -1 : ix.estimate(l);
     }
 
     /**
@@ -1464,10 +1811,10 @@ public final class Store {
         }
         TableState t = dbs.get(db).tables.get(table);
         if (column.equals("_id")) {
-            return idKeys(t, l);
+            return l instanceof Lookup.Composite ? null : idKeys(t, l);
         }
-        IndexState ix = t.indexes.get(column);
-        return ix == null || !ix.exists() ? null : ix.ids(l);
+        IndexState ix = answering(t, column, l);
+        return ix == null ? null : ix.ids(l);
     }
 
     /** Number of rows, over every table, that hold more than one version; for metrics. */

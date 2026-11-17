@@ -23,10 +23,28 @@ public sealed interface Op {
 
     record DropTable(String db, String table, Stamp stamp) implements Op {}
 
-    /** Creates a secondary index on one column of a table. Indexes are derived from the rows; only this is replicated. */
+    /**
+     * Creates a secondary index on a table. Indexes are derived from the rows; only this is replicated.
+     * {@code column} names the index's column, or its columns joined by commas (see {@link #indexKey}).
+     */
     record CreateIndex(String db, String table, String column, Stamp stamp) implements Op {}
 
     record DropIndex(String db, String table, String column, Stamp stamp) implements Op {}
+
+    /**
+     * The {@code column} field of the index ops for an index on {@code columns}: the names joined by commas.
+     * A name cannot hold a comma, so a 2.1 node, which reads the field as one column, holds an index on
+     * several columns as one on a column no row has: empty, never used, and kept, so it comes back whole
+     * after a rollback and a new upgrade.
+     */
+    static String indexKey(List<String> columns) {
+        return String.join(",", columns);
+    }
+
+    /** The columns of the index that {@code key} (an index op's {@code column} field) names, in order. */
+    static List<String> indexColumns(String key) {
+        return List.of(key.split(",", -1));
+    }
 
     /** True for ops a 2.0 node can read: everything but the index ops added in 2.1. */
     static boolean legacy(Op op) {

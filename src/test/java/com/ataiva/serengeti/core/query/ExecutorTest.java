@@ -10,6 +10,7 @@ import com.ataiva.serengeti.core.json.Json;
 import com.ataiva.serengeti.core.storage.FsyncPolicy;
 import com.ataiva.serengeti.core.storage.Hlc;
 import com.ataiva.serengeti.core.storage.StorageEngine;
+import com.ataiva.serengeti.core.storage.Store;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -396,6 +397,109 @@ class ExecutorTest {
         assertEquals(List.of(List.of("r1003")), rows("SELECT _id FROM shop.items WHERE qty = 10").rows());
         assertEquals("_id needs no index: lookups by _id never scan", fails("CREATE INDEX ON shop.items (_id)").getMessage());
         assertEquals("table 'shop.nope' does not exist", fails("CREATE INDEX ON shop.nope (qty)").getMessage());
+    }
+
+    @Test
+    void anIndexOnSeveralColumnsAnswersEqualPrefixesAndARange() throws IOException {
+        run("CREATE DATABASE shop");
+        run("CREATE TABLE shop.items");
+        StringBuilder values = new StringBuilder();
+        String[] names = {"apple", "apricot", "banana", "", "b%x", "Apple"};
+        for (int i = 0; i < 300; i++) {
+            String kind = i % 17 == 0 ? "null" : i % 13 == 0 ? "'1'" : i % 11 == 0 ? (i % 3) + ".0" : Integer.toString(i % 3);
+            String qty = i % 19 == 0 ? "null" : i % 7 == 0 ? "'" + (i % 10) + "'" : i % 5 == 0 ? (i % 20) + ".5"
+                    : i % 23 == 0 ? "true" : Integer.toString(i % 20);
+            values.append(i == 0 ? "" : ", ").append("('r").append(1000 + i).append("', ").append(kind).append(", ")
+                    .append(qty).append(", '").append(names[i % names.length]).append(i % 4).append("')");
+        }
+        run("INSERT INTO shop.items (_id, kind, qty, name) VALUES " + values);
+        run("INSERT INTO shop.items (_id, qty) VALUES ('nokind', 5)");
+        run("INSERT INTO shop.items (_id, kind) VALUES ('noqty', 1)");
+        List<String> conditions = List.of("kind = 1 AND qty = 5", "qty = 5 AND kind = 1.0", "kind = 1 AND qty > 5",
+                "kind = 1 AND qty >= 5 AND qty < 12", "kind = 1 AND qty > 5 AND qty < 3", "kind = 1 AND qty > 5 AND qty < 'z'",
+                "kind IN (0, 2, '1') AND qty <= 10", "kind IN (1, NULL) AND qty IN (2, 4.5, '3')", "kind = NULL AND qty = 1",
+                "kind = 1 AND qty LIKE '3%'", "kind = 1 AND qty LIKE '3'", "kind = 2 AND qty = 4 AND name LIKE 'ap%'",
+                "kind = 2 AND qty = 4 AND name = 'apple0'", "kind = 0 AND name = 'banana2'", "kind > 0",
+                "kind = 1 AND qty IS NULL", "kind = 1 AND qty != 5", "qty = 5", "kind LIKE '1%' AND qty < 100",
+                "kind = 1 AND qty = TRUE", "kind = 1 AND qty = 5 AND _id > 'r1100'", "kind = 1 AND qty > 2 AND kind = 2");
+        List<Object> before = new ArrayList<>();
+        for (String w : conditions) {
+            before.add(List.of(rows("SELECT _id, kind, qty FROM shop.items WHERE " + w).rows(),
+                    rows("SELECT COUNT(*) FROM shop.items WHERE " + w).rows(),
+                    rows("SELECT _id FROM shop.items WHERE " + w + " ORDER BY _id LIMIT 3").rows()));
+        }
+        assertEquals(1, affected("CREATE INDEX ON shop.items (kind, qty)"));
+        assertEquals(1, affected("CREATE INDEX ON shop.items (kind, qty, name)"));
+        assertEquals(1, affected("CREATE INDEX ON shop.items (qty, kind)"), "another order is another index");
+        assertEquals(0, affected("CREATE INDEX IF NOT EXISTS ON shop.items (kind, qty)"));
+        assertEquals("'shop.items' already has an index on kind, qty", fails("CREATE INDEX ON shop.items (kind, qty)").getMessage());
+        assertEquals("_id cannot be a column of an index: lookups by _id never scan",
+                fails("CREATE INDEX ON shop.items (kind, _id)").getMessage());
+        assertEquals(List.of(List.of("kind, qty"), List.of("kind, qty, name"), List.of("qty, kind")),
+                rows("SHOW INDEXES IN shop.items").rows());
+        for (int i = 0; i < conditions.size(); i++) {
+            String w = conditions.get(i);
+            assertEquals(before.get(i), List.of(rows("SELECT _id, kind, qty FROM shop.items WHERE " + w).rows(),
+                    rows("SELECT COUNT(*) FROM shop.items WHERE " + w).rows(),
+                    rows("SELECT _id FROM shop.items WHERE " + w + " ORDER BY _id LIMIT 3").rows()), w);
+        }
+        // The read that names the most columns is taken; of those, the one with the fewest rows.
+        assertEquals(plan("kind,qty", List.of(List.of(1L)), new Store.Lookup.Compare(">", 5L)), planOf("kind = 1 AND qty > 5"));
+        assertEquals(plan("kind,qty,name", List.of(List.of(2L), List.of(4L)), new Store.Lookup.Prefix("ap")),
+                planOf("name LIKE 'ap%' AND qty = 4 AND kind = 2"));
+        assertEquals(plan("kind,qty,name", List.of(List.of(2L), List.of(4L), List.of("apple0"))),
+                planOf("kind = 2 AND qty = 4 AND name = 'apple0'"));
+        assertEquals(plan("kind,qty", List.of(Arrays.asList(1L, null), List.of(2L, 4.5, "3"))),
+                planOf("kind IN (1, NULL) AND qty IN (2, 4.5, '3')"), "IN lists: their product");
+        assertEquals(plan("kind,qty", List.of(List.of(1L)), new Store.Lookup.Compare(">=", 5L), new Store.Lookup.Compare("<", 12L)),
+                planOf("kind = 1 AND qty >= 5 AND qty < 12 AND name != 'x'"), "both ends of a range");
+        assertEquals(new Executor.Plan("_id", new Store.Lookup.Compare("=", "r1003")), planOf("kind = 0 AND _id = 'r1003'"),
+                "one column named either way: _id has fewer rows");
+        run("CREATE INDEX ON shop.items (qty)");
+        assertEquals(plan("kind,qty", List.of(List.of(1L), List.of(5L))), planOf("qty = 5 AND kind = 1"),
+                "two columns over one");
+        assertEquals(plan("qty,kind", List.of(List.of(5L)), new Store.Lookup.Compare(">", 0L)), planOf("qty = 5 AND kind > 0"));
+        StringBuilder many = new StringBuilder();
+        for (int i = 0; i < 40; i++) {
+            many.append(i == 0 ? "" : ", ").append(i);
+        }
+        Executor.Plan capped = planOf("kind IN (" + many + ") AND qty IN (" + many + ")");
+        assertEquals(1, capped.named(), "40 x 40 tuples are over the 1,000 a read looks up: one column only");
+        // Writes keep the index in step, and UPDATE and DELETE find their rows through it.
+        assertEquals(1, affected("UPDATE shop.items SET qty = 99 WHERE kind = 1 AND qty = 1 AND _id = 'r1001'"));
+        assertEquals(List.of(List.of("r1001")), rows("SELECT _id FROM shop.items WHERE kind = 1 AND qty = 99").rows());
+        long n = (Long) rows("SELECT COUNT(*) FROM shop.items WHERE kind = 2 AND qty >= 10").rows().get(0).get(0);
+        assertEquals(n, affected("DELETE FROM shop.items WHERE kind = 2 AND qty >= 10"));
+        assertEquals(List.of(List.of(0L)), rows("SELECT COUNT(*) FROM shop.items WHERE kind = 2 AND qty >= 10").rows());
+        assertEquals(1, affected("DROP INDEX ON shop.items (kind, qty)"));
+        assertEquals("'shop.items' has no index on kind, qty", fails("DROP INDEX ON shop.items (kind, qty)").getMessage());
+        assertEquals(0, affected("DROP INDEX IF EXISTS ON shop.items (kind, qty)"));
+        assertEquals(List.of(List.of("kind, qty, name"), List.of("qty"), List.of("qty, kind")),
+                rows("SHOW INDEXES IN shop.items").rows());
+        // It survives a restart, from the index file, built again from the rows.
+        engine.checkpoint();
+        engine.close();
+        engine = StorageEngine.open(dir, FsyncPolicy.ALWAYS);
+        query = new Query(engine, new Hlc("n1"));
+        assertEquals(List.of(List.of("kind, qty, name"), List.of("qty"), List.of("qty, kind")),
+                rows("SHOW INDEXES IN shop.items").rows());
+        assertEquals(List.of(List.of("r1001")), rows("SELECT _id FROM shop.items WHERE kind = 1 AND qty = 99").rows());
+        assertEquals(plan("kind,qty,name", List.of(List.of(1L), List.of(99L))), planOf("kind = 1 AND qty = 99"), "a tie: the first in name order");
+    }
+
+    private static Executor.Plan plan(String index, List<List<Object>> equal, Store.Lookup... range) {
+        List<Store.Lookup> r = new ArrayList<>();
+        for (Store.Lookup l : range) {
+            if (l != null) {
+                r.add(l);
+            }
+        }
+        return new Executor.Plan(index, new Store.Lookup.Composite(equal, r));
+    }
+
+    private Executor.Plan planOf(String where) {
+        Statement.Select s = (Statement.Select) Parser.parse("SELECT * FROM shop.items WHERE " + where);
+        return engine.read(st -> Executor.cheapestIndexedTerm(st, "shop", "items", s.where()));
     }
 
     @Test

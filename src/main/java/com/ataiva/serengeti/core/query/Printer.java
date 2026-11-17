@@ -34,11 +34,11 @@ public final class Printer {
         }
         if (s instanceof Statement.CreateIndex c) {
             return "CREATE INDEX " + (c.ifNotExists() ? "IF NOT EXISTS " : "") + "ON " + c.db() + "." + c.table()
-                    + " (" + c.column() + ")";
+                    + " (" + String.join(", ", c.columns()) + ")";
         }
         if (s instanceof Statement.DropIndex d) {
             return "DROP INDEX " + (d.ifExists() ? "IF EXISTS " : "") + "ON " + d.db() + "." + d.table()
-                    + " (" + d.column() + ")";
+                    + " (" + String.join(", ", d.columns()) + ")";
         }
         if (s instanceof Statement.ShowIndexes i) {
             return "SHOW INDEXES IN " + i.db() + "." + i.table();

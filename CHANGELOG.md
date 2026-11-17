@@ -116,6 +116,16 @@ GitHub release notes and tags.
   and `SELECT DISTINCT distinct FROM t` its distinct values. See docs/QUERY.md, "SELECT DISTINCT" and
   "HAVING".
 - docs/QUERY.md, "Reading a large table": keyset paging with `WHERE _id > 'last' ORDER BY _id LIMIT n`.
+- Indexes on 2 to 4 columns: `CREATE INDEX ON db.t (a, b)`, `DROP INDEX ON db.t (a, b)`, and `a, b` in
+  `SHOW INDEXES`. The index keeps the rows in the ORDER BY order of a, then b. A WHERE whose top-level AND
+  has `=`, IN or a LIKE without wildcards on its first columns, and then any of `<`, `<=`, `>`, `>=` and a
+  LIKE prefix on the next, reads only the rows those terms allow (IN lists as every combination of their
+  values, up to 1,000); SELECT, COUNT(*), GROUP BY, UPDATE and DELETE use it. Of the indexes that can
+  answer, the one that names the most columns of the condition is used, then the one that reads the
+  fewest rows. Its entries count towards the memory limit. The definition replicates and is kept in
+  `indexes.jsonl` with the columns joined by commas in the `column` field: a 2.1 node holds it as an index
+  on a column no row has (empty and unused) and keeps it, so it is back after a rollback to 2.1 and an
+  upgrade. Single-column indexes are unchanged. See docs/QUERY.md, "Indexes on several columns".
 
 ### Fixed
 - A newer delete did not reach a node that held an older delete of the same row (2.1 too): sync compared

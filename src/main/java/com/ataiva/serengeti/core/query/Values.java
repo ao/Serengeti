@@ -110,33 +110,9 @@ final class Values {
         return c;
     }
 
-    private static int rank(Object v) {
-        if (v == null) {
-            return 0;
-        }
-        if (v instanceof Boolean) {
-            return 1;
-        }
-        if (v instanceof Number) {
-            return 2;
-        }
-        if (v instanceof String) {
-            return 3;
-        }
-        return 4;
-    }
-
     /** Total order for ORDER BY: null, then booleans, numbers, strings, then anything else (all equal). */
     static int sortOrder(Object a, Object b) {
-        int ra = rank(a);
-        int rb = rank(b);
-        if (ra != rb) {
-            return Integer.compare(ra, rb);
-        }
-        if (ra == 0 || ra == 4) {
-            return 0;
-        }
-        return order(a, b);
+        return ScalarOrder.sortOrder(a, b);
     }
 
     /** The literal as query text. */

@@ -29,6 +29,39 @@ public final class ScalarOrder {
         return v instanceof Boolean || v instanceof Number || v instanceof String;
     }
 
+    /** A value's place in the ORDER BY order: null (and missing) 0, booleans 1, numbers 2, strings 3, anything else 4. */
+    public static int rank(Object v) {
+        if (v == null) {
+            return 0;
+        }
+        if (v instanceof Boolean) {
+            return 1;
+        }
+        if (v instanceof Number) {
+            return 2;
+        }
+        if (v instanceof String) {
+            return 3;
+        }
+        return 4;
+    }
+
+    /**
+     * The ORDER BY order (docs/QUERY.md, "Ordering"), a total order: null, then booleans, numbers, strings, then
+     * anything else (all equal). Indexes on several columns keep their rows in it.
+     */
+    public static int sortOrder(Object a, Object b) {
+        int ra = rank(a);
+        int rb = rank(b);
+        if (ra != rb) {
+            return Integer.compare(ra, rb);
+        }
+        if (ra == 0 || ra == 4) {
+            return 0;
+        }
+        return order(a, b);
+    }
+
     static boolean integral(Number n) {
         return n instanceof Long || n instanceof Integer || n instanceof Short || n instanceof Byte;
     }

@@ -9,7 +9,7 @@ here has a date.
   (`SERENGETI_FSYNC`, default `always`); concurrent writes share fsyncs. Snapshots bound the log, and
   recovery drops an incomplete last record. A lock on the data directory keeps a second node off it.
 - Tables of JSON rows, and the query language in [docs/QUERY.md](docs/QUERY.md): CREATE and DROP for
-  databases, tables and single-column indexes, SHOW, INSERT, SELECT and SELECT DISTINCT with WHERE
+  databases, tables and indexes on 1 to 4 columns, SHOW, INSERT, SELECT and SELECT DISTINCT with WHERE
   (comparisons, IN, LIKE, IS NULL), ORDER BY on one or more keys and LIMIT, COUNT, COUNT(DISTINCT), SUM,
   MIN, MAX and AVG with GROUP BY and HAVING, UPDATE and DELETE.
 - An HTTP API ([docs/API.md](docs/API.md)) in which every route except `GET /health` and `GET /ready`
@@ -36,7 +36,8 @@ here has a date.
 2.2 has these limits:
 
 - every node keeps every database in memory;
-- indexes cover one column each; a WHERE without an indexed comparison scans its table;
+- an index on several columns is read only for its first columns that a condition fixes (=, IN, then one
+  range); a WHERE without a term an index answers scans its table;
 - no joins and no transactions across statements; nothing is linearizable;
 - an account has one role, for every table of every database it may use: there are no permissions per
   table;
@@ -45,8 +46,8 @@ here has a date.
 
 ## Possible next steps
 
-Not committed to, and in no particular order: indexes on more than one column;
-clients published as packages; a change feed that survives a restart.
+Not committed to, and in no particular order: clients published as packages; a change feed that survives
+a restart.
 
 ## Not planned
 

@@ -104,6 +104,14 @@ public final class Weight {
      */
     static final long DEAD_ENTRY = 72;
 
+    /**
+     * One distinct key of an index on {@code columns} columns (2 or more): as {@link #INDEX_KEY}, plus the array
+     * that holds the key's values (the values themselves are the row's).
+     */
+    static long ofTupleKey(int columns) {
+        return INDEX_KEY + 16 + align(4L * columns);
+    }
+
     private static long align(long n) {
         return (n + 7) & ~7L;
     }

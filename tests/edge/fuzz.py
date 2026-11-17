@@ -3,7 +3,9 @@
 Every answer must be 200 or a 400 with a message (never 500, never no answer), a parse error's position must
 lie inside the text, a valid statement must never get a parse error, and the node must keep answering.
 Valid SELECTs are also run as "WHERE (e) OR (e)", which never uses an index, and with "HAVING (h) OR (h)",
-and must give the same rows; a valid SELECT DISTINCT must give the rows of its GROUP BY form.
+and must give the same rows; a valid SELECT DISTINCT must give the rows of its GROUP BY form. Indexes on one
+and on several columns are created and dropped as the run goes, and a share of the conditions is an AND that
+fixes the first columns of one (a = x AND b > y ...), so those are compared with the same scan.
 
     FUZZ_SEED=123 FUZZ_N=5000 python3 edge.py fuzz HOST       (the seed is printed so a failure can be replayed)
 """
@@ -24,7 +26,8 @@ COLS = ["a", "b", "v", "_id", "on", "index", "conflicts", "x" * 63, "distinct", 
 # Columns named like the words that are keywords only where the grammar puts them stay lowercase, so that the
 # checks below can find the clause keywords DISTINCT and HAVING, which are always written in capitals here.
 LOWER = ("distinct", "having")
-TABLES = [("f", "t"), ("f", "u"), ("f", "on"), ("f2", "x"), ("f", "nosuch"), ("nodb", "t")]
+# f.k holds few distinct values, so that conditions on two or three of its columns match rows.
+TABLES = [("f", "t"), ("f", "u"), ("f", "on"), ("f", "k"), ("f2", "x"), ("f", "nosuch"), ("nodb", "t")]
 # Values a statement may compare or store. Strings include quotes, comment markers and non-ASCII text.
 VALUES = ["NULL", "TRUE", "FALSE", "0", "-0", "1", "-1", "2", "1.0", "-0.0", "0.5", "1e300", "-2.5E-7",
           "9223372036854775807", "-9223372036854775808", "9223372036854775808", "9007199254740993", "''", "'a'",
@@ -39,7 +42,8 @@ JUNK = KEYWORDS + SYMBOLS + VALUES + [
     "(" * 70, "NOT " * 70, "SELECT * FROM f.t", "IN", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\b'", "'\\'", "BY",
     "HAVING", "DISTINCT", "OFFSET", "ILIKE", "ESCAPE"]
 SEMANTIC = ("does not exist", "already exists", "already has an index", "has no index", "_id must be",
-            "_id cannot be changed", "_id needs no index", "over the maximum", "nested more than", "overflows a",
+            "_id cannot be changed", "_id needs no index", "_id cannot be a column of an index", "over the maximum",
+            "nested more than", "overflows a",
             "would make more than", "would hold more than")
 AGGREGATES = ["COUNT", "SUM", "MIN", "MAX", "AVG"]
 # Pieces of LIKE patterns: wildcards, the three escapes, and characters the stored values hold.
@@ -51,7 +55,7 @@ class Gen:
         self.r = rng
 
     def table(self):
-        db, t = self.r.choice(TABLES[:4]) if self.r.random() < 0.9 else self.r.choice(TABLES)
+        db, t = self.r.choice(TABLES[:5]) if self.r.random() < 0.9 else self.r.choice(TABLES)
         return [db, ".", t]
 
     def case(self, n):
@@ -158,10 +162,44 @@ class Gen:
         toks += [")" for k in kinds if k == "("]
         return toks
 
+    def prefix_terms(self):
+        """An AND that an index on several columns answers: = or IN on the first one or two of a, b, v (in the
+        order of an index of setup(), or another), then maybe a range or LIKE on the next, the terms in any
+        order and sometimes with one more of any kind."""
+        r = self.r
+        cols = r.choice([["a", "b"], ["v", "a"], ["a", "b", "v"], ["b", "a"]])
+        k = r.randint(1, len(cols) - 1) if r.random() < 0.7 else len(cols)
+        terms = []
+        for c in cols[:k]:
+            if r.random() < 0.75:
+                terms.append([self.case(c), "=", self.value()])
+            else:
+                vals = [self.value() for _ in range(r.randint(1, 4))]
+                terms.append([self.case(c), "IN", "("] + sum(([v, ","] for v in vals), [])[:-1] + [")"])
+        if k < len(cols) and r.random() < 0.7:
+            c = self.case(cols[k])
+            for _ in range(r.randint(1, 2)):
+                terms.append([c, "LIKE", self.pattern()] if r.random() < 0.2
+                             else [c, r.choice(["<", "<=", ">", ">="]), self.value()])
+        if r.random() < 0.3:
+            terms.append(["("] + self.expr(1) + [")"])
+        r.shuffle(terms)
+        out = terms[0]
+        for t in terms[1:]:
+            out = out + ["AND"] + t
+        return out
+
     def where(self):
         if self.r.random() < 0.25:
             return []
-        return ["WHERE"] + (self.deep() if self.r.random() < 0.05 else self.expr())
+        k = self.r.random()
+        return ["WHERE"] + (self.deep() if k < 0.05 else self.prefix_terms() if k < 0.35 else self.expr())
+
+    def index_columns(self):
+        """1 to 4 distinct columns of CREATE or DROP INDEX, more often one or two; sometimes _id, which is refused."""
+        n = self.r.choice([1, 1, 1, 2, 2, 3, 4])
+        cols = self.r.sample(["a", "v", "b", "on", "_id"] if self.r.random() < 0.15 else ["a", "v", "b", "on"], n)
+        return ["("] + sum(([self.case(c), ","] for c in cols), [])[:-1] + [")"]
 
     def statement(self):
         """Returns (tokens, kind). Every statement follows the grammar and the further parse rules."""
@@ -212,8 +250,7 @@ class Gen:
             return ["DELETE", "FROM"] + self.table() + (self.where() or ["WHERE", "v", "=", self.value()]), "delete"
         if k < 0.80:
             op = r.choice(["CREATE", "DROP"])
-            return [op, "INDEX"] + self._ifx(op) + ["ON"] + self.table() \
-                + ["(", r.choice(["a", "v", "b", "_id", "on"]), ")"], "ddl"
+            return [op, "INDEX"] + self._ifx(op) + ["ON"] + self.table() + self.index_columns(), "ddl"
         if k < 0.88:
             what = r.random()
             if what < 0.4:
@@ -328,12 +365,22 @@ def metamorphic(toks, kind):
     return out
 
 
+# The values of f.k: a few of VALUES, so that prefixes repeat.
+FEW = ["NULL", "TRUE", "0", "1", "1.0", "2", "'a'", "'b'", "''"]
+# Indexes on several columns, per table (f.u has none: it is scanned).
+COMPOSITE = {"t": [("a", "b")], "on": [("a", "b", "v")], "k": [("a", "b"), ("b", "a", "v")]}
+
+
 def setup(c):
     c.ok("CREATE DATABASE IF NOT EXISTS f")
-    for t in ("t", "u", "on"):
+    for t in ("t", "u", "on", "k"):
         c.ok(f"CREATE TABLE IF NOT EXISTS f.{t}")
     c.ok("CREATE INDEX IF NOT EXISTS ON f.t (v)")
     c.ok("CREATE INDEX IF NOT EXISTS ON f.on (a)")
+    c.ok("CREATE INDEX IF NOT EXISTS ON f.k (v)")
+    for t, defs in COMPOSITE.items():
+        for d in defs:
+            c.ok(f"CREATE INDEX IF NOT EXISTS ON f.{t} ({', '.join(d)})")
     rows = []
     rng = random.Random(1)
     for i in range(300):
@@ -342,6 +389,24 @@ def setup(c):
         c.ok("INSERT INTO f.t (_id, a, b, v) VALUES " + ", ".join(rows))
         c.ok("INSERT INTO f.u (_id, a, b, v) VALUES " + ", ".join(rows[:100]))
         c.ok("INSERT INTO f.on (_id, a, b, v) VALUES " + ", ".join(rows[100:200]))
+    if c.count("f.k") == 0:
+        few = [f"('k{i:03d}', {rng.choice(FEW)}, {rng.choice(FEW)}, {rng.choice(FEW)})" for i in range(300)]
+        # Some rows lack a column, which reads as null and sorts first in an index.
+        few += [f"('m{i:03d}', {rng.choice(FEW)})" for i in range(20)]
+        c.ok("INSERT INTO f.k (_id, a, b, v) VALUES " + ", ".join(few[:300]))
+        c.ok("INSERT INTO f.k (_id, a) VALUES " + ", ".join(few[300:]))
+
+
+def composite_conditions(d):
+    """Conditions an index on the columns `d` answers through a prefix: = and IN on the first, then a
+    comparison or a LIKE on the second; and on a third, after = on the first two."""
+    x, y = ["1", "1.0", "'a'", "TRUE", "NULL"], ["0", "1", "'a'", "2"]
+    out = [f"{d[0]} = {a} AND {d[1]} {op} {b}" for a in x for op in ("=", "<", ">=") for b in y]
+    out += [f"{d[0]} IN ({a}, 2, 'b') AND {d[1]} = 1" for a in x]
+    out += [f"{d[1]} LIKE '%' AND {d[0]} = {a}" for a in x]
+    if len(d) > 2:
+        out += [f"{d[0]} = {a} AND {d[1]} = {b} AND {d[2]} > 0" for a in x for b in y]
+    return out
 
 
 def run(host, n=None, seed=None):
@@ -417,11 +482,22 @@ def run(host, n=None, seed=None):
     setup(c)
     for stage in ("as the run left them", "after DROP and CREATE INDEX"):
         mism = []
-        for t in ("t", "u", "on"):
+        for t in ("t", "u", "on", "k"):
             if stage != "as the run left them":
                 for col in ("a", "v"):
                     c.ok(f"DROP INDEX IF EXISTS ON f.{t} ({col})")
                     c.ok(f"CREATE INDEX ON f.{t} ({col})")
+                for d in COMPOSITE.get(t, []) + [("v", "a")]:
+                    c.ok(f"DROP INDEX IF EXISTS ON f.{t} ({', '.join(d)})")
+                    c.ok(f"CREATE INDEX ON f.{t} ({', '.join(d)})")
+            # Through indexes on several columns (those of setup(), any the run made, and (v, a) in the second
+            # stage), and on f.u, which has none, by scan.
+            for d in [("a", "b"), ("b", "a", "v"), ("v", "a")]:
+                for cond in composite_conditions(d):
+                    a = c.count(f"f.{t}", cond)
+                    b = c.count(f"f.{t}", f"({cond}) OR ({cond})")
+                    if a != b:
+                        mism.append((t, cond, a, b))
             for col in ("a", "v"):
                 for op in ["=", "<", ">="]:
                     for v in VALUES:

@@ -83,8 +83,8 @@ public final class Parser {
         }
         if (acceptWord("index")) {
             boolean ifNotExists = ifNotExists();
-            String[] t = indexTarget();
-            return new Statement.CreateIndex(t[0], t[1], t[2], ifNotExists);
+            String[] q = indexOn();
+            return new Statement.CreateIndex(q[0], q[1], indexColumns(), ifNotExists);
         }
         throw expected("DATABASE, TABLE or INDEX");
     }
@@ -101,8 +101,8 @@ public final class Parser {
         }
         if (acceptWord("index")) {
             boolean ifExists = ifExists();
-            String[] t = indexTarget();
-            return new Statement.DropIndex(t[0], t[1], t[2], ifExists);
+            String[] q = indexOn();
+            return new Statement.DropIndex(q[0], q[1], indexColumns(), ifExists);
         }
         throw expected("DATABASE, TABLE or INDEX");
     }
@@ -147,16 +147,34 @@ public final class Parser {
         throw expected("DATABASES, TABLES, INDEXES or CONFLICTS");
     }
 
-    /** {@code ON db.table (column)} after CREATE INDEX or DROP INDEX: database, table and column. */
-    private String[] indexTarget() {
+    /** The most columns an index lists. */
+    static final int MAX_INDEX_COLUMNS = 4;
+
+    /** {@code ON db.table} after CREATE INDEX or DROP INDEX: database and table. */
+    private String[] indexOn() {
         if (!acceptWord("on")) {
             throw expected("ON");
         }
-        String[] q = qualifiedName();
+        return qualifiedName();
+    }
+
+    /** {@code (column {, column})} of CREATE INDEX or DROP INDEX: 1 to 4 columns, each once. */
+    private List<String> indexColumns() {
         expectSymbol("(");
-        String column = name();
+        List<String> columns = new ArrayList<>();
+        do {
+            int at = tok.start();
+            String c = name();
+            if (columns.contains(c)) {
+                throw new ParseException("column '" + c + "' is listed twice", at);
+            }
+            if (columns.size() == MAX_INDEX_COLUMNS) {
+                throw new ParseException("an index has at most " + MAX_INDEX_COLUMNS + " columns", at);
+            }
+            columns.add(c);
+        } while (acceptSymbol(","));
         expectSymbol(")");
-        return new String[] {q[0], q[1], column};
+        return columns;
     }
 
     /** Accepts a word that is not reserved (INDEX, ON, INDEXES), so names may still use it. */

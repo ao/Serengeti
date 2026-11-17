@@ -138,6 +138,11 @@ expect "a restart keeps old and new writes" 46 "$(count 1)"
 expect "and the update" 1 "$(count 1 'n = 700')"
 expect "create an index" 200 "$(q 1 'CREATE INDEX ON d.t (n)')"
 expect "a write after it" 200 "$(q 1 "INSERT INTO d.t (_id, n) VALUES ('post-index', 800)")"
+# Its definition reaches indexes.jsonl as one column named "n,k": 2.0 does not read the file, and 2.1 holds an
+# index on a column no row has.
+expect "create an index on two columns" 200 "$(q 1 'CREATE INDEX ON d.t (n, k)')"
+expect "a write it holds" 200 "$(q 1 "UPDATE d.t SET k = 'x' WHERE _id = 'post-index'")"
+expect "found through it" 1 "$(count 1 "n = 800 AND k = 'x'")"
 acct() { # i user password method path [body] -> status
   local args=(-s -o /tmp/body -w '%{http_code}' --max-time 20 --cacert /tmp/ca.pem -u "$2:$3" -X "$4")
   if [ -n "${6:-}" ]; then args+=(-H 'Content-Type: application/json' --data-binary "$6"); fi
@@ -160,6 +165,13 @@ replace 1 "$OLD_IMAGE" -
 wait_up 1
 expect "rolled back to $OLD_IMAGE, every row is still there" 47 "$(count 1)"
 expect "including the one written after the index" 1 "$(count 1 'n = 800')"
+expect "$OLD_IMAGE finds it by both columns" 1 "$(count 1 "n = 800 AND k = 'x'")"
+case "$(q 1 'SHOW INDEXES IN d.t'):$(body)" in
+  400:*) ok "$OLD_IMAGE has no SHOW INDEXES (2.0), and started with the index file there" ;;
+  200:*'["n,k"]'*) ok "$OLD_IMAGE holds the index on two columns as one on a column named n,k" ;;
+  *) bad "the index on two columns on $OLD_IMAGE" "$(body)" ;;
+esac
+expect "a write on $OLD_IMAGE to both columns" 200 "$(q 1 "UPDATE d.t SET k = 'y' WHERE _id = 'u7'")"
 if docker logs "$RUN-n1" 2>&1 | grep -q discarded; then bad "rollback" "$OLD_IMAGE discarded part of its log"
 else ok "$OLD_IMAGE discarded nothing from the log"; fi
 if [ "${accounts:-0}" = 1 ]; then
@@ -185,8 +197,11 @@ if [ "${limits:-0}" = 1 ]; then
   expect "with their lists" 403 "$(acct 1 limited 'limited password 1' POST /v1/query '{"query": "CREATE DATABASE other"}')"
 fi
 q 1 'SHOW INDEXES IN d.t' >/dev/null
-case "$(body)" in *'"rows":[["n"]]'*) ok "upgraded again, the index is back" ;; *) bad "index after rollback" "$(body)" ;; esac
+case "$(body)" in *'"rows":[["n"],["n, k"]]'*) ok "upgraded again, both indexes are back" ;; *) bad "index after rollback" "$(body)" ;; esac
 expect "and finds rows" 1 "$(count 1 'n = 800')"
+expect "the index on two columns finds the row written before the rollback" 1 "$(count 1 "n = 800 AND k = 'x'")"
+expect "and the one $OLD_IMAGE wrote" 1 "$(count 1 "n = 7 AND k = 'y'")"
+expect "and a range on its second column" 1 "$(count 1 "n = 7 AND k > 'x'")"
 docker rm -f "$RUN-n1" >/dev/null
 docker volume rm "$RUN-data1" >/dev/null
 
@@ -215,8 +230,21 @@ for i in 1 2 3; do
   if [ "$i" = 1 ]; then
     expect "a write through the upgraded node reaches a majority" 200 "$(q 1 "INSERT INTO d.t (_id, n) VALUES ('mixed-new', 0)")"
     # 2.0 cannot read index ops: they are kept from its nodes, which still take and pass on writes.
-    expect "CREATE INDEX through the upgraded node while 2.0 nodes remain" 200 "$(q 1 'CREATE INDEX ON d.t (n)')"
-    expect "a write through an old node too" 200 "$(q 2 "INSERT INTO d.t (_id, n) VALUES ('mixed-old', 0)")"
+    expect "CREATE INDEX through the upgraded node while old nodes remain" 200 "$(q 1 'CREATE INDEX ON d.t (n)')"
+    expect "and one on two columns" 200 "$(q 1 'CREATE INDEX ON d.t (n, tag)')"
+    expect "a write through an old node too" 200 "$(q 2 "INSERT INTO d.t (_id, n, tag) VALUES ('mixed-old', 0, 'old')")"
+    # 2.1 takes the definition as an index on a column named "n,tag" (2.0 is not sent it), and answers by scan.
+    for _ in $(seq 1 40); do
+      st=$(q 2 'SHOW INDEXES IN d.t')
+      case "$st:$(body)" in 400:* | 200:*'["n,tag"]'*) break ;; esac
+      sleep 0.5
+    done
+    case "$st:$(body)" in
+      400:*) ok "n2 ($OLD_IMAGE) has no SHOW INDEXES (2.0)" ;;
+      200:*'["n,tag"]'*) ok "n2 ($OLD_IMAGE) holds the index on two columns as one on a column named n,tag" ;;
+      *) bad "the index on two columns on n2" "$st $(body)" ;;
+    esac
+    expect "n2 ($OLD_IMAGE) finds the row by both columns" 1 "$(count 2 "n = 0 AND tag = 'old'")"
   fi
 done
 docker exec "$RUN-client" sh -c 'touch /tmp/stop; for i in $(seq 1 60); do [ -e /tmp/stopped ] && break; sleep 0.5; done'
@@ -241,8 +269,9 @@ for i in 1 2 3; do
 done
 for i in 1 2 3; do
   q "$i" 'SHOW INDEXES IN d.t' >/dev/null
-  case "$(body)" in *'"rows":[["n"]]'*) ok "n$i has the index created while the versions were mixed" ;; *) bad "index on n$i" "$(body)" ;; esac
+  case "$(body)" in *'"rows":[["n"],["n, tag"]]'*) ok "n$i has the indexes created while the versions were mixed" ;; *) bad "indexes on n$i" "$(body)" ;; esac
   expect "n$i finds the mixed-version rows through it" 2 "$(count "$i" "n = 0")"
+  expect "n$i finds the old node's write through the index on two columns" 1 "$(count "$i" "n = 0 AND tag = 'old'")"
 done
 if [ "$acked" -gt 20 ]; then ok "the writer got $acked acknowledgements during the upgrade"; else bad "writer" "only $acked acknowledgements"; fi
 

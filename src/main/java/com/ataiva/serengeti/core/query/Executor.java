@@ -127,16 +127,19 @@ public final class Executor {
         if (s instanceof Statement.CreateIndex c) {
             return engine.update(store -> {
                 requireTable(store, c.db(), c.table());
-                if (c.column().equals(ID)) {
-                    throw new QueryException("_id needs no index: lookups by _id never scan");
+                if (c.columns().contains(ID)) {
+                    throw new QueryException(c.columns().size() == 1 ? "_id needs no index: lookups by _id never scan"
+                            : "_id cannot be a column of an index: lookups by _id never scan");
                 }
-                if (store.indexExists(c.db(), c.table(), c.column())) {
+                String key = Op.indexKey(c.columns());
+                if (store.indexExists(c.db(), c.table(), key)) {
                     if (c.ifNotExists()) {
                         return none();
                     }
-                    throw new QueryException("'" + c.db() + "." + c.table() + "' already has an index on " + c.column());
+                    throw new QueryException("'" + c.db() + "." + c.table() + "' already has an index on "
+                            + String.join(", ", c.columns()));
                 }
-                return one(new Op.CreateIndex(c.db(), c.table(), c.column(), stamp(store)));
+                return one(new Op.CreateIndex(c.db(), c.table(), key, stamp(store)));
             });
         }
         if (s instanceof Statement.DropIndex d) {
@@ -146,19 +149,25 @@ public final class Executor {
                     return none();
                 }
                 requireTable(store, d.db(), d.table());
-                if (!store.indexExists(d.db(), d.table(), d.column())) {
+                String key = Op.indexKey(d.columns());
+                if (!store.indexExists(d.db(), d.table(), key)) {
                     if (d.ifExists()) {
                         return none();
                     }
-                    throw new QueryException("'" + d.db() + "." + d.table() + "' has no index on " + d.column());
+                    throw new QueryException("'" + d.db() + "." + d.table() + "' has no index on "
+                            + String.join(", ", d.columns()));
                 }
-                return one(new Op.DropIndex(d.db(), d.table(), d.column(), stamp(store)));
+                return one(new Op.DropIndex(d.db(), d.table(), key, stamp(store)));
             });
         }
         if (s instanceof Statement.ShowIndexes i) {
             return engine.read(store -> {
                 requireTable(store, i.db(), i.table());
-                return names("column", store.indexes(i.db(), i.table()));
+                List<String> shown = new ArrayList<>();
+                for (String key : store.indexes(i.db(), i.table())) {
+                    shown.add(String.join(", ", Op.indexColumns(key)));
+                }
+                return names("column", shown);
             });
         }
         if (s instanceof Statement.DropTable d) {
@@ -286,8 +295,9 @@ public final class Executor {
     /**
      * Visits, in _id order, the live rows that may match {@code where}: through an index when one term of
      * it (the whole condition, or one term of a top-level AND) compares an indexed column or _id with a
-     * value, is an IN list or a LIKE with a literal prefix, else every row. Visitors still check the whole
-     * condition, so the choice changes only speed.
+     * value, is an IN list or a LIKE with a literal prefix, or when terms of a top-level AND fix the first
+     * columns of an index on several columns (see {@link #cheapestIndexedTerm}); else every row. Visitors
+     * still check the whole condition, so the choice changes only speed.
      */
     private static void scan(Store store, String db, String table, Expr where,
             java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
@@ -306,22 +316,113 @@ public final class Executor {
         }
     }
 
-    /** An index read for one term of a condition: what {@code lookup} finds in {@code column}. */
-    record Plan(String column, Store.Lookup lookup) {}
+    /**
+     * An index read for a condition: what {@code lookup} finds in the index {@code column} (a column, or for
+     * an index on several columns their names joined by commas, see {@link Op#indexKey}).
+     */
+    record Plan(String column, Store.Lookup lookup) {
+        /** How many columns of the index the read names: 1, or for an index on several columns those it fixes. */
+        int named() {
+            return lookup instanceof Store.Lookup.Composite c ? c.named() : 1;
+        }
+    }
 
-    /** The term of {@code where} (itself, or one of a top-level AND) whose index visits the fewest rows. */
+    /** The most tuples of values one read of an index on several columns looks up: the IN lists' product. */
+    static final int MAX_LOOKUP_TUPLES = 1_000;
+
+    /**
+     * The index read for {@code where} that names the most columns of the condition, and of those the one
+     * that visits the fewest rows: a term of {@code where} (itself, or one of a top-level AND) on an indexed
+     * column or _id, or for an index on several columns the terms of the AND that fix its first columns
+     * (see {@link #composite}).
+     */
     static Plan cheapestIndexedTerm(Store store, String db, String table, Expr where) {
         List<Expr> terms = where instanceof Expr.And a ? a.terms() : where == null ? List.of() : List.of(where);
-        Plan best = null;
-        long bestCount = Long.MAX_VALUE;
+        List<Plan> plans = new ArrayList<>();
         for (Expr t : terms) {
             Plan p = plan(t);
             if (p != null) {
-                long n = store.indexEstimate(db, table, p.column(), p.lookup());
-                if (n >= 0 && n < bestCount) {
-                    best = p;
-                    bestCount = n;
+                plans.add(p);
+            }
+        }
+        if (!terms.isEmpty()) {
+            List<Plan> composites = new ArrayList<>();
+            for (List<String> columns : store.compositeIndexes(db, table)) {
+                Plan p = composite(columns, terms);
+                if (p != null) {
+                    composites.add(p);
                 }
+            }
+            // The most columns first, so the estimate of a read that names fewer than the best one is not taken.
+            composites.sort(Comparator.comparingInt(Plan::named).reversed());
+            plans.addAll(composites);
+        }
+        Plan best = null;
+        long bestCount = Long.MAX_VALUE;
+        for (Plan p : plans) {
+            if (best != null && p.named() < best.named()) {
+                continue;
+            }
+            long n = store.indexEstimate(db, table, p.column(), p.lookup());
+            if (n >= 0 && (best == null || p.named() > best.named() || n < bestCount)) {
+                best = p;
+                bestCount = n;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * The read of the index on {@code columns} for the terms of a top-level AND: for each of its columns in
+     * turn, the values of an {@code =}, IN or wildcard-free LIKE term on it (the term with the fewest), while
+     * the product of the lists stays within {@link #MAX_LOOKUP_TUPLES}; then every range term ({@code <},
+     * {@code <=}, {@code >}, {@code >=}, a LIKE with a literal prefix) on the next column. Null if the terms
+     * fix no column.
+     */
+    static Plan composite(List<String> columns, List<Expr> terms) {
+        List<List<Object>> equal = new ArrayList<>();
+        long tuples = 1;
+        int i = 0;
+        for (; i < columns.size(); i++) {
+            List<Object> values = equalValues(columns.get(i), terms);
+            if (values == null || tuples * values.size() > MAX_LOOKUP_TUPLES) {
+                break;
+            }
+            tuples *= values.size();
+            equal.add(values);
+        }
+        List<Store.Lookup> range = new ArrayList<>();
+        if (i < columns.size()) {
+            String c = columns.get(i);
+            for (Expr t : terms) {
+                if (t instanceof Expr.Compare x && x.column().equals(c) && x.op() != Expr.Cmp.NE && x.op() != Expr.Cmp.EQ) {
+                    range.add(new Store.Lookup.Compare(x.op().symbol(), x.value()));
+                } else if (t instanceof Expr.Like l && l.column().equals(c) && !l.negated() && !l.pattern().exact()
+                        && !l.pattern().prefix().isEmpty()) {
+                    range.add(new Store.Lookup.Prefix(l.pattern().prefix()));
+                }
+            }
+        }
+        if (equal.isEmpty() && range.isEmpty()) {
+            return null;
+        }
+        return new Plan(Op.indexKey(columns), new Store.Lookup.Composite(equal, range));
+    }
+
+    /** The values one of {@code terms} says {@code column} equals (one of them, for IN), the shortest list; null if none. */
+    private static List<Object> equalValues(String column, List<Expr> terms) {
+        List<Object> best = null;
+        for (Expr t : terms) {
+            List<Object> values = null;
+            if (t instanceof Expr.Compare c && c.column().equals(column) && c.op() == Expr.Cmp.EQ) {
+                values = java.util.Collections.singletonList(c.value());
+            } else if (t instanceof Expr.In in && in.column().equals(column) && !in.negated()) {
+                values = in.values();
+            } else if (t instanceof Expr.Like l && l.column().equals(column) && !l.negated() && l.pattern().exact()) {
+                values = List.of(l.pattern().prefix());
+            }
+            if (values != null && (best == null || values.size() < best.size())) {
+                best = values;
             }
         }
         return best;

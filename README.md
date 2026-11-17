@@ -181,7 +181,7 @@ cursor from before a restart gets 410: read the table again and follow from now.
 | | Serengeti 2.2 | rqlite | CouchDB | cr-sqlite |
 |---|---|---|---|---|
 | Shape | one jar or image, HTTP API | one binary, HTTP API | server, HTTP API | SQLite extension |
-| Data and queries | JSON rows, a small SQL-like language (IN, LIKE, DISTINCT, aggregates with GROUP BY and HAVING, single-column indexes), no joins | SQLite, full SQL | JSON documents, Mango and map/reduce views | SQLite, full SQL |
+| Data and queries | JSON rows, a small SQL-like language (IN, LIKE, DISTINCT, aggregates with GROUP BY and HAVING, indexes on 1 to 4 columns), no joins | SQLite, full SQL | JSON documents, Mango and map/reduce views | SQLite, full SQL |
 | Writes when a node is cut off | refused by default; accepted with `"ack": "local"` | refused on the minority side | accepted | accepted (it is local) |
 | Concurrent writes to one row | newer is the value; both listed by `SHOW CONFLICTS` | serialised through the Raft leader | deterministic winner; the others kept as conflicts | merged per column (last-writer-wins, counters) |
 | Replication | built in, 1 to 7 nodes | built in (Raft) | built in | you move the changes yourself |

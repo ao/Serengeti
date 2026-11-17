@@ -89,8 +89,22 @@ class ParserTest {
         assertEquals(new Statement.ShowIndexes("shop", "items"), parse("SHOW INDEXES IN shop.items"));
         fails("CREATE INDEX shop.items (qty)");
         fails("CREATE INDEX ON shop.items qty");
-        fails("CREATE INDEX ON shop.items (qty, kind)");
         fails("SHOW INDEXES IN shop");
+        // Several columns: 2 to 4, in order, each once.
+        assertEquals(new Statement.CreateIndex("shop", "items", List.of("kind", "qty"), false),
+                parse("CREATE INDEX ON shop.items (kind, qty)"));
+        assertEquals(new Statement.CreateIndex("shop", "items", List.of("a", "b", "c", "d"), true),
+                parse("create index if not exists on Shop.Items (A,b , C,d)"));
+        assertEquals(new Statement.DropIndex("shop", "items", List.of("qty", "kind"), true),
+                parse("DROP INDEX IF EXISTS ON shop.items (qty, kind)"));
+        roundTrips("CREATE INDEX ON shop.items (kind, qty)");
+        roundTrips("DROP INDEX IF EXISTS ON shop.items (a, b, c)");
+        assertEquals("an index has at most 4 columns", failsAt("CREATE INDEX ON d.t (a, b, c, d, e)", "e)"));
+        assertEquals("column 'a' is listed twice", failsAt("CREATE INDEX ON d.t (a, b, A)", "A)"));
+        assertEquals("column 'b' is listed twice", failsAt("DROP INDEX ON d.t (b, b)", "b)"));
+        fails("CREATE INDEX ON d.t (a, )");
+        fails("CREATE INDEX ON d.t ()");
+        fails("CREATE INDEX ON d.t (a b)");
         // None of index, indexes or on is reserved.
         assertEquals(new Statement.CreateTable("index", "on", false), parse("CREATE TABLE index.on"));
         assertEquals(new Statement.CreateIndex("on", "index", "indexes", false), parse("CREATE INDEX ON on.index (indexes)"));

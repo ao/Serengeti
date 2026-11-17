@@ -223,4 +223,28 @@ class StorageEngineTest {
             assertEquals(42L, count(e));
         }
     }
+
+    @Test
+    void anIndexOnSeveralColumnsIsKeptInTheIndexFileAsOneColumnField() throws IOException {
+        try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS, 4096, 0)) {
+            seed(e, 40);
+            e.update(s -> new StorageEngine.Planned<>(List.of(new Op.CreateIndex("d", "t", "i,k", at(100))), null));
+            e.apply(List.of(new Op.Put("d", "t", "late", Map.of("i", (Object) 7L, "k", "x"), at(102))));
+            e.checkpoint();
+        }
+        for (Op op : loggedOps(dir)) {
+            assertTrue(Op.legacy(op), "a 2.0 binary could not read " + op);
+        }
+        // What 2.1 reads: one create_index op whose column is the names joined by a comma.
+        String file = java.nio.file.Files.readString(dir.resolve(StorageEngine.INDEX_FILE));
+        assertTrue(file.contains("\"op\":\"create_index\"") && file.contains("\"column\":\"i,k\""), file);
+        try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
+            assertEquals(List.of("i,k"), e.read(s -> s.indexes("d", "t")));
+            assertEquals(List.of(List.of("i", "k")), e.read(s -> s.compositeIndexes("d", "t")));
+            Store.Lookup l = new Store.Lookup.Composite(List.of(List.of(7L)), List.of(new Store.Lookup.Prefix("x")));
+            assertEquals(new java.util.TreeSet<>(List.of("late")), e.read(s -> s.indexLookup("d", "t", "i,k", l)));
+            assertEquals(new java.util.TreeSet<>(List.of("late", "r7")),
+                    e.read(s -> s.indexLookup("d", "t", "i,k", new Store.Lookup.Composite(List.of(List.of(7L)), List.of()))));
+        }
+    }
 }
