@@ -252,11 +252,11 @@ class OrderedReadTest {
         Statement.Select q = (Statement.Select) Parser.parse(String.format(rare, "d.t"));
         Executor.OrderedPlan p = plan(rare);
         assertFalse(p.exact());
-        assertEquals(100L, (long) engine.read(s -> Executor.orderedBudget(s, q, p, 11)), "1/64 of the 6,400 rows a scan reads");
+        assertEquals(66L, (long) engine.read(s -> Executor.orderedBudget(s, q, p, 11)), "1/96 of the 6,400 rows a scan reads");
         AtomicInteger visited = new AtomicInteger();
         assertEquals(Store.Ordered.OVER_BUDGET, engine.read(s -> s.forEachInOrder("d", "t", p.index(), p.where(), p.keys(),
-                false, 100, (id, row) -> visited.incrementAndGet() > 0)));
-        assertEquals(99, visited.get(), "it stopped after its share (one step opened the read)");
+                false, 66, (id, row) -> visited.incrementAndGet() > 0)));
+        assertEquals(65, visited.get(), "it stopped after its share (one step opened the read)");
         assertEquals(List.of("e0002", "e0001", "e0000"), ids(rare), "then the rows are read and sorted");
         // Common rows fill the page within the share.
         assertEquals(List.of("e6399", "e6398"), ids("SELECT _id FROM %s WHERE kind = 'common' ORDER BY at DESC LIMIT 2"));

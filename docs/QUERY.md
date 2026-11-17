@@ -253,7 +253,8 @@ SELECT * FROM shop.orders ORDER BY customer, placed LIMIT 100;
 - The other keys must be the index's next columns, in its order, all ASC or all DESC. A
   key on a fixed column may come anywhere and in either direction, and `_id` may be the last key, in
   either direction (keys after `_id` decide nothing). The keys may stop before the index's last column:
-  `ORDER BY customer` reads the index on `(customer, placed)` too.
+  `ORDER BY customer` reads the index on `(customer, placed)` too, with the share below, since the rows
+  of one customer are read as one group.
 - `<`, `<=`, `>`, `>=` and LIKE prefix terms on the first ordered column narrow the read, as for a lookup.
 - The rest of the WHERE is checked on each row read.
 
@@ -264,17 +265,17 @@ qty`) decides nothing and is left out; with no key left, rows are read in `_id` 
 large table").
 
 When every term of the WHERE is one the read answers (the terms that fix columns, and comparisons on the
-first ordered column), each row it reads belongs to the answer, and the read is always used. Otherwise it
-may read rows the other terms leave out, possibly the whole index before the page is full, so it gets a
-share: it reads at most 1/64 of the rows the query would read without it (those its best index lookup
-finds, or the whole table), and if the page is not full by then, the query reads and sorts as it would
-without the index. When that share is smaller than the page, the ordered read is not tried. A row read
-through an index costs 12 to 16 times one read by a scan, so the share bounds the worst case, a condition
-that few rows or none meet: `WHERE kind = 'rare' ORDER BY at DESC LIMIT 10`, with 5 rare rows that are the
-oldest and no index on `kind`, takes 24 ms instead of 19 on 200,000 rows, and 179 instead of 150 on
-1,000,000 (in-process medians on a c7g.4xlarge container limited to 4 CPUs, against the same statements
-answered by the sort). With 10% of the rows matching it takes 0.23 ms instead of 40, and `ORDER BY at
-DESC LIMIT 10` 0.07 ms instead of 330.
+first ordered column) and the keys reach the index's last column, each row it reads belongs to the answer,
+and the read is always used. Otherwise it may read rows the other terms leave out, possibly the whole index
+before the page is full, so it gets a share: it reads at most 1/96 of the rows the query would read
+without it (those the lookup it would use finds, the rows of an `_id` range or prefix counted, or the
+whole table), and if the page is not full by then, the query reads and sorts as it would without the
+index. When that share is smaller than the page, the ordered read is not tried. A row read through an
+index costs 12 to 16 times one read by a scan, so the share bounds the worst case, a condition that no row
+meets: on 200,000 rows of 10 columns, `WHERE c = 'none' ORDER BY at DESC LIMIT 10` takes 32 ms against 28
+for the same statement answered by the sort (in-process medians of 31, the two statements in turn, on a
+c7g.4xlarge, JDK 17). With 10% of the rows matching it takes 0.23 ms instead of 40, and `ORDER BY at DESC
+LIMIT 10` 0.07 ms instead of 330 (medians on a c7g.4xlarge container limited to 4 CPUs).
 
 ## Ordering
 

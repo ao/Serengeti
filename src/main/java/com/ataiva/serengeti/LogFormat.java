@@ -15,7 +15,8 @@ import java.util.logging.SimpleFormatter;
  * The node's log line, {@link #PATTERN}, exactly as {@link SimpleFormatter} writes it, without parsing the
  * pattern again for every record. The console handler formats inside its lock, which every request's log
  * line passes through, so the time spent there bounds the rate of requests; parsing the pattern was 30% of
- * it. A record with a stack trace, or a default locale whose digits are not ASCII, goes to SimpleFormatter.
+ * it. A record with a stack trace or a level of a subclass of Level, or a default locale whose digits are not
+ * ASCII, goes to SimpleFormatter.
  */
 final class LogFormat extends SimpleFormatter {
     /** Time with milliseconds and zone offset, level, logger, message, and the stack trace if there is one. */
@@ -49,7 +50,9 @@ final class LogFormat extends SimpleFormatter {
             d = new Digits(locale, DecimalFormatSymbols.getInstance(locale).getZeroDigit() == '0');
             digits = d;
         }
-        if (!d.ascii() || r.getThrown() != null) {
+        // A Level subclass may name itself otherwise than getLocalizedName() says, which SimpleFormatter does not
+        // read (review 22g); the node defines none, but leave any such record to it.
+        if (!d.ascii() || r.getThrown() != null || r.getLevel().getClass() != java.util.logging.Level.class) {
             return super.format(r);
         }
         ZonedDateTime t = ZonedDateTime.ofInstant(r.getInstant(), ZoneId.systemDefault());

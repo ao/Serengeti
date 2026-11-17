@@ -2049,7 +2049,10 @@ public final class Store {
         return indexEstimate(db, table, column, new Lookup.Compare(op, value));
     }
 
-    /** As above, for any {@link Lookup}; for {@code _id}, exact for equality and an upper bound otherwise. */
+    /**
+     * As above, for any {@link Lookup}. For {@code _id}: exact for equality; for a range or prefix the table's rows,
+     * or, when {@code atMost} is below them, its ids counted up to {@code atMost}.
+     */
     public long indexEstimate(String db, String table, String column, Lookup l) {
         return indexEstimate(db, table, column, l, Long.MAX_VALUE);
     }
@@ -2064,13 +2067,24 @@ public final class Store {
             if (l instanceof Lookup.Composite) {
                 return -1;
             }
-            if (l instanceof Lookup.Compare c) {
-                return c.op().equals("=") ? 1 : t.rows.size();
+            if (l instanceof Lookup.Compare c && c.op().equals("=")) {
+                return 1;
             }
             if (l instanceof Lookup.AnyOf a) {
                 return a.values().stream().filter(v -> v instanceof String).distinct().count();
             }
-            return t.rows.size();
+            // A range or prefix: the table's rows bound it. Below that, its ids are counted, up to atMost (review
+            // 22g: an ordered read's budget is a share of what the read without order visits, not of the table).
+            if (atMost >= t.rows.size()) {
+                return t.rows.size();
+            }
+            long n = 0;
+            for (String ignored : idKeys(t, l)) {
+                if (++n > atMost) {
+                    break;
+                }
+            }
+            return n;
         }
         IndexState ix = answering(t, column, l);
         return ix == null ? -1 : ix.estimate(l, atMost);

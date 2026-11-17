@@ -907,7 +907,9 @@ public final class HttpApi implements AutoCloseable {
         }
         // Sized for the declared length when it is small, as a query's is: a fixed 8 KiB buffer was 15% of what
         // a lookup by _id allocated. The loop reads to the end either way, whatever the header said.
-        int size = declared >= 0 && declared < 8192 ? (int) Math.max(declared + 1, 256) : 8192;
+        // A chunked body is read as it comes, whatever a Content-Length beside it says (review 22g).
+        boolean chunked = ex.getRequestHeaders().getFirst("Transfer-Encoding") != null;
+        int size = !chunked && declared >= 0 && declared < 8192 ? (int) Math.max(declared + 1, 256) : 8192;
         ByteArrayOutputStream out = new ByteArrayOutputStream(size);
         byte[] buf = new byte[size];
         // Not try-with-resources: after a failed read the JDK's request stream throws the same exception

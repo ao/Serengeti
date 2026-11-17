@@ -117,6 +117,70 @@ class PlannerTest {
         }
     }
 
+    private static Statement.Select select(String text) {
+        return (Statement.Select) Parser.parse(text);
+    }
+
+    /**
+     * An ordered read that a narrow _id range limits is given a share of that range, not of the table, so it is not
+     * tried when the range is too small to fill the page within it (review 22g: it was 25 to 130 times slower).
+     */
+    @Test
+    void anIdRangeGivesAnOrderedReadAShareOfTheRangeNotOfTheTable() throws Exception {
+        try (StorageEngine e = rows(tmp.resolve("d"), 20_000, i -> Map.of("at", (long) (i * 7 % 20_000)))) {
+            Query q = new Query(e, new Hlc("n1"));
+            q.run("CREATE INDEX ON d.t (at)");
+            Statement.Select narrow = select("SELECT _id FROM d.t WHERE _id >= 'r019900' ORDER BY at DESC LIMIT 10");
+            Executor.OrderedPlan p = e.read(s -> Executor.orderedPlan(s, "d", "t", narrow));
+            assertFalse(p.exact());
+            long none = e.read(s -> Executor.orderedBudget(s, narrow, p, 11));
+            assertEquals(-1L, none, "100 rows: a share of them is fewer than the page");
+            Statement.Select wide = select("SELECT _id FROM d.t WHERE _id >= 'r005000' ORDER BY at DESC LIMIT 10");
+            long some = e.read(s -> Executor.orderedBudget(s, wide, p, 11));
+            assertEquals(15_000L / Executor.ORDERED_SHARE, some, "15,000 rows, counted");
+            for (int from : new int[] {19_900, 5_000}) {
+                // at = i * 7 mod 20,000 is a different value for each i.
+                List<Integer> ids = new ArrayList<>();
+                for (int i = from; i < 20_000; i++) {
+                    ids.add(i);
+                }
+                ids.sort((x, y) -> Integer.compare(y * 7 % 20_000, x * 7 % 20_000));
+                List<List<Object>> want = new ArrayList<>();
+                for (int i : ids.subList(0, 10)) {
+                    want.add(List.of(String.format("r%06d", i)));
+                }
+                assertEquals(want, ((Result.Rows) q.run(String.format(
+                        "SELECT _id FROM d.t WHERE _id >= 'r%06d' ORDER BY at DESC LIMIT 10", from))).rows());
+            }
+        }
+    }
+
+    /**
+     * ORDER BY keys that stop before an index's last column tie on the rest, and the read forms each such group
+     * key by key: it is given a budget, so one large group makes it give way to the sort (review 22g).
+     */
+    @Test
+    void anOrderedReadThatGroupsKeysHasABudget() throws Exception {
+        try (StorageEngine e = rows(tmp.resolve("d"), 20_000, i -> Map.of("a", "k", "b", (long) i))) {
+            Query q = new Query(e, new Hlc("n1"));
+            q.run("CREATE INDEX ON d.t (a, b)");
+            Statement.Select byA = select("SELECT _id FROM d.t ORDER BY a LIMIT 10");
+            Executor.OrderedPlan p = e.read(s -> Executor.orderedPlan(s, "d", "t", byA));
+            assertFalse(p.exact(), "the keys stop before b");
+            long budget = e.read(s -> Executor.orderedBudget(s, byA, p, 11));
+            assertEquals(20_000L / Executor.ORDERED_SHARE, budget);
+            Store.Ordered how = e.read(s -> s.forEachInOrder("d", "t", p.index(), p.where(), p.keys(), p.idDescending(),
+                    budget, (id, row) -> true));
+            assertEquals(Store.Ordered.OVER_BUDGET, how, "one group of 20,000 keys");
+            assertEquals(List.of(List.of("r000000"), List.of("r000001")),
+                    ((Result.Rows) q.run("SELECT _id FROM d.t ORDER BY a LIMIT 2")).rows());
+            Statement.Select byAB = select("SELECT _id FROM d.t ORDER BY a, b DESC LIMIT 10");
+            assertNull(e.read(s -> Executor.orderedPlan(s, "d", "t", byAB)), "b DESC after a ASC: not one direction");
+            Statement.Select both = select("SELECT _id FROM d.t ORDER BY a, b LIMIT 10");
+            assertTrue(e.read(s -> Executor.orderedPlan(s, "d", "t", both)).exact(), "the keys reach b");
+        }
+    }
+
     private static boolean collected(WeakReference<?> ref) throws InterruptedException {
         for (int i = 0; i < 20 && ref.get() != null; i++) {
             System.gc();

@@ -243,8 +243,8 @@ class OrderedReadProperties {
                     // Whether the page filled within the budget, or the rows were read again and sorted.
                     int[] n = {0};
                     Store.Ordered how = engine.read(st -> st.forEachInOrder(db, "x", p.index(), p.where(), p.keys(),
-                            p.idDescending(), budget, (id, row) -> !Boolean.TRUE.equals(Executor.evaluate(q.where(), id, row))
-                                    || ++n[0] < keep));
+                            p.idDescending(), budget, (id, row) -> q.where() != null
+                                    && !Boolean.TRUE.equals(Executor.evaluate(q.where(), id, row)) || ++n[0] < keep));
                     read += how == Store.Ordered.DONE ? ", done" : ", over";
                 }
                 Statistics.label("read").collect(read);

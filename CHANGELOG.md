@@ -158,11 +158,14 @@ GitHub release notes and tags.
   placed DESC LIMIT 10` with one on `(customer, placed)`. A range on the first ordered column narrows the
   read. On 200,000 rows in-process (c7g.4xlarge container limited to 4 CPUs, JDK 17), `ORDER BY at DESC
   LIMIT 10` takes 0.07 ms instead of 293. The answer is the sort's, row for row. When the WHERE has terms
-  the read does not answer, it reads at most 1/64 of the rows the query would read without it, then reads
-  and sorts as before: a condition that few rows or none meet costs up to a quarter more (24 ms instead
-  of 19 on the same rows). To place rows in that order, an index now also keeps the rows where its column
-  is missing, null, an object or an array (found by no lookup, as before): 40 bytes each, counted towards
-  the memory limit. See docs/QUERY.md, "ORDER BY through an index".
+  the read does not answer, or its keys stop before the index's last column, it reads at most 1/96 of the
+  rows the query would read without it, then reads and sorts as before: a condition that no row meets
+  costs about a sixth more (32 ms instead of 28 on 200,000 rows of 10 columns, c7g.4xlarge). To place rows
+  in that order, an index now also keeps the rows where its column is missing, null, an object or an array
+  (found by no lookup, as before): 40 bytes each on one column, counted towards the memory limit. That
+  applies to existing indexes from the first start on 2.2, so a node close to `memory_limit_percent` with
+  indexes on sparse columns can refuse writes after the upgrade. See docs/QUERY.md, "ORDER BY through an
+  index".
 
 ### Fixed
 - An index key kept the value of the row that first had it alive after that row changed or was deleted

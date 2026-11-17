@@ -365,12 +365,19 @@ public final class Executor {
     private static void scan(Store store, String db, String table, Expr where,
             java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
         List<Plan> plans = candidates(store, db, table, where);
+        scan(store, db, table, plans, cheapest(store, db, table, plans, List.of()), visitor);
+    }
+
+    /** As above, with the candidate reads and the cheapest of them ({@code first}, null for none) already found. */
+    private static void scan(Store store, String db, String table, List<Plan> plans, Plan first,
+            java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
         List<Plan> tried = new ArrayList<>();
         // A read that would gather too many ids visits nothing and says so: the next cheapest is tried (review 22f).
-        for (Plan via; (via = cheapest(store, db, table, plans, tried)) != null; tried.add(via)) {
+        for (Plan via = first; via != null; via = cheapest(store, db, table, plans, tried)) {
             if (store.forEachIndexed(db, table, via.column(), via.lookup(), visitor)) {
                 return;
             }
+            tried.add(via);
         }
         store.forEachRow(db, table, visitor);
     }
@@ -439,6 +446,15 @@ public final class Executor {
      * Each estimate stops counting once it passes the best so far, so a large range costs little to rule out.
      */
     static Plan cheapest(Store store, String db, String table, List<Plan> plans, java.util.Collection<Plan> skip) {
+        Choice c = cheapestChoice(store, db, table, plans, skip);
+        return c == null ? null : c.plan();
+    }
+
+    /** A read {@link #cheapest} chose, and its estimate: exact, but the table's rows for an _id range or prefix. */
+    record Choice(Plan plan, long rows) {}
+
+    /** As {@link #cheapest}, with the estimate of the read it chose; null when there is none. */
+    static Choice cheapestChoice(Store store, String db, String table, List<Plan> plans, java.util.Collection<Plan> skip) {
         Plan best = null;
         long bestCount = Long.MAX_VALUE;
         for (Plan p : plans) {
@@ -451,7 +467,7 @@ public final class Executor {
                 bestCount = n;
             }
         }
-        return best;
+        return best == null ? null : new Choice(best, bestCount);
     }
 
     /**
@@ -537,8 +553,9 @@ public final class Executor {
     /**
      * A read of an index in the order of an ORDER BY: the index (by the {@code column} field of its ops), what it
      * reads (values of its first columns, then comparisons on the next), the ORDER BY keys as columns of it, the
-     * direction of _id among rows equal on them, and whether it reads exactly the rows the WHERE matches: every
-     * term of the WHERE is one the read answers, so that each row it visits is one of the answer.
+     * direction of _id among rows equal on them, and whether it reads exactly the rows the WHERE matches without
+     * grouping many keys: every term of the WHERE is one the read answers, so that each row it visits is one of
+     * the answer, and the keys reach the index's last column, so that no group holds more keys than streams.
      */
     record OrderedPlan(String index, Store.Lookup.Composite where, List<Store.SortKey> keys, boolean idDescending,
             boolean exact) {}
@@ -548,7 +565,7 @@ public final class Executor {
      * read without order would visit: the rows its index read finds, or the table's. If its page is not full by
      * then, the rows are read and sorted as without it.
      */
-    static final int ORDERED_SHARE = 64;
+    static final int ORDERED_SHARE = 96;
 
     /**
      * The ORDER BY keys of {@code q} that can decide anything: those before the first _id key, less those on a
@@ -663,7 +680,10 @@ public final class Executor {
                 }
             }
         }
-        boolean exact = true;
+        // Keys that stop before the index's last column (or lie only on fixed columns) tie on every key the
+        // ORDER BY leaves out: the read forms such a group key by key before it visits a row, so it is given a
+        // budget like a read that is not exact (review 22g: one large group was 2.5 times slower than the sort).
+        boolean exact = next == columns.size();
         for (Expr t : terms) {
             exact &= answered.contains(t);
         }
@@ -676,24 +696,39 @@ public final class Executor {
      * (do not try) when that is fewer than {@code keep}.
      */
     static long orderedBudget(Store store, Statement.Select q, OrderedPlan op, long keep) {
+        return orderedBudget(store, q, op, keep,
+                cheapestChoice(store, q.db(), q.table(), candidates(store, q.db(), q.table(), q.where()), List.of()));
+    }
+
+    /**
+     * As above, with the read {@link #scan} would take without order already chosen ({@code unordered}, null for
+     * none): the budget is a share of the rows that read visits, its estimate or the table's rows. An {@code _id}
+     * range or prefix is counted, up to {@link #ID_RANGE_COUNT} budgets' worth of rows (review 22g): its estimate
+     * is otherwise the whole table, and a budget from that made a narrow range slow. The caller passes the same
+     * choice to the scan it falls back on, so no estimate is made twice (review 22g).
+     */
+    static long orderedBudget(Store store, Statement.Select q, OrderedPlan op, long keep, Choice unordered) {
         if (op.exact()) {
             return Long.MAX_VALUE;
         }
-        long budget = unorderedRows(store, q.db(), q.table(), q.where()) / ORDERED_SHARE;
+        long rows = store.visibleRows(q.db(), q.table());
+        if (unordered != null) {
+            long n = unordered.rows();
+            if (unordered.plan().column().equals(ID)) {
+                n = store.indexEstimate(q.db(), q.table(), ID, unordered.plan().lookup(),
+                        Math.min(rows, keep * ORDERED_SHARE * ID_RANGE_COUNT));
+            }
+            rows = Math.min(rows, n);
+        }
+        long budget = rows / ORDERED_SHARE;
         return keep <= budget ? budget : -1;
     }
 
-    /** How many rows the read that {@link #scan} would take visits: its index estimate, or the table's rows. */
-    private static long unorderedRows(Store store, String db, String table, Expr where) {
-        long best = store.visibleRows(db, table);
-        for (Plan p : candidates(store, db, table, where)) {
-            long n = store.indexEstimate(db, table, p.column(), p.lookup(), best);
-            if (n >= 0 && n < best) {
-                best = n;
-            }
-        }
-        return best;
-    }
+    /**
+     * Past this many budgets' worth of rows an {@code _id} range is not counted further: it is then wide enough
+     * that an ordered read finds its page within the budget the count gives it, or gives up for little.
+     */
+    static final int ID_RANGE_COUNT = 16;
 
     /** The index read that finds every row for which {@code t} is true, or null if there is none. */
     private static Plan plan(Expr t) {
@@ -765,7 +800,13 @@ public final class Executor {
             scanWhile(store, q.db(), q.table(), q.where(), collect);
         } else {
             OrderedPlan op = orderedPlan(store, q.db(), q.table(), q);
-            long budget = op == null ? -1 : orderedBudget(store, q, op, keep);
+            List<Plan> plans = null;
+            Choice unordered = null;
+            if (op != null && !op.exact()) {
+                plans = candidates(store, q.db(), q.table(), q.where());
+                unordered = cheapestChoice(store, q.db(), q.table(), plans, List.of());
+            }
+            long budget = op == null ? -1 : orderedBudget(store, q, op, keep, unordered);
             if (budget >= 0) {
                 inOrder = store.forEachInOrder(q.db(), q.table(), op.index(), op.where(), op.keys(), op.idDescending(),
                         budget, collect) == Store.Ordered.DONE;
@@ -774,11 +815,16 @@ public final class Executor {
                 }
             }
             if (!inOrder) {
-                scan(store, q.db(), q.table(), q.where(), (id, row) -> {
+                java.util.function.BiConsumer<String, Map<String, Object>> all = (id, row) -> {
                     if (matches(q.where(), id, row)) {
                         found.add(new Match(id, row));
                     }
-                });
+                };
+                if (plans != null) {
+                    scan(store, q.db(), q.table(), plans, unordered == null ? null : unordered.plan(), all);
+                } else {
+                    scan(store, q.db(), q.table(), q.where(), all);
+                }
             }
         }
         if (!inOrder) {
