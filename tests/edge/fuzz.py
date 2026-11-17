@@ -2,10 +2,12 @@
 
 Every answer must be 200 or a 400 with a message (never 500, never no answer), a parse error's position must
 lie inside the text, a valid statement must never get a parse error, and the node must keep answering.
-Valid SELECTs are also run as "WHERE (e) OR (e)", which never uses an index, and with "HAVING (h) OR (h)",
-and must give the same rows; a valid SELECT DISTINCT must give the rows of its GROUP BY form. Indexes on one
-and on several columns are created and dropped as the run goes, and a share of the conditions is an AND that
-fixes the first columns of one (a = x AND b > y ...), so those are compared with the same scan.
+Valid SELECTs are also run as "WHERE (e) OR (e)", which no index lookup answers, and with "HAVING (h) OR (h)",
+and must give the same rows; a valid SELECT DISTINCT must give the rows of its GROUP BY form, and a SELECT with
+ORDER BY those of "ORDER BY zz, ...", which sorts (no row and no index has zz) where the first may read an index
+in order. Indexes on one and on several columns are created and dropped as the run goes, a share of the
+conditions is an AND that fixes the first columns of one (a = x AND b > y ...), so those are compared with the
+same scan, and a share of the SELECTs orders by the next columns of one.
 
     FUZZ_SEED=123 FUZZ_N=5000 python3 edge.py fuzz HOST       (the seed is printed so a failure can be replayed)
 """
@@ -192,6 +194,42 @@ class Gen:
             out = out + ["AND"] + t
         return out
 
+    def ordered(self):
+        """A SELECT whose ORDER BY an index of setup() can give (on f.u, which has none, the same forms are
+        sorted): = or IN on the first columns of one, then its next columns in one direction; maybe a key on a
+        fixed column, a range or LIKE on the first ordered column, another term, _id as the last key, a LIMIT."""
+        r = self.r
+        t = r.choice(list(ORDERED))
+        d = r.choice(ORDERED[t])
+        k = r.randint(0, len(d) - 1)
+        terms = []
+        for c in d[:k]:
+            if r.random() < 0.7:
+                terms.append([self.case(c), "=", self.value()])
+            else:
+                vals = [self.value() for _ in range(r.randint(2, 4))]
+                terms.append([self.case(c), "IN", "("] + sum(([v, ","] for v in vals), [])[:-1] + [")"])
+        if r.random() < 0.3:
+            for _ in range(r.randint(1, 2)):
+                terms.append([self.case(d[k]), "LIKE", self.pattern()] if r.random() < 0.2
+                             else [self.case(d[k]), r.choice(["<", "<=", ">", ">="]), self.value()])
+        if r.random() < 0.3:
+            terms.append(["("] + self.expr(1) + [")"])
+        r.shuffle(terms)
+        direction = r.choice([[], ["ASC"], ["DESC"], ["DESC"]])
+        keys = [[self.case(c)] + direction for c in d[k:k + r.randint(1, len(d) - k)]]
+        if k and r.random() < 0.3:
+            keys.insert(r.randint(0, len(keys)), [self.case(d[r.randrange(k)]), r.choice(["ASC", "DESC"])])
+        if r.random() < 0.2:
+            keys.append(["_id"] + r.choice([[], ["ASC"], ["DESC"]]))
+        toks = ["SELECT"] + r.choice([["*"], ["_id"], ["_id", ",", "a", ",", "v"]]) + ["FROM", "f", ".", t]
+        if terms:
+            toks += ["WHERE"] + terms[0] + sum((["AND"] + x for x in terms[1:]), [])
+        toks += ["ORDER", "BY"] + keys[0] + sum(([","] + x for x in keys[1:]), [])
+        if r.random() < 0.85:
+            toks += ["LIMIT", str(r.choice([0, 1, 2, 5, 10, 100]))]
+        return toks
+
     def where(self):
         if self.r.random() < 0.25:
             return []
@@ -207,6 +245,8 @@ class Gen:
     def statement(self):
         """Returns (tokens, kind). Every statement follows the grammar and the further parse rules."""
         r = self.r
+        if r.random() < 0.12:
+            return self.ordered(), "ordered"
         k = r.random()
         if k < 0.30:
             items, grouping = self.select_list()
@@ -352,18 +392,36 @@ def answer_problem(query, s, j, data, valid):
 CLAUSES = ("GROUP", "HAVING", "ORDER", "LIMIT")
 
 
+def doubled(toks, clause):
+    """`toks` with the condition of `clause` written as (c) OR (c), or None if there is none (or it is too deep)."""
+    if clause not in toks:
+        return None
+    w = toks.index(clause)
+    end = next((k for k in range(w + 1, len(toks)) if toks[k] in CLAUSES), len(toks))
+    cond = toks[w + 1:end]
+    if cond.count("(") + cond.count("NOT") >= 60:
+        return None
+    return toks[:w + 1] + ["("] + cond + [")", "OR", "("] + cond + [")"] + toks[end:]
+
+
 def metamorphic(toks, kind):
     """Statements that must give exactly the rows and columns of the valid SELECT `toks`."""
     out = []
-    # The same rows (or groups and aggregates) without the index: (e) OR (e) never uses one. And (h) OR (h)
-    # in HAVING keeps the same groups.
+    # The same rows (or groups and aggregates) found without an index lookup: (e) OR (e) is answered by
+    # none. And (h) OR (h) in HAVING keeps the same groups.
     for clause in ("WHERE", "HAVING"):
-        if clause in toks:
-            w = toks.index(clause)
-            end = next((k for k in range(w + 1, len(toks)) if toks[k] in CLAUSES), len(toks))
-            cond = toks[w + 1:end]
-            if cond.count("(") + cond.count("NOT") < 60:
-                out.append(toks[:w + 1] + ["("] + cond + [")", "OR", "("] + cond + [")"] + toks[end:])
+        again = doubled(toks, clause)
+        if again:
+            out.append(again)
+    # The same rows sorted, never read in an index's order: a first ORDER BY key on a column no row has
+    # decides nothing, and no index has it. With (e) OR (e) as well, no index at all.
+    if kind in ("select", "ordered") and "ORDER" in toks and "GROUP" not in toks:
+        o = toks.index("ORDER")
+        sort = toks[:o + 2] + ["zz", ","] + toks[o + 2:]
+        out.append(sort)
+        again = doubled(sort, "WHERE")
+        if again:
+            out.append(again)
     # SELECT DISTINCT a, b is SELECT a, b ... GROUP BY a, b.
     if kind == "distinct":
         f = toks.index("FROM")
@@ -376,6 +434,9 @@ def metamorphic(toks, kind):
 FEW = ["NULL", "TRUE", "0", "1", "1.0", "2", "'a'", "'b'", "''"]
 # Indexes on several columns, per table (f.u has none: it is scanned).
 COMPOSITE = {"t": [("a", "b")], "on": [("a", "b", "v")], "k": [("a", "b"), ("b", "a", "v")]}
+# The indexes of setup() that ORDER BY can read in order, per table; f.u has none, so its forms are sorted.
+ORDERED = {"t": [("v",), ("a", "b")], "on": [("a",), ("a", "b", "v")], "k": [("v",), ("a", "b"), ("b", "a", "v")],
+           "u": [("v",), ("a", "b")]}
 
 
 def setup(c):
@@ -455,7 +516,7 @@ def run(host, n=None, seed=None):
         if not valid and s == 200 and toks[:1] == ["DROP"] and (j or {}).get("affected"):
             dropped.append((i, query))
             setup(c)
-        if valid and s == 200 and kind in ("select", "distinct"):
+        if valid and s == 200 and kind in ("select", "distinct", "ordered"):
             for again in metamorphic(toks, kind):
                 s2, j2, d2 = c.q(" ".join(again))
                 counts["metamorphic"] += 1
@@ -479,7 +540,7 @@ def run(host, n=None, seed=None):
           f"{len(problems)} bad answers, first: {problems[0][3] if problems else ''}")
     for i, query, p in meta_problems[:5]:
         print(f"  #{i} {query!r:.300}: {p}", flush=True)
-    check(f"(e) OR (e) in WHERE and HAVING, and DISTINCT as GROUP BY, give the same rows, {counts['metamorphic']} "
+    check(f"(e) OR (e) in WHERE and HAVING, DISTINCT as GROUP BY, and ORDER BY sorted, give the same rows, {counts['metamorphic']} "
           f"statements (seed {seed})", not meta_problems, f"{len(meta_problems)} differ")
     check("valid statements were mostly accepted", counts["valid-200"] > counts["valid-400"], repr(counts))
     expect("the node answers afterwards", 200, once(host, "GET", "/health", auth=False).status)
@@ -489,6 +550,7 @@ def run(host, n=None, seed=None):
     setup(c)
     for stage in ("as the run left them", "after DROP and CREATE INDEX"):
         mism = []
+        omism = []
         for t in ("t", "u", "on", "k"):
             if stage != "as the run left them":
                 for col in ("a", "v"):
@@ -521,5 +583,32 @@ def run(host, n=None, seed=None):
                     b = c.count(f"f.{t}", f"{cond} OR {cond}")
                     if a != b:
                         mism.append((t, cond, a, b))
+            # ORDER BY through the indexes (those of setup(), any the run made, and in the second stage those
+            # made above) against the same statements sorted.
+            for d in [("a",), ("v",), ("a", "b"), ("b", "a", "v"), ("v", "a")]:
+                for q in ordered_statements(t, d):
+                    s1, j1, d1 = c.q(q)
+                    s2, j2, d2 = c.q(q.replace("ORDER BY ", "ORDER BY zz, ", 1))
+                    if s1 != 200 or s2 != 200 or (j1["rows"], j1["truncated"]) != (j2["rows"], j2["truncated"]):
+                        omism.append((q, s1, short(d1), s2, short(d2)))
         check(f"index lookups equal scans on every table, {stage}", not mism, repr(mism[:5]))
+        check(f"ORDER BY in index order equals the sort on every table, {stage}", not omism, repr(omism[:3]))
     c.close()
+
+
+def ordered_statements(t, d):
+    """ORDER BY forms that an index on the columns `d` reads in order: nothing fixed, and = or IN on the first
+    column, both ways, with a range and another term, with LIMIT and without."""
+    out = []
+    for direction in ("", " DESC"):
+        keys = ", ".join(c + direction for c in d)
+        out.append(f"SELECT _id, a, b, v FROM f.{t} ORDER BY {keys} LIMIT 7")
+        out.append(f"SELECT _id FROM f.{t} ORDER BY {keys}")
+        out.append(f"SELECT _id FROM f.{t} WHERE {d[0]} > 0 ORDER BY {keys} LIMIT 7")
+        if len(d) > 1:
+            rest = ", ".join(c + direction for c in d[1:])
+            for a in ["1", "'a'", "TRUE", "NULL"]:
+                out.append(f"SELECT _id, {', '.join(d)} FROM f.{t} WHERE {d[0]} = {a} ORDER BY {rest} LIMIT 7")
+                out.append(f"SELECT _id FROM f.{t} WHERE {d[0]} IN ({a}, 2, 'b') ORDER BY {rest}, _id DESC LIMIT 7")
+                out.append(f"SELECT _id FROM f.{t} WHERE {d[0]} = {a} AND {d[1]} >= 1 AND v != 2 ORDER BY {rest} LIMIT 3")
+    return out

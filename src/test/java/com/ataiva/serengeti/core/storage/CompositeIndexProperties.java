@@ -192,15 +192,15 @@ class CompositeIndexProperties {
             List<String> columns = List.of(key.split(",", -1));
             java.util.Map<List<Object>, Integer> keys = new java.util.HashMap<>();
             long[] entries = {0};
+            // Every live row is an entry (an index on one column keeps those without a value apart, keyless).
             a.forEachRow("a", "t", (id, row) -> {
+                entries[0]++;
                 if (columns.size() == 1) {
                     Object v = row.get(columns.get(0));
                     if (ScalarOrder.scalar(v)) {
-                        entries[0]++;
                         keys.merge(Arrays.asList(normal(v)), 1, Integer::sum);
                     }
-                } else if (ScalarOrder.scalar(row.get(columns.get(0)))) {
-                    entries[0]++;
+                } else {
                     List<Object> k = new ArrayList<>();
                     for (String c : columns) {
                         k.add(normal(row.get(c)));

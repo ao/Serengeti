@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -270,6 +271,16 @@ public final class Store {
         /** Estimated heap bytes of the entries (see Weight). */
         abstract long weight();
 
+        /** How many columns the index is on. */
+        abstract int width();
+
+        /**
+         * The keys a read in ORDER BY order of {@code where} meets (see {@link #forEachInOrder}), as streams that
+         * each give their keys in the order of the columns after the fixed ones, ascending or descending; null
+         * when this index cannot read {@code where} so.
+         */
+        abstract List<java.util.Iterator<Entry>> streams(Lookup.Composite where, boolean descending);
+
         /** True if this index can answer {@code l}; the methods below are called only for such lookups. */
         abstract boolean answers(Lookup l);
 
@@ -304,12 +315,19 @@ public final class Store {
         }
     }
 
-    /** An index on one column: for each boolean, number and string value, the ids of the rows whose current value holds it. */
+    /**
+     * An index on one column: for each boolean, number and string value, the ids of the rows whose current value
+     * holds it; and apart from those, the ids of the rows where the column is missing or null and of those where
+     * it holds an object or an array. No lookup finds the last two (no comparison with them is true); they are
+     * there so that a read in ORDER BY order can place those rows, first and last.
+     */
     private static final class ColumnIndex extends IndexState {
         final String column;
         final TreeMap<Boolean, java.util.TreeSet<String>> bools = new TreeMap<>();
         final TreeMap<Number, java.util.TreeSet<String>> numbers = new TreeMap<>(ScalarOrder::compareNumbers);
         final TreeMap<String, java.util.TreeSet<String>> strings = new TreeMap<>();
+        final java.util.TreeSet<String> absent = new java.util.TreeSet<>();
+        final java.util.TreeSet<String> others = new java.util.TreeSet<>();
 
         ColumnIndex(String column, Stamp dropped) {
             super(dropped);
@@ -317,10 +335,17 @@ public final class Store {
         }
 
         @Override
+        int width() {
+            return 1;
+        }
+
+        @Override
         void clear() {
             bools.clear();
             numbers.clear();
             strings.clear();
+            absent.clear();
+            others.clear();
         }
 
         @Override
@@ -341,9 +366,15 @@ public final class Store {
 
         @Override
         void add(String id, Map<String, Object> row) {
-            Object v = row == null ? null : row.get(column);
+            if (row == null) {
+                return;
+            }
+            Object v = row.get(column);
             TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
             if (m == null) {
+                if ((v == null ? absent : others).add(id)) {
+                    entries++;
+                }
                 return;
             }
             java.util.TreeSet<String> ids = m.get(v);
@@ -359,9 +390,15 @@ public final class Store {
 
         @Override
         void remove(String id, Map<String, Object> row) {
-            Object v = row == null ? null : row.get(column);
+            if (row == null) {
+                return;
+            }
+            Object v = row.get(column);
             TreeMap<Object, java.util.TreeSet<String>> m = mapFor(v);
             if (m == null) {
+                if ((v == null ? absent : others).remove(id)) {
+                    entries--;
+                }
                 return;
             }
             java.util.TreeSet<String> ids = m.get(v);
@@ -435,6 +472,166 @@ public final class Store {
             }
             return gathered(sets);
         }
+
+        /**
+         * With a list of values for the column, one stream per distinct value, of its one key; else one stream
+         * over the whole order (rows without a value, booleans, numbers, strings, objects and arrays) or, with
+         * comparisons or a prefix, over the values of their type that satisfy them all.
+         */
+        @Override
+        List<java.util.Iterator<Entry>> streams(Lookup.Composite where, boolean descending) {
+            if (where.equal().size() > 1 || where.equal().size() == 1 && !where.range().isEmpty()) {
+                return null;
+            }
+            List<java.util.Iterator<Entry>> out = new ArrayList<>();
+            if (where.equal().size() == 1) {
+                java.util.TreeSet<Object> values = new java.util.TreeSet<>(ScalarOrder::sortOrder);
+                for (Object v : where.equal().get(0)) {
+                    if (ScalarOrder.scalar(v)) {
+                        values.add(v);
+                    }
+                }
+                for (Object v : values) {
+                    java.util.TreeSet<String> ids = this.<Object>mapFor(v).get(v);
+                    if (ids != null) {
+                        out.add(List.of(new Entry(new Object[] {v}, ids)).iterator());
+                    }
+                }
+                return out;
+            }
+            List<java.util.Iterator<Entry>> parts = new ArrayList<>();
+            if (where.range().isEmpty()) {
+                if (!absent.isEmpty()) {
+                    parts.add(List.of(new Entry(new Object[] {null}, absent)).iterator());
+                }
+                parts.add(entries(bools, descending));
+                parts.add(entries(numbers, descending));
+                parts.add(entries(strings, descending));
+                if (!others.isEmpty()) {
+                    parts.add(List.of(new Entry(new Object[] {OTHER}, others)).iterator());
+                }
+            } else {
+                parts.add(entries(within(where.range()), descending));
+            }
+            if (descending) {
+                java.util.Collections.reverse(parts);
+            }
+            out.add(concat(parts));
+            return out;
+        }
+
+        /** The keys of the one type whose values satisfy every lookup of {@code range}; none if they name two types. */
+        java.util.NavigableMap<Object, java.util.TreeSet<String>> within(List<Lookup> range) {
+            TreeMap<Object, java.util.TreeSet<String>> m = null;
+            Object lo = null;
+            Object hi = null;
+            boolean loIn = true;
+            boolean hiIn = true;
+            for (Lookup r : range) {
+                Object v = r instanceof Lookup.Prefix p ? p.prefix() : ((Lookup.Compare) r).value();
+                TreeMap<Object, java.util.TreeSet<String>> of = mapFor(v);
+                if (of == null || m != null && of != m) {
+                    return java.util.Collections.emptyNavigableMap();
+                }
+                m = of;
+                Object low = null;
+                Object high = null;
+                boolean lowIn = true;
+                boolean highIn = true;
+                if (r instanceof Lookup.Prefix p) {
+                    low = p.prefix();
+                    high = prefixEnd(p.prefix());
+                    highIn = false;
+                } else {
+                    switch (((Lookup.Compare) r).op()) {
+                        case "=" -> {
+                            low = v;
+                            high = v;
+                        }
+                        case "<" -> {
+                            high = v;
+                            highIn = false;
+                        }
+                        case "<=" -> high = v;
+                        case ">" -> {
+                            low = v;
+                            lowIn = false;
+                        }
+                        case ">=" -> low = v;
+                        default -> throw new IllegalArgumentException("no index lookup for " + ((Lookup.Compare) r).op());
+                    }
+                }
+                if (low != null) {
+                    int c = lo == null ? 1 : ScalarOrder.order(low, lo);
+                    if (c > 0 || c == 0 && !lowIn) {
+                        lo = low;
+                        loIn = lowIn;
+                    }
+                }
+                if (high != null) {
+                    int c = hi == null ? -1 : ScalarOrder.order(high, hi);
+                    if (c < 0 || c == 0 && !highIn) {
+                        hi = high;
+                        hiIn = highIn;
+                    }
+                }
+            }
+            if (m == null) {
+                return java.util.Collections.emptyNavigableMap();
+            }
+            if (lo != null && hi != null) {
+                int c = ScalarOrder.order(lo, hi);
+                if (c > 0 || c == 0 && !(loIn && hiIn)) {
+                    return java.util.Collections.emptyNavigableMap();
+                }
+                return m.subMap(lo, loIn, hi, hiIn);
+            }
+            return lo != null ? m.tailMap(lo, loIn) : hi != null ? m.headMap(hi, hiIn) : m;
+        }
+
+        private static java.util.Iterator<Entry> entries(java.util.NavigableMap<?, java.util.TreeSet<String>> m,
+                boolean descending) {
+            java.util.Iterator<? extends Map.Entry<?, java.util.TreeSet<String>>> it =
+                    (descending ? m.descendingMap() : m).entrySet().iterator();
+            return new java.util.Iterator<>() {
+                @Override
+                public boolean hasNext() {
+                    return it.hasNext();
+                }
+
+                @Override
+                public Entry next() {
+                    Map.Entry<?, java.util.TreeSet<String>> e = it.next();
+                    return new Entry(new Object[] {e.getKey()}, e.getValue());
+                }
+            };
+        }
+    }
+
+    /** One key of an index as a read in ORDER BY order meets it: its values, one per column, and its rows' ids. */
+    private record Entry(Object[] key, java.util.NavigableSet<String> ids) {}
+
+    /** The entries of {@code parts}, one after the other. */
+    private static java.util.Iterator<Entry> concat(List<java.util.Iterator<Entry>> parts) {
+        return new java.util.Iterator<>() {
+            private int at;
+
+            @Override
+            public boolean hasNext() {
+                while (at < parts.size() && !parts.get(at).hasNext()) {
+                    at++;
+                }
+                return at < parts.size();
+            }
+
+            @Override
+            public Entry next() {
+                if (!hasNext()) {
+                    throw new java.util.NoSuchElementException();
+                }
+                return parts.get(at).next();
+            }
+        };
     }
 
     /** The union of {@code sets} copied in id order, or null when they hold more than {@link #MATERIALIZE_LIMIT} ids. */
@@ -456,9 +653,10 @@ public final class Store {
     /**
      * An index on 2 to 4 columns: the rows by their values of the columns, in the ORDER BY order of each
      * (null and missing first, then booleans, numbers and strings; objects and arrays last, all equal), as a
-     * map from each distinct tuple of values to the ids of the rows that hold it. A row whose first value is
-     * missing, null, an object or an array is not in it: no lookup matches it. Its name in {@link #indexes}
-     * and in the index ops is the columns joined by commas ({@link Op#indexKey}).
+     * map from each distinct tuple of values to the ids of the rows that hold it. Every live row is in it; no
+     * lookup matches one whose first value is missing, null, an object or an array, but a read in ORDER BY
+     * order places it. Its name in {@link #indexes} and in the index ops is the columns joined by commas
+     * ({@link Op#indexKey}). One whose definition is not {@link #usable} holds nothing.
      */
     private static final class TupleIndex extends IndexState {
         final String[] columns;
@@ -476,11 +674,10 @@ public final class Store {
 
         /**
          * A row's key: its values of the columns, null for a missing one, {@link #OTHER} for an object or an
-         * array (so the key keeps no reference to them); null when the first value is not a boolean, number or
-         * string.
+         * array (so the key keeps no reference to them); null for no row, or when the index is not usable.
          */
         Object[] keyOf(Map<String, Object> row) {
-            if (row == null || !ScalarOrder.scalar(row.get(columns[0]))) {
+            if (row == null || !usable) {
                 return null;
             }
             Object[] k = new Object[columns.length];
@@ -568,10 +765,15 @@ public final class Store {
         }
 
         @Override
+        int width() {
+            return columns.length;
+        }
+
+        @Override
         java.util.Collection<java.util.TreeSet<String>> sets(Lookup l) {
             List<java.util.TreeSet<String>> out = new ArrayList<>();
-            for (java.util.Collection<java.util.TreeSet<String>> r : ranges(l)) {
-                out.addAll(r);
+            for (java.util.NavigableMap<Object[], java.util.TreeSet<String>> r : ranges((Lookup.Composite) l)) {
+                out.addAll(r.values());
             }
             return out;
         }
@@ -579,8 +781,8 @@ public final class Store {
         @Override
         long estimate(Lookup l, long atMost) {
             long n = 0;
-            for (java.util.Collection<java.util.TreeSet<String>> r : ranges(l)) {
-                for (java.util.TreeSet<String> s : r) {
+            for (java.util.NavigableMap<Object[], java.util.TreeSet<String>> r : ranges((Lookup.Composite) l)) {
+                for (java.util.TreeSet<String> s : r.values()) {
                     n += s.size();
                     if (n > atMost) {
                         return n;
@@ -590,11 +792,39 @@ public final class Store {
             return n;
         }
 
-        /** The key ranges {@code l} reads, as views of the map in key order, one per tuple of equal values at most. */
-        private List<java.util.Collection<java.util.TreeSet<String>>> ranges(Lookup l) {
-            Lookup.Composite c = (Lookup.Composite) l;
-            int k = c.equal().size();
-            List<java.util.Collection<java.util.TreeSet<String>>> out = new ArrayList<>();
+        /** One stream per tuple of values of the fixed columns: its keys, within the range on the next column. */
+        @Override
+        List<java.util.Iterator<Entry>> streams(Lookup.Composite where, boolean descending) {
+            int k = where.equal().size();
+            if (!usable || k > columns.length || k == columns.length && !where.range().isEmpty()) {
+                return null;
+            }
+            List<java.util.Iterator<Entry>> out = new ArrayList<>();
+            for (java.util.NavigableMap<Object[], java.util.TreeSet<String>> r : ranges(where)) {
+                java.util.Iterator<Map.Entry<Object[], java.util.TreeSet<String>>> it =
+                        (descending ? r.descendingMap() : r).entrySet().iterator();
+                out.add(new java.util.Iterator<>() {
+                    @Override
+                    public boolean hasNext() {
+                        return it.hasNext();
+                    }
+
+                    @Override
+                    public Entry next() {
+                        Map.Entry<Object[], java.util.TreeSet<String>> e = it.next();
+                        return new Entry(e.getKey(), e.getValue());
+                    }
+                });
+            }
+            return out;
+        }
+
+        /**
+         * The key ranges {@code c} reads, as views of the map in key order, one per tuple of equal values at most.
+         * With nothing fixed and no range, the whole map.
+         */
+        private List<java.util.NavigableMap<Object[], java.util.TreeSet<String>>> ranges(Lookup.Composite c) {
+            List<java.util.NavigableMap<Object[], java.util.TreeSet<String>>> out = new ArrayList<>();
             for (Object[] p : tuples(c.equal())) {
                 Object[] lo = bound(p, null, LOW);
                 Object[] hi = bound(p, null, HIGH);
@@ -612,7 +842,7 @@ public final class Store {
                     }
                 }
                 if (lo != null && compareTuples(lo, hi) <= 0) {
-                    out.add(map.subMap(lo, true, hi, true).values());
+                    out.add(map.subMap(lo, true, hi, true));
                 }
             }
             return out;
@@ -1892,6 +2122,163 @@ public final class Store {
             }
         }
         return true;
+    }
+
+    /** An ORDER BY key on a column of an index: the column's place among the index's columns, and the direction. */
+    public record SortKey(int column, boolean descending) {}
+
+    /** What {@link #forEachInOrder} did. */
+    public enum Ordered {
+        /** It visited rows until the visitor returned false, or every row it reads. */
+        DONE,
+        /** It stopped after {@code budget} steps; the caller drops what it was given and reads another way. */
+        OVER_BUDGET,
+        /** There is no such index, or it cannot read so; nothing was visited. */
+        NO_INDEX
+    }
+
+    /**
+     * Visits live rows through the index {@code index} in an ORDER BY order, without sorting: the rows whose
+     * first {@code where.equal().size()} columns each equal one of their values, and whose next column satisfies
+     * every lookup of {@code where.range()} (all rows when both are empty), ordered by {@code keys}, then by id
+     * (descending if {@code idDescending}). Each key compares one column of the index as ORDER BY does (null and
+     * missing first, then booleans, numbers, strings, objects and arrays), in its direction.
+     *
+     * <p>The keys on columns past the fixed ones must be those columns from the first of them on, in order and in
+     * one direction; keys on fixed columns may come anywhere, in either direction. The index is read in the
+     * order of the columns past the fixed ones, one stream per tuple of fixed values, and the streams are merged
+     * by the keys; keys that tie (on columns the ORDER BY leaves out, or from two streams) are read as one group,
+     * their ids merged.
+     *
+     * <p>Every row visited, every stream opened and every key of a group of several costs a step; after
+     * {@code budget} steps it stops, and returns {@link Ordered#OVER_BUDGET}.
+     *
+     * @throws IllegalArgumentException if the keys are not as above
+     */
+    public Ordered forEachInOrder(String db, String table, String index, Lookup.Composite where, List<SortKey> keys,
+            boolean idDescending, long budget, java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        if (!tableExists(db, table)) {
+            return Ordered.NO_INDEX;
+        }
+        TableState t = dbs.get(db).tables.get(table);
+        IndexState ix = t.indexes.get(index);
+        if (ix == null || !ix.exists()) {
+            return Ordered.NO_INDEX;
+        }
+        int fixed = where.equal().size();
+        int next = fixed;
+        Boolean descending = null;
+        for (SortKey k : keys) {
+            if (k.column() < 0 || k.column() >= ix.width()) {
+                throw new IllegalArgumentException("no column " + k.column() + " in an index on " + ix.width());
+            }
+            if (k.column() >= fixed) {
+                if (k.column() != next++ || descending != null && descending != k.descending()) {
+                    throw new IllegalArgumentException("ORDER BY keys out of the index's order: " + keys);
+                }
+                descending = k.descending();
+            }
+        }
+        List<java.util.Iterator<Entry>> streams = ix.streams(where, descending != null && descending);
+        if (streams == null) {
+            return Ordered.NO_INDEX;
+        }
+        Comparator<Object[]> order = (a, b) -> {
+            for (SortKey k : keys) {
+                int c = ScalarOrder.sortOrder(a[k.column()], b[k.column()]);
+                if (c != 0) {
+                    return k.descending() ? -c : c;
+                }
+            }
+            return 0;
+        };
+        long steps = streams.size();
+        java.util.PriorityQueue<Stream> heads = new java.util.PriorityQueue<>((x, y) -> order.compare(x.at.key(), y.at.key()));
+        for (java.util.Iterator<Entry> s : streams) {
+            if (s.hasNext()) {
+                heads.add(new Stream(s.next(), s));
+            }
+        }
+        List<java.util.NavigableSet<String>> group = new ArrayList<>();
+        while (!heads.isEmpty()) {
+            Stream first = heads.poll();
+            Object[] key = first.at.key();
+            group.clear();
+            group.add(first.at.ids());
+            first.advance(heads);
+            while (!heads.isEmpty() && order.compare(heads.peek().at.key(), key) == 0) {
+                if (++steps > budget) {
+                    return Ordered.OVER_BUDGET;
+                }
+                Stream s = heads.poll();
+                group.add(s.at.ids());
+                s.advance(heads);
+            }
+            java.util.Iterator<String> ids = group.size() == 1
+                    ? (idDescending ? group.get(0).descendingIterator() : group.get(0).iterator())
+                    : mergedIds(group, idDescending);
+            while (ids.hasNext()) {
+                if (++steps > budget) {
+                    return Ordered.OVER_BUDGET;
+                }
+                String id = ids.next();
+                RowState r = t.rows.get(id);
+                if (r != null && r.value() != null && !visitor.test(id, r.value())) {
+                    return Ordered.DONE;
+                }
+            }
+        }
+        return Ordered.DONE;
+    }
+
+    /** One stream of an ordered read: the key it is at, and the rest. */
+    private static final class Stream {
+        Entry at;
+        final java.util.Iterator<Entry> rest;
+
+        Stream(Entry at, java.util.Iterator<Entry> rest) {
+            this.at = at;
+            this.rest = rest;
+        }
+
+        /** Moves to the next key and back into {@code heads}, unless there is none. */
+        void advance(java.util.PriorityQueue<Stream> heads) {
+            if (rest.hasNext()) {
+                at = rest.next();
+                heads.add(this);
+            }
+        }
+    }
+
+    /** The ids of disjoint sorted sets in one order, ascending or descending, read as they are iterated. */
+    private static java.util.Iterator<String> mergedIds(List<java.util.NavigableSet<String>> sets, boolean descending) {
+        Comparator<String> by = descending ? Comparator.reverseOrder() : Comparator.naturalOrder();
+        java.util.PriorityQueue<Map.Entry<String, java.util.Iterator<String>>> heads =
+                new java.util.PriorityQueue<>((x, y) -> by.compare(x.getKey(), y.getKey()));
+        for (java.util.NavigableSet<String> s : sets) {
+            java.util.Iterator<String> it = descending ? s.descendingIterator() : s.iterator();
+            if (it.hasNext()) {
+                heads.add(Map.entry(it.next(), it));
+            }
+        }
+        return new java.util.Iterator<>() {
+            @Override
+            public boolean hasNext() {
+                return !heads.isEmpty();
+            }
+
+            @Override
+            public String next() {
+                Map.Entry<String, java.util.Iterator<String>> h = heads.poll();
+                if (h == null) {
+                    throw new java.util.NoSuchElementException();
+                }
+                if (h.getValue().hasNext()) {
+                    heads.add(Map.entry(h.getValue().next(), h.getValue()));
+                }
+                return h.getKey();
+            }
+        };
     }
 
     /** The keys to visit for {@code l} on {@code column}, in id order; null when the caller should scan. */

@@ -143,6 +143,17 @@ GitHub release notes and tags.
   `indexes.jsonl` with the columns joined by commas in the `column` field: a 2.1 node holds it as an index
   on a column no row has (empty and unused) and keeps it, so it is back after a rollback to 2.1 and an
   upgrade. Single-column indexes are unchanged. See docs/QUERY.md, "Indexes on several columns".
+- SELECT with ORDER BY and a LIMIT (or the 10,000 cap) reads an index in order and stops once it has
+  its rows, when the ORDER BY keys are the columns of an index after those the WHERE fixes with `=` or IN,
+  all ASC or all DESC: `ORDER BY at DESC LIMIT 10` with an index on `at`, `WHERE customer = 'c1' ORDER BY
+  placed DESC LIMIT 10` with one on `(customer, placed)`. A range on the first ordered column narrows the
+  read. On 200,000 rows in-process (c7g.4xlarge container limited to 4 CPUs, JDK 17), `ORDER BY at DESC
+  LIMIT 10` takes 0.07 ms instead of 293. The answer is the sort's, row for row. When the WHERE has terms
+  the read does not answer, it reads at most 1/64 of the rows the query would read without it, then reads
+  and sorts as before: a condition that few rows or none meet costs up to a quarter more (24 ms instead
+  of 19 on the same rows). To place rows in that order, an index now also keeps the rows where its column
+  is missing, null, an object or an array (found by no lookup, as before): 40 bytes each, counted towards
+  the memory limit. See docs/QUERY.md, "ORDER BY through an index".
 
 ### Fixed
 - An index key kept the value of the row that first had it alive after that row changed or was deleted

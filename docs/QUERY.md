@@ -174,8 +174,10 @@ its result. `!=`, OR, NOT, NOT IN, NOT LIKE, IS NULL and a LIKE that starts with
 table.
 
 An index holds the booleans, numbers and strings of its column, compared as above (`qty = 10` also
-finds 10.0). Rows where the column is missing, null, an object or an array are not in it, which is right:
-no comparison of those with a value is true. `_id` needs no index, and `CREATE INDEX` on it is refused:
+finds 10.0). No lookup finds a row where the column is missing, null, an object or an array, which is
+right: no comparison of those with a value is true. The index keeps those rows apart all the same, so
+that a read in ORDER BY order can place them (see "ORDER BY through an index" below). `_id` needs no
+index, and `CREATE INDEX` on it is refused:
 `WHERE _id = 'x'`, ranges, IN lists and LIKE prefixes of `_id` never scan.
 
 An index is built from the rows when it is created and kept up to date by every write. In a cluster the
@@ -205,21 +207,70 @@ January, `WHERE customer IN ('c1', 'c2') AND placed > '2026-06'` those of two cu
 condition fixes: `WHERE placed > '2026-06'` or `customer != 'c1' AND placed = '2026-06-01'` does not use
 it. The rest of the condition is checked on the rows the index finds, as for an index on one column.
 
-A row whose first column is missing, null, an object or an array is not in the index; no lookup could
-find it. Past the first column every value is kept, missing and null ones sorting first: a row with a
-`customer` and no `placed` is found by `customer = 'c1'`, and not by a range on `placed`.
+Every row is in the index, with missing and null values sorting first in each column and objects and
+arrays last, but no lookup finds one whose first column is missing, null, an object or an array. A row
+with a `customer` and no `placed` is found by `customer = 'c1'`, and not by a range on `placed`.
 
 When more than one index can answer a condition, the read of the fewest rows is used, counting a term on
 `_id` or on a column with its own index as a read too, and among reads of as many rows the one that names
 the most columns of it (a range counts as one column). A range that would gather more than 100,000 rows
 gives way to the next read before the table is scanned. COUNT(*), GROUP BY, UPDATE and DELETE use it as SELECT does.
 
-Each row in an index takes an entry, estimated at 40 bytes, and each distinct combination of values about
-130 more; both count towards `memory_limit_percent` (docs/CONFIGURATION.md). In the index definition that
+Each row of the table takes an entry in each of its indexes, estimated at 40 bytes, whether or not it
+has a value there; each distinct value takes about 104 bytes more, and each distinct combination of
+values in an index on several columns about 130. All of it counts towards `memory_limit_percent`
+(docs/CONFIGURATION.md). In the index definition that
 replicates and that `indexes.jsonl` keeps, the columns are joined by commas in the one `column` field. A
 name cannot hold a comma, so a 2.1 node holds such an index as an index on a column no row has: it lists
 it as `customer,placed`, answers those queries by scan, and keeps the definition, so a node rolled back to
 2.1 and upgraded again has the index back. 2.0 nodes are not sent index definitions.
+
+### ORDER BY through an index
+
+A SELECT with ORDER BY (and no GROUP BY, DISTINCT or aggregates) can read its rows from an index in the
+order it returns them, and stop once it has them: its LIMIT, or the 10,000 cap, and one more row to know
+whether `truncated` is true. It does when its ORDER BY keys are, in order, the columns of an index that
+come after those the WHERE fixes:
+
+```
+CREATE INDEX ON shop.events (at);
+SELECT * FROM shop.events ORDER BY at DESC LIMIT 20;
+SELECT * FROM shop.events WHERE at >= 1767225600000 ORDER BY at LIMIT 100;
+
+CREATE INDEX ON shop.orders (customer, placed);
+SELECT * FROM shop.orders WHERE customer = 'c1' ORDER BY placed DESC LIMIT 10;
+SELECT * FROM shop.orders WHERE customer IN ('c1', 'c2') ORDER BY placed DESC LIMIT 10;
+SELECT * FROM shop.orders ORDER BY customer, placed LIMIT 100;
+```
+
+- The WHERE fixes the first columns of the index as for a lookup (above): a term `=` a value, an IN list
+  or a LIKE without wildcards on each, in order. With IN lists, the rows of each value (or combination of
+  values, up to 1,000) are read in order and merged.
+- The other keys must be the index's next columns, in its order, all ASC or all DESC. A
+  key on a fixed column may come anywhere and in either direction, and `_id` may be the last key, in
+  either direction (keys after `_id` decide nothing). The keys may stop before the index's last column:
+  `ORDER BY customer` reads the index on `(customer, placed)` too.
+- `<`, `<=`, `>`, `>=` and LIKE prefix terms on the first ordered column narrow the read, as for a lookup.
+- The rest of the WHERE is checked on each row read.
+
+The rows are those the sort gives, in the same order: across types as in Ordering, with the rows that
+no lookup finds (missing or null values first, objects and arrays last) in their places, and rows equal on
+every key by `_id`. A key on a column that the WHERE fixes to one value (`WHERE kind = 3 ORDER BY kind,
+qty`) decides nothing and is left out; with no key left, rows are read in `_id` order (see "Reading a
+large table").
+
+When every term of the WHERE is one the read answers (the terms that fix columns, and comparisons on the
+first ordered column), each row it reads belongs to the answer, and the read is always used. Otherwise it
+may read rows the other terms leave out, possibly the whole index before the page is full, so it gets a
+share: it reads at most 1/64 of the rows the query would read without it (those its best index lookup
+finds, or the whole table), and if the page is not full by then, the query reads and sorts as it would
+without the index. When that share is smaller than the page, the ordered read is not tried. A row read
+through an index costs 12 to 16 times one read by a scan, so the share bounds the worst case, a condition
+that few rows or none meet: `WHERE kind = 'rare' ORDER BY at DESC LIMIT 10`, with 5 rare rows that are the
+oldest and no index on `kind`, takes 24 ms instead of 19 on 200,000 rows, and 179 instead of 150 on
+1,000,000 (in-process medians on a c7g.4xlarge container limited to 4 CPUs, against the same statements
+answered by the sort). With 10% of the rows matching it takes 0.23 ms instead of 40, and `ORDER BY at
+DESC LIMIT 10` 0.07 ms instead of 330.
 
 ## Ordering
 
@@ -361,8 +412,9 @@ row, in insert order:
   chains of AND or OR do not count towards this.
 - Names are at most 63 characters.
 - SELECT with ORDER BY sorts all matching rows in memory before applying the limit, except when its
-  first key is `_id` ascending, which is the order rows are read in (see below). A statement whose WHERE
-  has no term an index answers (see Indexes) scans the table.
+  first key that decides anything is `_id` ascending, which is the order rows are read in (see below),
+  and when an index gives the rows in its order (see "ORDER BY through an index"). `ORDER BY _id DESC`
+  sorts. A statement whose WHERE has no term an index answers (see Indexes) scans the table.
 
 ## Reading a large table
 

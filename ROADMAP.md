@@ -39,6 +39,8 @@ here has a date.
 - every node keeps every database in memory;
 - an index on several columns is read only for its first columns that a condition fixes (=, IN, then one
   range); a WHERE without a term an index answers scans its table;
+- ORDER BY sorts the matching rows in memory unless its keys are an index's columns after those the WHERE
+  fixes, all in one direction ([docs/QUERY.md](docs/QUERY.md), "ORDER BY through an index");
 - no joins and no transactions across statements; nothing is linearizable;
 - an account has one role, for every table of every database it may use: there are no permissions per
   table;

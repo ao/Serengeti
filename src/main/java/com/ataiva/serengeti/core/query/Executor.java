@@ -457,18 +457,203 @@ public final class Executor {
 
     /** The values one of {@code terms} says {@code column} equals (one of them, for IN), the shortest list; null if none. */
     private static List<Object> equalValues(String column, List<Expr> terms) {
-        List<Object> best = null;
+        Expr t = equalTerm(column, terms);
+        return t == null ? null : equalValues(t);
+    }
+
+    /** The term of {@code terms} that {@link #equalValues(String, List)} takes its values from, or null. */
+    private static Expr equalTerm(String column, List<Expr> terms) {
+        Expr best = null;
+        int size = 0;
         for (Expr t : terms) {
-            List<Object> values = null;
-            if (t instanceof Expr.Compare c && c.column().equals(column) && c.op() == Expr.Cmp.EQ) {
-                values = java.util.Collections.singletonList(c.value());
-            } else if (t instanceof Expr.In in && in.column().equals(column) && !in.negated()) {
-                values = in.values();
-            } else if (t instanceof Expr.Like l && l.column().equals(column) && !l.negated() && l.pattern().exact()) {
-                values = List.of(l.pattern().prefix());
+            List<Object> values = equalValues(t);
+            if (values != null && column.equals(columnOf(t)) && (best == null || values.size() < size)) {
+                best = t;
+                size = values.size();
             }
-            if (values != null && (best == null || values.size() < best.size())) {
-                best = values;
+        }
+        return best;
+    }
+
+    /** The values an =, IN or wildcard-free LIKE term says its column equals; null for any other term. */
+    private static List<Object> equalValues(Expr t) {
+        if (t instanceof Expr.Compare c && c.op() == Expr.Cmp.EQ) {
+            return java.util.Collections.singletonList(c.value());
+        }
+        if (t instanceof Expr.In in && !in.negated()) {
+            return in.values();
+        }
+        if (t instanceof Expr.Like l && !l.negated() && l.pattern().exact()) {
+            return List.of(l.pattern().prefix());
+        }
+        return null;
+    }
+
+    private static String columnOf(Expr t) {
+        return t instanceof Expr.Compare c ? c.column() : t instanceof Expr.In in ? in.column()
+                : t instanceof Expr.Like l ? l.column() : null;
+    }
+
+    private static List<Expr> terms(Expr where) {
+        return where instanceof Expr.And a ? a.terms() : where == null ? List.of() : List.of(where);
+    }
+
+    /**
+     * A read of an index in the order of an ORDER BY: the index (by the {@code column} field of its ops), what it
+     * reads (values of its first columns, then comparisons on the next), the ORDER BY keys as columns of it, the
+     * direction of _id among rows equal on them, and whether it reads exactly the rows the WHERE matches: every
+     * term of the WHERE is one the read answers, so that each row it visits is one of the answer.
+     */
+    record OrderedPlan(String index, Store.Lookup.Composite where, List<Store.SortKey> keys, boolean idDescending,
+            boolean exact) {}
+
+    /**
+     * An exact ordered read is always taken. Any other reads at most this share (1 in so many) of the rows the
+     * read without order would visit: the rows its index read finds, or the table's. If its page is not full by
+     * then, the rows are read and sorted as without it.
+     */
+    static final int ORDERED_SHARE = 64;
+
+    /**
+     * The ORDER BY keys of {@code q} that can decide anything: those before the first _id key, less those on a
+     * column that a term of the WHERE's top-level AND fixes to one value (every row that matches holds that
+     * value, equal as ORDER BY compares). Empty when there are none; then the rows come in _id order,
+     * descending if the first _id key says so ({@link #idDescending}).
+     */
+    private static List<Statement.OrderBy> deciding(Statement.Select q) {
+        List<Expr> terms = terms(q.where());
+        List<Statement.OrderBy> out = new ArrayList<>();
+        for (Statement.OrderBy o : q.orderBy()) {
+            if (ID.equals(o.column())) {
+                break;
+            }
+            List<Object> values = o.column() == null ? null : equalValues(o.column(), terms);
+            if (values == null || values.size() != 1) {
+                out.add(o);
+            }
+        }
+        return out;
+    }
+
+    /** True if the first _id key of {@code q}'s ORDER BY is descending. */
+    private static boolean idDescending(Statement.Select q) {
+        for (Statement.OrderBy o : q.orderBy()) {
+            if (ID.equals(o.column())) {
+                return o.descending();
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The ordered read of an index for a SELECT without groups or aggregates, or null: of the indexes on whose
+     * columns its deciding ORDER BY keys lie (see {@link #ordered}), an exact read first, then the one that names
+     * the most columns of the WHERE, then the first.
+     */
+    static OrderedPlan orderedPlan(Store store, String db, String table, Statement.Select q) {
+        List<Statement.OrderBy> keys = deciding(q);
+        if (keys.isEmpty()) {
+            return null;
+        }
+        List<Expr> terms = terms(q.where());
+        boolean idDescending = idDescending(q);
+        List<List<String>> indexes = new ArrayList<>();
+        for (String key : store.indexes(db, table)) {
+            if (key.indexOf(',') < 0) {
+                indexes.add(List.of(key));
+            }
+        }
+        indexes.addAll(store.compositeIndexes(db, table));
+        OrderedPlan best = null;
+        for (List<String> columns : indexes) {
+            OrderedPlan p = ordered(columns, terms, keys, idDescending);
+            if (p != null && (best == null || p.exact() && !best.exact()
+                    || p.exact() == best.exact() && p.where().named() > best.where().named())) {
+                best = p;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * The read of the index on {@code columns} in the order of {@code keys}, or null if it has none. Its first
+     * columns are fixed as {@link #composite} fixes them (=, IN, or LIKE without wildcards, while the IN lists'
+     * product stays within {@link #MAX_LOOKUP_TUPLES}), and comparisons on the next column narrow it. Each key
+     * must be a column of the index; those past the fixed ones must be the next columns, in order, all in one
+     * direction. Keys on fixed columns may come anywhere and in either direction: within one tuple of fixed
+     * values they do not change, and the read merges the tuples by them.
+     */
+    static OrderedPlan ordered(List<String> columns, List<Expr> terms, List<Statement.OrderBy> keys, boolean idDescending) {
+        List<List<Object>> equal = new ArrayList<>();
+        Set<Expr> answered = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        long tuples = 1;
+        int fixed = 0;
+        for (; fixed < columns.size(); fixed++) {
+            Expr t = equalTerm(columns.get(fixed), terms);
+            if (t == null || tuples * equalValues(t).size() > MAX_LOOKUP_TUPLES) {
+                break;
+            }
+            tuples *= equalValues(t).size();
+            equal.add(equalValues(t));
+            answered.add(t);
+        }
+        List<Store.SortKey> sort = new ArrayList<>();
+        int next = fixed;
+        Boolean descending = null;
+        for (Statement.OrderBy o : keys) {
+            int at = columns.indexOf(o.column());
+            if (at < 0) {
+                return null;
+            }
+            if (at >= fixed) {
+                if (at != next++ || descending != null && descending != o.descending()) {
+                    return null;
+                }
+                descending = o.descending();
+            }
+            sort.add(new Store.SortKey(at, o.descending()));
+        }
+        List<Store.Lookup> range = new ArrayList<>();
+        if (fixed < columns.size()) {
+            String c = columns.get(fixed);
+            for (Expr t : terms) {
+                if (t instanceof Expr.Compare x && x.column().equals(c) && x.op() != Expr.Cmp.NE && x.op() != Expr.Cmp.EQ) {
+                    range.add(new Store.Lookup.Compare(x.op().symbol(), x.value()));
+                    answered.add(t);
+                } else if (t instanceof Expr.Like l && l.column().equals(c) && !l.negated() && !l.pattern().exact()
+                        && !l.pattern().prefix().isEmpty()) {
+                    // The pattern may say more than its prefix, so the term is still checked: not answered.
+                    range.add(new Store.Lookup.Prefix(l.pattern().prefix()));
+                }
+            }
+        }
+        boolean exact = true;
+        for (Expr t : terms) {
+            exact &= answered.contains(t);
+        }
+        return new OrderedPlan(Op.indexKey(columns), new Store.Lookup.Composite(equal, range), sort, idDescending, exact);
+    }
+
+    /**
+     * The steps {@code op} may take to find {@code keep} rows of {@code q} (see {@link Store#forEachInOrder}): no
+     * limit when it is exact; else {@link #ORDERED_SHARE} of the rows the read without order would visit, or -1
+     * (do not try) when that is fewer than {@code keep}.
+     */
+    static long orderedBudget(Store store, Statement.Select q, OrderedPlan op, long keep) {
+        if (op.exact()) {
+            return Long.MAX_VALUE;
+        }
+        long budget = unorderedRows(store, q.db(), q.table(), q.where()) / ORDERED_SHARE;
+        return keep <= budget ? budget : -1;
+    }
+
+    /** How many rows the read that {@link #scan} would take visits: its index estimate, or the table's rows. */
+    private static long unorderedRows(Store store, String db, String table, Expr where) {
+        long best = store.visibleRows(db, table);
+        for (Plan p : candidates(store, db, table, where)) {
+            long n = store.indexEstimate(db, table, p.column(), p.lookup(), best);
+            if (n >= 0 && n < best) {
+                best = n;
             }
         }
         return best;
@@ -498,15 +683,12 @@ public final class Executor {
 
     /**
      * True when a SELECT without aggregates or groups answers in _id order, so it reads rows in that order and
-     * stops after its page instead of sorting: without ORDER BY, or with _id ascending as the first key (_id
-     * is unique, so the keys after it never decide anything).
+     * stops after its page instead of sorting: without ORDER BY, or with _id ascending as the first key that
+     * can decide anything (_id is unique, so the keys after it never do, and a key on a column the WHERE fixes
+     * to one value never does; see {@link #deciding}).
      */
     static boolean readsInIdOrder(Statement.Select q) {
-        if (q.orderBy().isEmpty()) {
-            return true;
-        }
-        Statement.OrderBy first = q.orderBy().get(0);
-        return ID.equals(first.column()) && !first.descending();
+        return deciding(q).isEmpty() && !idDescending(q);
     }
 
     private Result select(Store store, Statement.Select q) {
@@ -533,25 +715,37 @@ public final class Executor {
         }
         long cap = q.limit() != null ? q.limit() : maxRows;
         List<Match> found = new ArrayList<>();
-        boolean idOrder = readsInIdOrder(q);
-        if (idOrder) {
-            // Rows come in _id order, so the first matches are the answer, and one past the cap is enough to
-            // know about truncation: stop there (a keyset page reads only its rows).
-            long keep = cap + 1;
-            scanWhile(store, q.db(), q.table(), q.where(), (id, row) -> {
-                if (matches(q.where(), id, row)) {
-                    found.add(new Match(id, row));
-                }
-                return found.size() < keep;
-            });
+        // Rows read in the answer's order: the first matches are the answer, and one past the cap is enough to
+        // know about truncation, so the read stops there (a keyset page reads only its rows).
+        long keep = cap + 1;
+        java.util.function.BiPredicate<String, Map<String, Object>> collect = (id, row) -> {
+            if (matches(q.where(), id, row)) {
+                found.add(new Match(id, row));
+            }
+            return found.size() < keep;
+        };
+        boolean inOrder = readsInIdOrder(q);
+        if (inOrder) {
+            scanWhile(store, q.db(), q.table(), q.where(), collect);
         } else {
-            scan(store, q.db(), q.table(), q.where(), (id, row) -> {
-                if (matches(q.where(), id, row)) {
-                    found.add(new Match(id, row));
+            OrderedPlan op = orderedPlan(store, q.db(), q.table(), q);
+            long budget = op == null ? -1 : orderedBudget(store, q, op, keep);
+            if (budget >= 0) {
+                inOrder = store.forEachInOrder(q.db(), q.table(), op.index(), op.where(), op.keys(), op.idDescending(),
+                        budget, collect) == Store.Ordered.DONE;
+                if (!inOrder) {
+                    found.clear();
                 }
-            });
+            }
+            if (!inOrder) {
+                scan(store, q.db(), q.table(), q.where(), (id, row) -> {
+                    if (matches(q.where(), id, row)) {
+                        found.add(new Match(id, row));
+                    }
+                });
+            }
         }
-        if (!idOrder) {
+        if (!inOrder) {
             Comparator<Match> byKeys = null;
             for (Statement.OrderBy o : q.orderBy()) {
                 String col = o.column();
