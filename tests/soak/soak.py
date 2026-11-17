@@ -992,6 +992,27 @@ def same_row(a, b):
     return same(a, b)
 
 
+def sort_key(v):
+    """docs/QUERY.md, "Ordering": null and missing first, then false, true, numbers, strings by UTF-16 code
+    unit, then any other value, all equal."""
+    k = kind(v)
+    if k == "z":
+        return (0, 0)
+    if k == "b":
+        return (1, int(v))
+    if k == "n":
+        return (2, v)
+    if k == "s":
+        return (3, v.encode("utf-16-be"))
+    return (4, 0)
+
+
+def model_order(rows, col, descending, n):
+    """The first n ids of ORDER BY col (DESC): rows equal on it by _id ascending, whatever the direction."""
+    by_id = sorted(rows.items(), key=lambda kv: kv[0].encode("utf-16-be"))
+    return [h for h, _ in sorted(by_id, key=lambda kv: sort_key(kv[1].get(col)), reverse=descending)[:n]]
+
+
 def model_match(val, op, probe):
     """docs/QUERY.md comparison rules: a comparison with null, or between kinds, is never true."""
     if val is None or probe is None or kind(val) != kind(probe) or kind(val) not in "bns":
@@ -1370,7 +1391,29 @@ class Checker:
                                 if a != b:
                                     p6.append(f"n{i} {t} WHERE {col} = {lit(v)}: the index and the scan return "
                                               f"different ids")
-        self.result(6, not p6, f"index lookups return the same rows as scans on every node ({nq} queries)", p6)
+                    # ORDER BY through the index, which also places the rows without a value (2.2).
+                    for desc in (False, True):
+                        text = f"SELECT _id FROM {t} ORDER BY {col}{' DESC' if desc else ''} LIMIT 20"
+                        got = [r[0] for r in self.q(i, text)["rows"]]
+                        nq += 1
+                        if got != model_order(rows, col, desc, 20):
+                            p6.append(f"n{i} {text}: {got[:5]}..., rows held give "
+                                      f"{model_order(rows, col, desc, 20)[:5]}...")
+                # An OR of two indexed columns, read as a union of their reads (2.2), against the scan.
+                cols = sorted(dumps[i]["indexes"][t])
+                for c1, c2 in zip(cols, cols[1:]):
+                    v1 = next((r[c1] for r in rows.values() if r.get(c1) is not None), 5)
+                    v2 = next((r[c2] for r in rows.values() if r.get(c2) is not None), "m")
+                    w = f"{c1} = {lit(v1)} OR {c2} = {lit(v2)}"
+                    idx = self.q(i, f"SELECT COUNT(*) FROM {t} WHERE {w}")["rows"][0][0]
+                    scan = self.q(i, f"SELECT COUNT(*) FROM {t} WHERE NOT (NOT ({w}))")["rows"][0][0]
+                    model = sum(1 for r in rows.values()
+                                if model_match(r.get(c1), "=", v1) or model_match(r.get(c2), "=", v2))
+                    nq += 2
+                    if not (idx == scan == model):
+                        p6.append(f"n{i} {t} WHERE {w}: index {idx}, scan {scan}, rows held {model}")
+        self.result(6, not p6, f"index lookups, ORDER BY through an index and ORs of two indexes return the same "
+                    f"rows as scans and as the rows held on every node ({nq} queries)", p6)
 
     def explain_final(self, i, h, row, writes, vmap, p1, p2, p3, p7):
         """The row's final state on node i against every acknowledged write to it."""

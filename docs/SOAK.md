@@ -90,7 +90,9 @@ reads every table from every node (`SELECT *` in pages of 10,000, ordered by `_i
 6. for every index on every node, `COUNT(*)` with `=`, `<`, `<=`, `>` and `>=` against values of every
    type returns the same count through the index, as a scan (the same comparison written as `NOT (NOT
    (...))`, which is never answered through an index) and from the rows the node returned; for `=`, the same
-   ids;
+   ids; `ORDER BY` the column, ascending and descending, `LIMIT 20`, read through the index, returns the ids
+   the node's rows give in that order (rows without a value included); and an OR of `=` on two indexed
+   columns, read as the union of the two indexes' reads, counts as the scan and the rows do;
 7. every row and every value held comes from a write that was sent and not refused (a 503 before the
    write was logged, a 400, or an `UPDATE` or `DELETE` that changed nothing), and an insert of several
    rows is there entirely or not at all;
