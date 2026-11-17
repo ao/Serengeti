@@ -347,13 +347,24 @@ class OffsetTest {
         // In _id order: a scan, an _id range, a range on an index (gathered into _id order), a union of index reads.
         for (String where : List.of("", " WHERE _id > 'r1000'", " WHERE p >= 2000", " WHERE a = 7 OR b = 9",
                 " WHERE a = 7 OR b = 9 ORDER BY _id", " WHERE a = 3 ORDER BY a, _id")) {
+            // A range and a union gather their ids; a page first streams the table in _id order for a share of
+            // that, visiting rows that do not match, then goes on through the gathered read (review 22i).
+            boolean gathers = where.contains("p >=") || where.contains(" OR ");
             for (int[] mn : new int[][] {{0, 0}, {0, 1}, {20, 10}, {7, 0}, {50, 3}}) {
                 Executor.Read r = read(10_000, "SELECT * FROM @T" + where + " LIMIT " + mn[1] + " OFFSET " + mn[0]);
-                assertEquals(mn[0] + mn[1] + 1, r.visited(), where + " " + Arrays.toString(mn));
+                if (gathers) {
+                    assertTrue(r.visited() >= mn[0] + mn[1] + 1, where + " " + Arrays.toString(mn));
+                } else {
+                    assertEquals(mn[0] + mn[1] + 1, r.visited(), where + " " + Arrays.toString(mn));
+                }
                 assertEquals(mn[0] + mn[1] + 1, r.rows().size());
             }
             Executor.Read r = read(5, "SELECT * FROM @T" + where + " OFFSET 20");
-            assertEquals(26, r.visited(), where);
+            if (gathers) {
+                assertTrue(r.visited() >= 26, where);
+            } else {
+                assertEquals(26, r.visited(), where);
+            }
         }
         // Through an index in its order: exact reads, with and without a column the WHERE fixes, and IN lists merged.
         for (String q : List.of("SELECT * FROM @T ORDER BY p DESC", "SELECT * FROM @T WHERE p > 100 ORDER BY p",
