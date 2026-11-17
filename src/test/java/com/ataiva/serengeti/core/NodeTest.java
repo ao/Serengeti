@@ -128,10 +128,13 @@ class NodeTest {
         Path data = tmp.resolve("data");
         Config c = config(data, "SERENGETI_ADMIN_PASSWORD", PW);
         String old;
+        String first;
+        Object all;
         try (Node n = Node.start(c, Node.QUERIES)) {
             assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
             assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
             String cursor = (String) changes(n, "db=shop&after=now").get("cursor");
+            first = cursor;
             assertEquals(200, query(n, "INSERT INTO shop.items (_id, qty) VALUES ('bolt', 1)").statusCode());
             assertEquals(200, query(n, "UPDATE shop.items SET qty = 2 WHERE _id = 'bolt'").statusCode());
             Map<String, Object> page = changes(n, "db=shop&table=items&after=" + cursor);
@@ -161,11 +164,36 @@ class NodeTest {
                 assertEquals(400L, changes(n, bad).get("status"), bad);
             }
             old = (String) waited.get("cursor");
+            all = changes(n, "db=shop&after=" + first);
         }
         try (Node n = Node.start(c, Node.QUERIES)) {
-            Map<String, Object> gone = changes(n, "db=shop&after=" + old);
-            assertEquals(410L, gone.get("status"), "a cursor from before the restart");
-            assertTrue(((String) gone.get("error")).contains("after=now"), gone.toString());
+            assertEquals(all, changes(n, "db=shop&after=" + first), "a cursor from before the restart gets the same");
+            Map<String, Object> next = changes(n, "db=shop&after=" + old);
+            assertEquals(List.of(), next.get("changes"));
+            assertEquals(old, next.get("cursor"));
+            assertEquals(old, changes(n, "db=shop&after=now").get("cursor"), "nothing new: the same place");
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, qty) VALUES ('nut', 5)").statusCode());
+            List<Map<String, Object>> after = (List<Map<String, Object>>) changes(n, "db=shop&after=" + old).get("changes");
+            assertEquals("nut", after.get(0).get("_id"));
+        }
+        // A copy of the data directory as a crash leaves it, taken while the node runs, on another node:
+        // the cursor goes on there too, since the copy is that node's data (as after a restore from a disk
+        // snapshot; see CONFIGURATION.md).
+        Path copy = tmp.resolve("copy");
+        Files.createDirectories(copy);
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, qty) VALUES ('washer', 6)").statusCode());
+            try (java.util.stream.Stream<Path> files = Files.list(data)) {
+                for (Path p : files.toList()) {
+                    if (!p.getFileName().toString().equals("lock")) {
+                        Files.copy(p, copy.resolve(p.getFileName()));
+                    }
+                }
+            }
+        }
+        try (Node n = Node.start(config(copy, "SERENGETI_ADMIN_PASSWORD", PW), Node.QUERIES)) {
+            List<Map<String, Object>> after = (List<Map<String, Object>>) changes(n, "db=shop&after=" + old).get("changes");
+            assertEquals(List.of("nut", "washer"), after.stream().map(m -> m.get("_id")).toList());
         }
     }
 

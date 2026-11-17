@@ -168,13 +168,13 @@ class ChangeFeedTest {
     }
 
     @Test
-    void theEngineReportsOnlyChangesMadeAfterTheFeedStarts() throws Exception {
+    void aFeedTurnedOnLaterStartsAtANewEpochWithNothingFromBefore() throws Exception {
         try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
             e.apply(List.of(new Op.CreateDb("d", at(1, "n1")), new Op.CreateTable("d", "t", at(2, "n1")),
                     new Op.Put("d", "t", "old", Map.of("v", 1L), at(3, "n1"))));
         }
-        try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS)) {
-            e.enableChanges(100);
+        try (StorageEngine e = StorageEngine.open(dir, FsyncPolicy.ALWAYS, 1 << 26, 0, 100)) {
+            assertEquals(0, e.changes().held()[0]);
             String start = e.changes().now();
             assertEquals(List.of(), ids(e.changes().read(start, "d", null, 10, 0)), "loading the log is not a change");
             e.update(s -> new StorageEngine.Planned<>(List.of(new Op.Put("d", "t", "new", Map.of("v", 2L), at(9, "n1"))), null));

@@ -47,11 +47,20 @@ public final class Snapshot {
 
     /** Writes the ops of {@code source} one at a time, so they are never all in memory as a list. */
     public static void write(Source source, OutputStream out) throws IOException {
+        write(source, out, Map.of());
+    }
+
+    /**
+     * As {@link #write(Source, OutputStream)}, with {@code extra} added to the header. Readers of every version
+     * check only the header's format and version, so a key added here does not stop 2.0 or 2.1 reading the file.
+     */
+    public static void write(Source source, OutputStream out, Map<String, Object> extra) throws IOException {
         Writer w = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
         MessageDigest md = sha256();
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("format", FORMAT);
         header.put("version", FORMAT_VERSION);
+        header.putAll(extra);
         line(w, md, Json.write(header));
         long[] count = {0};
         try {
@@ -103,6 +112,12 @@ public final class Snapshot {
      */
     public static long read(InputStream in, boolean requireChecksum, java.util.function.Consumer<Op> sink)
             throws IOException {
+        return read(in, requireChecksum, sink, h -> { });
+    }
+
+    /** As above, handing the header to {@code headerSink} once it is known to be a snapshot's. */
+    public static long read(InputStream in, boolean requireChecksum, java.util.function.Consumer<Op> sink,
+            java.util.function.Consumer<Map<String, Object>> headerSink) throws IOException {
         BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         MessageDigest md = sha256();
         String line = r.readLine();
@@ -118,6 +133,7 @@ public final class Snapshot {
         if (!Long.valueOf(FORMAT_VERSION).equals(header.get("version"))) {
             throw new IOException("unsupported snapshot version " + header.get("version"));
         }
+        headerSink.accept(header);
         md.update((line + "\n").getBytes(StandardCharsets.UTF_8));
         long count = 0;
         long lineNo = 1;
@@ -176,11 +192,16 @@ public final class Snapshot {
     }
 
     public static void writeAtomically(Source source, Path target) throws IOException {
+        writeAtomically(source, target, Map.of());
+    }
+
+    /** As above, with {@code extra} in the header (see {@link #write(Source, OutputStream, Map)}). */
+    public static void writeAtomically(Source source, Path target, Map<String, Object> extra) throws IOException {
         Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
         try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING)) {
             OutputStream out = new java.io.BufferedOutputStream(java.nio.channels.Channels.newOutputStream(ch), 1 << 16);
-            write(source, out);
+            write(source, out, extra);
             out.flush();
             ch.force(true);
         }

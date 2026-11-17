@@ -1392,6 +1392,9 @@ public final class Store {
      * @return the number of tombstones removed
      */
     public int collectTombstones(long cutoffWallMillis) {
+        if (!hasTombstonesBefore(cutoffWallMillis)) {
+            return 0;
+        }
         int n = 0;
         for (DbState d : dbs.values()) {
             for (TableState t : d.tables.values()) {
@@ -1412,6 +1415,18 @@ public final class Store {
             }
         }
         return n;
+    }
+
+    /** True if {@link #collectTombstones} would drop anything at {@code cutoffWallMillis}. O(tables). */
+    public boolean hasTombstonesBefore(long cutoffWallMillis) {
+        for (DbState d : dbs.values()) {
+            for (TableState t : d.tables.values()) {
+                if (!t.dead.isEmpty() && t.dead.first().wall() < cutoffWallMillis) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Estimated heap bytes of all rows and index entries held (see Weight). */

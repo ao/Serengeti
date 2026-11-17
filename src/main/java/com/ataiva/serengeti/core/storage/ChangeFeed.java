@@ -9,12 +9,13 @@ import java.util.Map;
 /**
  * The recent changes to this node's data, in the order this node applied them, for clients that follow a
  * table ({@code GET /v1/changes}). A change is a row whose visible value changed (written here or merged from
- * a peer), or a table or database dropped. The feed is a ring of the last {@code capacity} changes in memory;
- * it starts empty when the node starts.
+ * a peer), or a table or database dropped. The feed is a ring of the last {@code capacity} changes in memory.
  *
- * <p>A cursor is {@code EPOCH:SEQ}: the feed's random epoch, which changes when the node restarts, and the
- * sequence number of the last change the reader has seen. A cursor from another epoch, or older than the
- * oldest change still held, cannot be continued: the reader has to read the table again (see {@link Gone}).
+ * <p>A cursor is {@code EPOCH:SEQ}: the feed's epoch and the sequence number of the last change the reader has
+ * seen. A node's {@link StorageEngine} keeps the epoch in its data directory and rebuilds the feed at start
+ * (see FeedFiles), so a cursor outlives a restart; the epoch changes when the node can no longer give the same
+ * answers, after a restore for example. A cursor from another epoch, or older than the oldest change still
+ * held, cannot be continued: the reader has to read the table again (see {@link Gone}).
  */
 public final class ChangeFeed {
     /** One change. {@code row} is null for a deleted row; {@code kind} is "row", "drop_table" or "drop_db". */
@@ -24,7 +25,7 @@ public final class ChangeFeed {
     /** A page of changes and the cursor to continue from. */
     public record Page(List<Change> changes, String cursor) {}
 
-    /** The cursor cannot be continued: it is from before a restart, or the changes after it are gone. */
+    /** The cursor cannot be continued: it is from another epoch, or the changes after it are gone. */
     public static final class Gone extends Exception {
         private static final long serialVersionUID = 1L;
 
@@ -33,7 +34,7 @@ public final class ChangeFeed {
         }
     }
 
-    private final String epoch;
+    private String epoch;
     private final Change[] ring;
     private final long[] weights;
     /** The most the changes held may weigh (estimated as {@link Weight} does): old ones go first. */
@@ -66,21 +67,64 @@ public final class ChangeFeed {
 
     /** As above; with {@code publishOnAdd} false, changes are seen only once {@link #publish} reaches them. */
     public ChangeFeed(int capacity, long maxBytes, boolean publishOnAdd) {
+        this(capacity, maxBytes, publishOnAdd, randomEpoch(), 1);
+    }
+
+    /**
+     * A feed that goes on from an earlier one: epoch {@code epoch}, the next change numbered {@code next}.
+     * {@link #restore} then puts back the changes it held, before any is added.
+     */
+    ChangeFeed(int capacity, long maxBytes, boolean publishOnAdd, String epoch, long next) {
         if (capacity < 1) {
             throw new IllegalArgumentException("capacity must be at least 1");
         }
-        byte[] b = new byte[6];
-        new SecureRandom().nextBytes(b);
-        this.epoch = HexFormat.of().formatHex(b);
+        if (next < 1) {
+            throw new IllegalArgumentException("the first change is 1");
+        }
+        this.epoch = epoch;
         this.ring = new Change[capacity];
         this.weights = new long[capacity];
         this.maxBytes = maxBytes;
         this.publishOnAdd = publishOnAdd;
+        this.next = next;
+        this.oldest = next;
+        this.published = next - 1;
+    }
+
+    /** Twelve random hex digits. */
+    static String randomEpoch() {
+        byte[] b = new byte[6];
+        new SecureRandom().nextBytes(b);
+        return HexFormat.of().formatHex(b);
     }
 
     synchronized void add(String kind, String db, String table, String id, Map<String, Object> row, Stamp stamp) {
-        long w = 64 + Weight.of(db) + (table == null ? 0 : Weight.of(table)) + (id == null ? 0 : Weight.of(id))
-                + (row == null ? 0 : Weight.ofMap(row));
+        put(new Change(next, kind, db, table, id, row, stamp));
+        if (publishOnAdd) {
+            published = next - 1;
+            notifyAll();
+        }
+    }
+
+    /**
+     * Puts back a change an earlier run held. Changes come oldest first; the first one, into an empty feed, sets
+     * where the feed starts, and each next one must follow it. Published at once: it was on disk before this run.
+     */
+    synchronized void restore(Change c) {
+        if (oldest == next) {
+            next = c.seq();
+            oldest = c.seq();
+        }
+        if (c.seq() != next) {
+            throw new IllegalArgumentException("change " + c.seq() + " does not follow " + (next - 1));
+        }
+        put(c);
+        published = next - 1;
+    }
+
+    private void put(Change c) {
+        long w = 64 + Weight.of(c.db()) + (c.table() == null ? 0 : Weight.of(c.table()))
+                + (c.id() == null ? 0 : Weight.of(c.id())) + (c.row() == null ? 0 : Weight.ofMap(c.row()));
         while (oldest < next && (next - oldest >= ring.length || bytes + w > maxBytes)) {
             int at = (int) (oldest % ring.length);
             bytes -= weights[at];
@@ -89,19 +133,45 @@ public final class ChangeFeed {
             oldest++;
         }
         int at = (int) (next % ring.length);
-        ring[at] = new Change(next, kind, db, table, id, row, stamp);
+        ring[at] = c;
         weights[at] = w;
         bytes += w;
         next++;
-        if (publishOnAdd) {
-            published = next - 1;
-            notifyAll();
-        }
     }
 
     /** The newest change added so far, published or not. */
     public synchronized long last() {
         return next - 1;
+    }
+
+    /** The epoch cursors carry. */
+    public synchronized String epoch() {
+        return epoch;
+    }
+
+    /** The changes held, oldest first, published or not. */
+    synchronized List<Change> heldChanges() {
+        List<Change> out = new ArrayList<>((int) (next - oldest));
+        for (long s = oldest; s < next; s++) {
+            out.add(ring[(int) (s % ring.length)]);
+        }
+        return out;
+    }
+
+    /**
+     * Starts a new epoch: every cursor given out so far gets 410 from now on, and the feed holds only what is
+     * added after this. Numbering goes on, so the new epoch's cursors are not mistaken for old ones either.
+     */
+    synchronized void newEpoch() {
+        for (long s = oldest; s < next; s++) {
+            ring[(int) (s % ring.length)] = null;
+            weights[(int) (s % ring.length)] = 0;
+        }
+        bytes = 0;
+        oldest = next;
+        published = next - 1;
+        epoch = randomEpoch();
+        notifyAll();
     }
 
     /** Makes the changes up to {@code seq} visible to readers, and wakes the ones waiting. */
@@ -111,6 +181,7 @@ public final class ChangeFeed {
             notifyAll();
         }
     }
+
     /** How many changes are held, and their estimated weight in bytes. */
     public synchronized long[] held() {
         return new long[] {next - oldest, bytes};
@@ -128,9 +199,9 @@ public final class ChangeFeed {
      */
     public Page read(String cursor, String db, String table, int limit, long waitMillis)
             throws Gone, InterruptedException {
-        long after = parse(cursor);
         long deadline = System.currentTimeMillis() + Math.max(0, waitMillis);
         synchronized (this) {
+            long after = parse(cursor);
             while (true) {
                 if (after + 1 < oldest) {
                     throw new Gone("the changes after this cursor are no longer held (this node keeps the last "
@@ -165,8 +236,8 @@ public final class ChangeFeed {
             throw new IllegalArgumentException("a cursor looks like EPOCH:NUMBER; get one with after=now");
         }
         if (!cursor.substring(0, colon).equals(epoch)) {
-            throw new Gone("this cursor is from before this node restarted, or from another node; read the table "
-                    + "again and follow from after=now");
+            throw new Gone("this cursor is from another node, or from before this node's feed started again (after"
+                    + " a restore, say); read the table again and follow from after=now");
         }
         try {
             long seq = Long.parseLong(cursor.substring(colon + 1));

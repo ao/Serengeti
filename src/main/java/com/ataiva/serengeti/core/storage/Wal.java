@@ -33,8 +33,24 @@ public final class Wal implements AutoCloseable {
     private final AtomicLong fsyncs = new AtomicLong();
     private final AtomicLong fsyncNanos = new AtomicLong();
 
-    /** Result of reading the log on open. */
-    public record Recovered(List<List<Op>> batches, long validBytes, long discardedBytes, long records) {}
+    /**
+     * Result of reading the log on open. {@code wholeRecordDiscarded} is true when a record that passes its
+     * checksum lies behind the first one that does not: the log lost a record it had whole, not just a write
+     * that never finished (see {@link #wholeRecordFollows}).
+     */
+    public record Recovered(List<List<Op>> batches, long validBytes, long discardedBytes, long records,
+            boolean wholeRecordDiscarded) {
+        public Recovered(List<List<Op>> batches, long validBytes, long discardedBytes, long records) {
+            this(batches, validBytes, discardedBytes, records, false);
+        }
+    }
+
+    /** Takes each record's ops as they are read, with the byte offset where the record starts. */
+    @FunctionalInterface
+    public interface RecordSink {
+        /** A large record arrives in several parts, each with the same {@code start}. */
+        void accept(List<Op> ops, long start);
+    }
 
     /** Counters for {@code GET /metrics}: the log's size, and the forces done on it since the node started. */
     public record Stats(long bytes, long fsyncs, long fsyncNanos) {}
@@ -65,6 +81,11 @@ public final class Wal implements AutoCloseable {
      */
     public static Wal open(Path path, FsyncPolicy policy, long testFsyncDelayMs,
             java.util.function.Consumer<List<Op>> sink) throws IOException {
+        return open(path, policy, testFsyncDelayMs, (RecordSink) (ops, start) -> sink.accept(ops));
+    }
+
+    /** As above, telling the sink where each record starts. */
+    public static Wal open(Path path, FsyncPolicy policy, long testFsyncDelayMs, RecordSink sink) throws IOException {
         FileChannel ch = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ,
                 StandardOpenOption.WRITE);
         Recovered r;
@@ -76,24 +97,29 @@ public final class Wal implements AutoCloseable {
         }
         if (r.discardedBytes() > 0) {
             LOG.warning("write-ahead log " + path + ": discarded " + r.discardedBytes()
-                    + " bytes of incomplete or corrupt tail after " + r.validBytes() + " good bytes");
+                    + " bytes of incomplete or corrupt tail after " + r.validBytes() + " good bytes"
+                    + (r.wholeRecordDiscarded() ? "; a whole record follows the bad one, so the disk lost data it held" : ""));
             ch.truncate(r.validBytes());
             ch.force(true);
         }
         ch.position(r.validBytes());
         Wal w = new Wal(path, ch, policy, testFsyncDelayMs, r.validBytes());
-        w.recordsAtOpen = r.records();
+        w.recovered = r;
         return w;
     }
 
     static Recovered read(FileChannel ch) throws IOException {
         List<List<Op>> batches = new ArrayList<>();
-        Recovered r = read(ch, batches::add);
-        return new Recovered(batches, r.validBytes(), r.discardedBytes(), r.records());
+        Recovered r = read(ch, (RecordSink) (ops, start) -> batches.add(ops));
+        return new Recovered(batches, r.validBytes(), r.discardedBytes(), r.records(), r.wholeRecordDiscarded());
+    }
+
+    static Recovered read(FileChannel ch, java.util.function.Consumer<List<Op>> sink) throws IOException {
+        return read(ch, (RecordSink) (ops, start) -> sink.accept(ops));
     }
 
     /** Reads the log, handing each batch to {@code sink}; the result's batch list is empty. */
-    static Recovered read(FileChannel ch, java.util.function.Consumer<List<Op>> sink) throws IOException {
+    static Recovered read(FileChannel ch, RecordSink sink) throws IOException {
         long total = ch.size();
         long pos = 0;
         long records = 0;
@@ -117,7 +143,8 @@ public final class Wal implements AutoCloseable {
                     break;
                 }
                 try {
-                    streamOps(ch, pos + HEADER, len, sink);
+                    long start = pos;
+                    streamOps(ch, pos + HEADER, len, part -> sink.accept(part, start));
                 } catch (RuntimeException e) {
                     throw new IOException("write-ahead log record at byte " + pos + " has a valid checksum but cannot be"
                             + " read (" + e.getMessage() + "). It may have been written by a newer version of"
@@ -145,11 +172,41 @@ public final class Wal implements AutoCloseable {
                         + " read (" + e.getMessage() + "). It may have been written by a newer version of"
                         + " Serengeti. Nothing was discarded; start that version, or move the data directory aside.", e);
             }
-            sink.accept(batch);
+            sink.accept(batch, pos);
             pos += HEADER + len;
             records++;
         }
-        return new Recovered(List.of(), pos, total - pos, records);
+        return new Recovered(List.of(), pos, total - pos, records, pos < total && wholeRecordFollows(ch, pos, total));
+    }
+
+    /**
+     * True if the record at {@code at}, which failed, has a plausible length and the record after it passes its
+     * checksum. A write that never finished is the last thing in the log, so nothing whole comes after it; a whole
+     * record after a bad one means bytes the log had were lost or changed. A bad length cannot be skipped, so a
+     * record whose header was damaged reads as a torn tail.
+     */
+    static boolean wholeRecordFollows(FileChannel ch, long at, long total) throws IOException {
+        if (at + HEADER > total) {
+            return false;
+        }
+        ByteBuffer h = ByteBuffer.allocate(HEADER);
+        readFully(ch, h, at);
+        h.flip();
+        int len = h.getInt();
+        if (len < 2 || len > MAX_RECORD) {
+            return false;
+        }
+        long next = at + HEADER + len;
+        if (next + HEADER > total) {
+            return false;
+        }
+        h.clear();
+        readFully(ch, h, next);
+        h.flip();
+        int len2 = h.getInt();
+        int crc2 = h.getInt();
+        return len2 >= 2 && len2 <= MAX_RECORD && next + HEADER + len2 <= total
+                && checksumMatches(ch, next + HEADER, len2, crc2);
     }
 
     /** Records larger than this are read in pieces (see {@link #read(FileChannel, java.util.function.Consumer)}). */
@@ -487,11 +544,56 @@ public final class Wal implements AutoCloseable {
     private final Object syncLock = new Object();
     /** Bytes written since the log was opened, across resets; positions handed out by {@link #write}. */
     private long written;
-    /** Records read when the log was opened (a large one reaches the sink in several parts). */
-    private long recordsAtOpen;
+    /** What was read when the log was opened. */
+    private Recovered recovered = new Recovered(List.of(), 0, 0, 0);
 
+    /** Records read when the log was opened (a large one reaches the sink in several parts). */
     public long recordsAtOpen() {
-        return recordsAtOpen;
+        return recovered.records();
+    }
+
+    /** What opening the log found (its batch list is empty). */
+    public Recovered recovered() {
+        return recovered;
+    }
+
+    /** The position {@link #write} returned last: what {@link #flushTo} takes to cover everything written. */
+    public synchronized long position() {
+        return written;
+    }
+
+    /**
+     * Forces the log up to {@code position} whatever the policy, sharing a force with any other caller as
+     * {@link #awaitDurable} does. For the {@link FsyncPolicy#INTERVAL} timer, which then publishes the changes it
+     * covers. Returns false without forcing once the log is closed or has failed.
+     */
+    public boolean flushTo(long position) throws IOException {
+        while (true) {
+            synchronized (syncLock) {
+                if (!ch.isOpen() || failure != null) {
+                    return false;
+                }
+                if (durable >= position) {
+                    return true;
+                }
+                if (forcing) {
+                    try {
+                        syncLock.wait();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
+                    continue;
+                }
+                forcing = true;
+            }
+            forceAsLeader();
+        }
+    }
+
+    /** Closes the file without forcing it: what a crash leaves. For tests. */
+    synchronized void abandonForTest() throws IOException {
+        ch.close();
     }
     private volatile long durable;
     private volatile IOException failure;
@@ -578,8 +680,13 @@ public final class Wal implements AutoCloseable {
 
     @Override
     public synchronized void close() throws IOException {
+        close(policy != FsyncPolicy.OFF);
+    }
+
+    /** Closes the log, forcing what was written since the last force if {@code force} (also with OFF). */
+    public synchronized void close(boolean force) throws IOException {
         if (ch.isOpen()) {
-            if (dirty && policy != FsyncPolicy.OFF) {
+            if (dirty && force) {
                 ch.force(false);
             }
             ch.close();

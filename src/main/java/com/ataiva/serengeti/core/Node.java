@@ -164,7 +164,8 @@ public final class Node implements AutoCloseable {
         if (config.advertise != null) {
             LOG.warning("advertise is set but no version uses it; it is ignored");
         }
-        this.storage = StorageEngine.open(dir, config.fsync, 64L * 1024 * 1024, config.testFsyncDelayMs);
+        this.storage = StorageEngine.open(dir, config.fsync, 64L * 1024 * 1024, config.testFsyncDelayMs,
+                config.changesBuffer);
         // Backups left behind by a node that stopped while sending one. The data directory is locked now.
         try (java.nio.file.DirectoryStream<Path> old = Files.newDirectoryStream(dir, BACKUP_PREFIX + "*.tmp")) {
             for (Path p : old) {
@@ -186,14 +187,12 @@ public final class Node implements AutoCloseable {
         }
         StorageEngine.OpenStats st = storage.openStats();
         LOG.info("storage opened: " + st.snapshotOps() + " snapshot ops, " + st.walBatches() + " log batches"
-                + (st.walDiscardedBytes() > 0 ? ", " + st.walDiscardedBytes() + " torn bytes discarded" : ""));
+                + (st.walDiscardedBytes() > 0 ? ", " + st.walDiscardedBytes() + " torn bytes discarded" : "")
+                + (st.changes() != null ? "; change feed: " + st.changes() : ""));
         this.clock = new Hlc(id);
         clock.observe(storage.read(s -> s.maxStamp()));
         this.memory = config.memoryLimitPercent < 100 ? MemoryGuard.ofHeap(config.memoryLimitPercent) : null;
         storage.setAdmission(memory);
-        if (config.changesBuffer > 0) {
-            storage.enableChanges(config.changesBuffer);
-        }
         this.users = Users.open(dir);
         users.setStamps(clock::now);
         AtomicReference<SetupToken> token = new AtomicReference<>();
