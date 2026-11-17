@@ -100,7 +100,7 @@ class QueryProperties {
                 "DELETE", "CREATE", "DROP", "DATABASE", "TABLE", "IF", "EXISTS", "SHOW", "TABLES", "IN",
                 "ORDER", "BY", "DESC", "LIMIT", "COUNT", "--", "\n", " ", ".", "!", "x".repeat(70), "é",
                 "LIKE", "GROUP", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\'", "'\\%_'", "%", "_", "\\", "IN (1, 2)",
-                "DISTINCT", "HAVING", "COUNT(*)", "COUNT(DISTINCT a)", "ASC");
+                "DISTINCT", "HAVING", "COUNT(*)", "COUNT(DISTINCT a)", "ASC", "+", "-", "a + 1", "a - -1", "a-1");
     }
 
     @Provide
@@ -288,9 +288,25 @@ class QueryProperties {
                 });
     }
 
+    /** The numbers of {@code column + number}: any long or finite double, and the edges. */
+    private static Arbitrary<Object> numbers() {
+        return Arbitraries.oneOf(Arbitraries.longs().map(Object.class::cast),
+                Arbitraries.longs().between(-3, 3).map(Object.class::cast),
+                Arbitraries.of(Long.MAX_VALUE, Long.MIN_VALUE, (1L << 53) + 1, 0.0, -0.0, 0x1p63, 4.9e-324, 1e300)
+                        .map(Object.class::cast),
+                Arbitraries.longs().map(Double::longBitsToDouble).filter(Double::isFinite).map(Object.class::cast));
+    }
+
+    /** The right side of a SET: a literal, or a column plus or minus a number. */
+    private static Arbitrary<Object> setValues() {
+        Arbitrary<Object> arithmetic = Combinators.combine(names().filter(n -> !n.equals(Executor.ID)),
+                Arbitraries.of(true, false), numbers()).as(Statement.Arithmetic::new).map(Object.class::cast);
+        return Arbitraries.oneOf(literals(), arithmetic);
+    }
+
     private static Arbitrary<Statement> updates() {
         Arbitrary<List<Statement.Assignment>> sets = names().list().uniqueElements().ofMinSize(1).ofMaxSize(3)
-                .flatMap(cols -> literals().list().ofSize(cols.size()).map(vals -> {
+                .flatMap(cols -> setValues().list().ofSize(cols.size()).map(vals -> {
                     List<Statement.Assignment> out = new ArrayList<>();
                     for (int i = 0; i < cols.size(); i++) {
                         out.add(new Statement.Assignment(cols.get(i), vals.get(i)));

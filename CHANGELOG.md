@@ -123,6 +123,15 @@ GitHub release notes and tags.
   and `SELECT DISTINCT distinct FROM t` its distinct values. See docs/QUERY.md, "SELECT DISTINCT" and
   "HAVING".
 - docs/QUERY.md, "Reading a large table": keyset paging with `WHERE _id > 'last' ORDER BY _id LIMIT n`.
+- `UPDATE ... SET c = column + number` and `- number`, such as `SET stock = stock - 1 WHERE _id = 'a' AND
+  stock > 0`. The value is computed from the row under the node's write lock, so concurrent increments on
+  one node lose nothing. Two integers give an exact integer, and a result outside 64 bits fails the
+  statement; with a double on either side the result is the double nearest the exact value; a missing or
+  null column gives null; a string, boolean, object or array fails the statement with 400, naming the row
+  and column, and nothing is written. The result is written as a normal row write, so increments made on
+  two nodes before either received the other's are a conflict (SHOW CONFLICTS), which the next write
+  resolves. Only a column plus or minus a number: no other operators, parentheses or functions. 2.1 nodes
+  answer this form with a parse error. See docs/QUERY.md, "UPDATE from the row".
 - Indexes on 2 to 4 columns: `CREATE INDEX ON db.t (a, b)`, `DROP INDEX ON db.t (a, b)`, and `a, b` in
   `SHOW INDEXES`. The index keeps the rows in the ORDER BY order of a, then b. A WHERE whose top-level AND
   has `=`, IN or a LIKE without wildcards on its first columns, and then any of `<`, `<=`, `>`, `>=` and a

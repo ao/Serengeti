@@ -35,7 +35,8 @@ item        = name | aggregate ;
 key         = item [ "ASC" | "DESC" ] ;
 aggregate   = "COUNT" "(" ( "*" | [ "DISTINCT" ] name ) ")"
             | ( "SUM" | "MIN" | "MAX" | "AVG" ) "(" name ")" ;
-update      = "UPDATE" table "SET" name "=" value { "," name "=" value } [ "WHERE" expr ] ;
+update      = "UPDATE" table "SET" assignment { "," assignment } [ "WHERE" expr ] ;
+assignment  = name "=" ( value | name ( "+" | "-" ) number ) ;
 delete      = "DELETE" "FROM" table [ "WHERE" expr ] ;
 
 expr        = and { "OR" and } ;
@@ -75,7 +76,10 @@ binds tighter than `OR`.
 Further parse rules:
 
 - An INSERT lists each column once, and each tuple has one value per column.
-- An UPDATE sets each column once.
+- An UPDATE sets each column once. On the right of its `=` is a value, or a column (not `_id`) plus or
+  minus a number; nothing else, no `*` or `/`, parentheses, two columns or functions (see "UPDATE from
+  the row"). A minus glued to the number is the operator there: `n -1` and `n-1` are `n - 1`. `n--1` is
+  `n` and a comment, so it is an error.
 - CREATE INDEX and DROP INDEX list 1 to 4 columns, each once.
 - An IN list has 1 to 1,000 values.
 - In a LIKE pattern, `\` comes only before `%`, `_` or `\`.
@@ -379,10 +383,61 @@ Each page sees the table as it is when it runs. A row inserted between pages is 
 comes after the last one already read, and missed otherwise; a row deleted before its page runs is not
 returned.
 
+## UPDATE from the row
+
+`SET c = column + number` and `SET c = column - number` compute the new value from the row:
+
+```
+UPDATE shop.items SET stock = stock - 1 WHERE _id = 'tea' AND stock > 0;
+UPDATE shop.items SET total = price + 5, views = views + 1;
+```
+
+The first takes one from the stock while there is any: it affects 1 row, or 0 once the stock is 0, so its
+answer says whether the item was taken.
+
+- The column on the right is any column of the row except `_id`, and need not be the one set. Every right
+  side reads the row as it was before the statement, as in SQL: `SET a = a + 1, b = a + 1` sets both to the
+  old a plus one. A WHERE that reads the column set changes each row once: `SET a = a + 1 WHERE a > 0`
+  adds one to every row where a was above 0.
+- Two integers give an integer, exactly. A result outside the 64-bit range fails the statement
+  (`the result overflows a 64-bit integer`); it does not wrap round and does not become a double.
+- With a double on either side, the result is a double: the one nearest the exact result. An integer
+  beyond 2^53 is not made a double first, which would round twice: 9007199254740993 + 0.5 is
+  9007199254740994.0, not 9007199254740992.0. A result beyond the range of a double fails the statement
+  (`the result overflows a double`). A zero has the sign double arithmetic gives it: -0.0 - 0.0 is -0.0,
+  and -0.0 + 0 is 0.0.
+- A missing or null column gives null, as in SQL, and the null is written: `SET n = n + 1` on a row
+  without n stores n as null. Comparisons with null are never true, so `WHERE n > 0` or `WHERE n IS NOT
+  NULL` leaves such rows out.
+- A string, boolean, object or array in the column fails the statement (400 over HTTP), with a message
+  that names the row and the column: `cannot set stock = stock - 1 in the row with _id 'tea': stock is a
+  string`.
+- A statement changes every row it matches or none. When one row cannot be computed, nothing is written,
+  and the message names the first such row in `_id` order.
+- The number keeps its sign: `n + -1`, `n - -1`. A number with a fraction or exponent, or one beyond the
+  64-bit range, is a double (see Values): `n + 1.0` is a double, and so is `n - 9223372036854775808`.
+
+On one node, the value is computed from the row as the node holds it when the statement runs, under the
+write lock (see "Writes and time"), so concurrent statements on one node never lose an increment: a unit
+test runs 16 threads that each send `SET n = n + 1` 500 times to one row, and n ends at 8,000.
+
+The result is written as a normal write of the whole row, so it replicates, and conflicts, as any write
+does. Two nodes that each change the row before either has received the other's write make a conflict
+(CONSISTENCY.md, "Conflicts"): SHOW CONFLICTS lists both versions, the row's value is the one with the
+higher version, which holds that node's increments and not the other's, and the next write to the row
+resolves the conflict, computing from that value. Nothing adds the two up. To count exactly in a cluster,
+send a row's increments to one node, or check SHOW CONFLICTS and write the right total. A statement sent
+again after a 503 or a lost answer is applied again if the first one was written (CONSISTENCY.md,
+"Writes"); `SET n = n + 1 WHERE _id = 'a' AND n = 41` changes nothing the second time.
+
+2.1 nodes answer this form with a parse error. During a rolling upgrade, send it to 2.2 nodes; what they
+write is a normal row write, which 2.1 nodes take.
+
 ## Writes and time
 
 Each write statement is checked and applied in one step under the storage engine's write lock, so
-for example two concurrent inserts of the same `_id` cannot both succeed on one node. All ops of
+for example two concurrent inserts of the same `_id` cannot both succeed on one node, and `SET n = n + 1`
+reads the row and writes it in that one step. All ops of
 one statement carry the same hybrid logical clock stamp. Before stamping, the executor moves its
 clock past the newest stamp in the store, so writes after a restart or after receiving newer data
 are not lost to an older stamp.
@@ -402,6 +457,7 @@ SELECT DISTINCT price FROM shop.items ORDER BY price DESC;
 SELECT price, COUNT(DISTINCT name) FROM shop.items GROUP BY price HAVING COUNT(*) > 1;
 SELECT name, price FROM shop.items ORDER BY price DESC, name LIMIT 10;
 UPDATE shop.items SET price = 4, note = 'It''s back' WHERE _id = 'tea';
+UPDATE shop.items SET price = price + 0.5 WHERE price < 3;
 DELETE FROM shop.items WHERE NOT (price < 3 OR price IS NULL);
 SHOW TABLES IN shop;
 DROP TABLE IF EXISTS shop.items;

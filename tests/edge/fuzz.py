@@ -20,7 +20,7 @@ from common import Client, check, expect, ok, once, section, short, utf16_len
 KEYWORDS = ["AND", "ASC", "BY", "COUNT", "CREATE", "DATABASE", "DATABASES", "DELETE", "DESC", "DROP", "EXISTS", "FALSE",
             "FROM", "IF", "IN", "INSERT", "INTO", "IS", "LIMIT", "NOT", "NULL", "OR", "ORDER", "SELECT", "SET", "SHOW",
             "TABLE", "TABLES", "TRUE", "UPDATE", "VALUES", "WHERE"]
-SYMBOLS = ["(", ")", ",", ".", ";", "*", "=", "!=", "<>", "<", "<=", ">", ">="]
+SYMBOLS = ["(", ")", ",", ".", ";", "*", "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-"]
 CMP = ["=", "!=", "<>", "<", "<=", ">", ">="]
 COLS = ["a", "b", "v", "_id", "on", "index", "conflicts", "x" * 63, "distinct", "having"]
 # Columns named like the words that are keywords only where the grammar puts them stay lowercase, so that the
@@ -33,17 +33,20 @@ VALUES = ["NULL", "TRUE", "FALSE", "0", "-0", "1", "-1", "2", "1.0", "-0.0", "0.
           "9223372036854775807", "-9223372036854775808", "9223372036854775808", "9007199254740993", "''", "'a'",
           "'A'", "'1'", "'b'", "'It''s'", "'--'", "'; DROP DATABASE f'", "'" + chr(0xE9) + "'",
           "'" + chr(0x1F600) + "'", "'" + "z" * 200 + "'", "'\\'", "'x y'", "'" + chr(0) + "'"]
+# The numbers of VALUES, and the columns, for SET c = column + number (any column but _id).
+NUMBERS = [v for v in VALUES if v[0] in "-0123456789"]
+SOURCES = [c for c in COLS if c != "_id"]
 # Single tokens (or near-tokens) that replace one token of a valid statement.
 JUNK = KEYWORDS + SYMBOLS + VALUES + [
     "a", "f", "t", "_", "_id", "INDEX", "INDEXES", "ON", "CONFLICTS", "y" * 64, "9abc", "1.", ".5", "1e", "1e309",
-    "-", "!", "@", "#", "`", "\"a\"", "'unterminated", "''''", "--", "/*", "*/", "\\", "$1", "?", "%", "&", "|",
+    "-", "+", "!", "@", "#", "`", "\"a\"", "'unterminated", "''''", "--", "/*", "*/", "\\", "$1", "?", "%", "&", "|",
     "[", "]", "{", "}", ":", "::", "==", "=<", "<<", "!==", chr(0), chr(0xA0), chr(0x1F600), chr(0xFF0A),
     chr(0x2028), "\t", "\x0b", "N'x'", "X'00'", "0x10", "1_0", "NaN", "Infinity", "LIKE", "JOIN", "GROUP", "ALL",
     "(" * 70, "NOT " * 70, "SELECT * FROM f.t", "IN", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\b'", "'\\'", "BY",
     "HAVING", "DISTINCT", "OFFSET", "ILIKE", "ESCAPE"]
 SEMANTIC = ("does not exist", "already exists", "already has an index", "has no index", "_id must be",
             "_id cannot be changed", "_id needs no index", "_id cannot be a column of an index", "over the maximum",
-            "nested more than", "overflows a",
+            "nested more than", "overflows a", "cannot set",
             "would make more than", "would hold more than")
 AGGREGATES = ["COUNT", "SUM", "MIN", "MAX", "AVG"]
 # Pieces of LIKE patterns: wildcards, the three escapes, and characters the stored values hold.
@@ -244,7 +247,10 @@ class Gen:
             return toks, "insert"
         if k < 0.60:
             cols = r.sample(["a", "b", "v", "on", "index"], r.randint(1, 3))
-            sets = sum(([c, "=", self.value(), ","] for c in cols), [])[:-1]
+            # A literal, or a column plus or minus a number (which a string or boolean in the row refuses).
+            sets = sum(([c, "=", self.value(), ","] if r.random() < 0.6 else
+                        [c, "=", self.case(r.choice(SOURCES)), r.choice(["+", "-"]), r.choice(NUMBERS), ","]
+                        for c in cols), [])[:-1]
             return ["UPDATE"] + self.table() + ["SET"] + sets + self.where(), "update"
         if k < 0.70:
             return ["DELETE", "FROM"] + self.table() + (self.where() or ["WHERE", "v", "=", self.value()]), "delete"
@@ -295,7 +301,8 @@ class Gen:
                     out.append(self.r.choice(["\t", "\n", "\r\n", "  ", "\f"]))
                 elif k < 0.93:
                     out.append(" -- comment " + self.r.choice(["", "'", "--", "SELECT"]) + "\n")
-                elif t in SYMBOLS or toks[i - 1] in SYMBOLS:
+                elif (t in SYMBOLS or toks[i - 1] in SYMBOLS) and not (toks[i - 1] == "-" and t.startswith("-")):
+                    # Not "-" and "-1" as "--1", which starts a comment.
                     out.append("")
                 else:
                     out.append(" ")

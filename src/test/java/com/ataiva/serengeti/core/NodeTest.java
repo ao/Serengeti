@@ -335,6 +335,42 @@ class NodeTest {
     }
 
     @Test
+    void aComputedUpdateOverHttpAnswersExactNumbersAndA400ForARowItCannotCompute() throws Exception {
+        Path data = tmp.resolve("data");
+        Config c = config(data, "SERENGETI_ADMIN_PASSWORD", PW);
+        String select = "SELECT n, big, z, d FROM shop.items WHERE _id = 'a'";
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+            assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, n, big, z, d, s) VALUES "
+                    + "('a', 1, 9007199254740992, -0.0, 0.25, 'x'), ('b', 9223372036854775807, 0, 0, 0, 0)").statusCode());
+            HttpResponse<String> r = query(n,
+                    "UPDATE shop.items SET n = n + 1, big = big + 1, z = z - 0.0, d = d - 1 WHERE _id = 'a' AND n > 0");
+            assertEquals(200, r.statusCode(), r.body());
+            assertEquals(1L, com.ataiva.serengeti.core.json.Json.parseObject(r.body()).get("affected"));
+            r = query(n, select);
+            assertTrue(r.body().contains("\"rows\":[[2,9007199254740993,-0.0,-0.75]]"), r.body());
+            r = query(n, "UPDATE shop.items SET s = s + 1");
+            assertEquals(400, r.statusCode(), r.body());
+            assertEquals("cannot set s = s + 1 in the row with _id 'a': s is a string",
+                    com.ataiva.serengeti.core.json.Json.parseObject(r.body()).get("error"));
+            r = query(n, "UPDATE shop.items SET n = n + 1");
+            assertEquals(400, r.statusCode(), r.body());
+            assertEquals("cannot set n = n + 1 in the row with _id 'b': the result overflows a 64-bit integer",
+                    com.ataiva.serengeti.core.json.Json.parseObject(r.body()).get("error"));
+            r = query(n, "UPDATE shop.items SET n = _id + 1");
+            assertEquals(400, r.statusCode(), r.body());
+            assertTrue(r.body().contains("_id is a string: it cannot be added to at position 26"), r.body());
+            assertTrue(query(n, select).body().contains("\"rows\":[[2,9007199254740993,-0.0,-0.75]]"),
+                    "the failed statements wrote nothing");
+        }
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            HttpResponse<String> r = query(n, select);
+            assertTrue(r.body().contains("\"rows\":[[2,9007199254740993,-0.0,-0.75]]"), r.body());
+        }
+    }
+
+    @Test
     void scheduledBackupsRestoreIntoANodeWithTheRows() throws Exception {
         Path data = tmp.resolve("data");
         Path backups = tmp.resolve("backups");

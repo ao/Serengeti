@@ -170,6 +170,89 @@ class ParserTest {
         roundTrips("UPDATE d.t SET a = 'q', b = FALSE");
     }
 
+    private static Statement.Assignment set(String column, String from, boolean minus, Object number) {
+        return new Statement.Assignment(column, new Statement.Arithmetic(from, minus, number));
+    }
+
+    /** The one assignment of {@code UPDATE d.t SET <text>}. */
+    private static Statement.Assignment setOf(String text) {
+        return ((Statement.Update) parse("UPDATE d.t SET " + text)).assignments().get(0);
+    }
+
+    @Test
+    void updateSetsAColumnPlusOrMinusANumber() {
+        assertEquals(new Statement.Update("d", "t", List.of(set("stock", "stock", true, 1L)),
+                new Expr.And(List.of(new Expr.Compare("_id", Cmp.EQ, "a"), new Expr.Compare("stock", Cmp.GT, 0L)))),
+                parse("UPDATE d.t SET stock = stock - 1 WHERE _id = 'a' AND stock > 0"));
+        assertEquals(new Statement.Update("d", "t", List.of(set("total", "price", false, 5L),
+                new Statement.Assignment("note", "x"), set("n", "n", false, 0.5)), null),
+                parse("UPDATE d.t SET total = price + 5, note = 'x', n = n + 0.5"));
+        // A number keeps its sign; a minus glued to the number is the operator, as in SQL.
+        assertEquals(set("n", "n", false, -1L), setOf("n = n + -1"));
+        assertEquals(set("n", "n", true, -1L), setOf("n = n - -1"));
+        assertEquals(set("n", "n", true, 1L), setOf("n = n -1"));
+        assertEquals(set("n", "n", true, 1L), setOf("n = n-1"));
+        assertEquals(set("n", "m", true, 2.5), setOf("n=m-2.5"));
+        assertEquals(set("n", "n", true, 0L), setOf("n = n -0"));
+        assertEquals(set("n", "n", true, 0.0), setOf("n = n -0.0"), "the sign goes with the operator");
+        assertEquals(set("n", "n", false, -0.0), setOf("n = n + -0.0"));
+        assertEquals(set("n", "n", false, Long.MIN_VALUE), setOf("n = n + -9223372036854775808"));
+        // As n - 9223372036854775808, whose number does not fit in a long, so it is a double.
+        assertEquals(set("n", "n", true, 0x1p63), setOf("n = n -9223372036854775808"));
+        assertEquals(set("n", "n", true, 0x1p63), setOf("n = n - 9223372036854775808"));
+        assertEquals(set("n", "n", false, 1e300), setOf("n = n + 1E300"));
+        // Column names that are words elsewhere, and a comment after the operator.
+        assertEquals(set("sum", "distinct", false, 1L), setOf("sum = distinct + -- one\n1"));
+        assertEquals(set("a", "a", false, 1L), setOf("A = A + 1"));
+        for (String s : List.of("UPDATE d.t SET stock = stock - 1 WHERE _id = 'a' AND stock > 0",
+                "UPDATE d.t SET a = a + -1, b = b - -2.5E-7, c = 'x', d = d - 0, e = e + -0.0, f = f - 1.0E300",
+                "UPDATE d.t SET n = n + 9223372036854775807, m = m - -9223372036854775808",
+                "UPDATE d.t SET n = n -1", "UPDATE d.t SET n = n - 9223372036854775808",
+                "UPDATE d.t SET like = like + 1 WHERE like > 2")) {
+            roundTrips(s);
+        }
+        assertEquals("UPDATE d.t SET n = n - -1, m = m + 1, k = k - 1",
+                Printer.print(parse("UPDATE d.t SET n = n - -1, m = m+1, k = k-1")));
+    }
+
+    @Test
+    void updateArithmeticTakesOnlyAColumnPlusOrMinusANumber() {
+        assertEquals("_id is a string: it cannot be added to", failsAt("UPDATE d.t SET a = _id + 1", "_id"));
+        assertEquals("expected '+' or '-' and a number (SET takes a value, or a column plus or minus a number) but"
+                + " found end of input", failsAtEnd("UPDATE d.t SET a = b"));
+        assertTrue(failsAt("UPDATE d.t SET a = b WHERE c = 1", "WHERE").startsWith("expected '+' or '-'"));
+        assertTrue(failsAt("UPDATE d.t SET a = b, c = 1", ",").startsWith("expected '+' or '-'"));
+        assertTrue(failsAt("UPDATE d.t SET a = b * 2", "*").startsWith("expected '+' or '-'"));
+        for (String s : List.of("a = b / 2", "a = b % 2", "a = b || 'x'", "a = b ^ 2")) {
+            assertTrue(fails("UPDATE d.t SET " + s).getMessage().startsWith("unexpected character"), s);
+        }
+        assertEquals("expected a number but found name 'c'", failsAt("UPDATE d.t SET a = b + c", "c"));
+        assertEquals("expected a number but found string 'x'", failsAt("UPDATE d.t SET a = b + 'x'", "'x'"));
+        assertEquals("expected a number but found NULL", failsAt("UPDATE d.t SET a = b + NULL", "NULL"));
+        assertEquals("expected a number but found TRUE", failsAt("UPDATE d.t SET a = b - TRUE", "TRUE"));
+        assertEquals("expected a number but found '('", failsAt("UPDATE d.t SET a = b + (1)", "("));
+        assertEquals("expected a number but found '+'", failsAt("UPDATE d.t SET a = b + +1", "+1"));
+        assertEquals("expected a number but found end of input", failsAtEnd("UPDATE d.t SET a = b -"));
+        assertEquals("expected end of input but found '+'", failsAt("UPDATE d.t SET a = b + 1 + 2", "+ 2"));
+        assertEquals("expected end of input but found number -2", failsAt("UPDATE d.t SET a = b + 1 -2", "-2"));
+        // The number comes after the column, and only in SET.
+        assertTrue(failsAt("UPDATE d.t SET a = 1 + b", "+").startsWith("expected end of input but found '+'"));
+        assertTrue(failsAt("UPDATE d.t SET a = +1", "+").startsWith("expected a value"));
+        assertTrue(failsAt("UPDATE d.t SET a = -b", "-").startsWith("expected a value"));
+        assertTrue(failsAt("UPDATE d.t SET a = count + 1", "count").startsWith("expected a value"));
+        assertTrue(failsAt("UPDATE d.t SET a = (b + 1)", "(").startsWith("expected a value"));
+        assertTrue(failsAt("SELECT * FROM d.t WHERE a = b + 1", "b").startsWith("expected a value"));
+        assertTrue(failsAt("SELECT * FROM d.t WHERE a + 1 = 2", "+").startsWith("expected a comparison"));
+        assertTrue(failsAt("INSERT INTO d.t (a) VALUES (a + 1)", "a + 1").startsWith("expected a value"));
+        assertEquals("number out of range '1e999'", failsAt("UPDATE d.t SET a = a + 1e999", "1e999"));
+        // "--" starts a comment, so a = a--1 is a = a and an error, as in SQL.
+        assertTrue(failsAtEnd("UPDATE d.t SET a = a--1").startsWith("expected '+' or '-'"));
+        assertThrows(IllegalArgumentException.class, () -> new Statement.Arithmetic("_id", false, 1L));
+        assertThrows(IllegalArgumentException.class, () -> new Statement.Arithmetic("a", false, Double.NaN));
+        assertThrows(IllegalArgumentException.class, () -> new Statement.Arithmetic("a", false, "1"));
+        assertThrows(IllegalArgumentException.class, () -> new Statement.Arithmetic("a", false, null));
+    }
+
     @Test
     void delete() {
         assertEquals(new Statement.Delete("d", "t", null), parse("DELETE FROM d.t"));
@@ -372,6 +455,13 @@ class ParserTest {
     private static String failsAt(String text, String at) {
         ParseException e = fails(text);
         assertEquals(text.indexOf(at), e.position(), e.getMessage());
+        return e.getMessage().replaceFirst(" at position \\d+$", "");
+    }
+
+    /** As {@link #failsAt}, for a failure at the end of the text. */
+    private static String failsAtEnd(String text) {
+        ParseException e = fails(text);
+        assertEquals(text.length(), e.position(), e.getMessage());
         return e.getMessage().replaceFirst(" at position \\d+$", "");
     }
 

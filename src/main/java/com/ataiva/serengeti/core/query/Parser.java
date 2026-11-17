@@ -466,10 +466,42 @@ public final class Parser {
                 throw new ParseException("column '" + c + "' is set twice", at);
             }
             expectSymbol("=");
-            sets.add(new Statement.Assignment(c, value()));
+            sets.add(new Statement.Assignment(c, tok.kind() == Token.Kind.NAME ? arithmetic() : value()));
         } while (acceptSymbol(","));
         Expr where = acceptKeyword("where") ? expr() : null;
         return new Statement.Update(q[0], q[1], sets, where);
+    }
+
+    /**
+     * {@code name ("+" | "-") number} on the right of a SET. A minus glued to the number ({@code n -1},
+     * {@code n-1}) is read as the operator, so those are {@code n - 1}, as in SQL.
+     */
+    private Statement.Arithmetic arithmetic() {
+        int at = tok.start();
+        String column = name();
+        if (column.equals(Executor.ID)) {
+            throw new ParseException("_id is a string: it cannot be added to", at);
+        }
+        boolean minus;
+        if (acceptSymbol("+")) {
+            minus = false;
+        } else if (acceptSymbol("-")) {
+            minus = true;
+        } else if (tok.kind() == Token.Kind.NUMBER && tok.text().startsWith("-")) {
+            Object n = tok.value();
+            advance();
+            // The number without its sign, as the lexer reads it: 9223372036854775808 is a double.
+            return new Statement.Arithmetic(column, true, n instanceof Long l
+                    ? (l == Long.MIN_VALUE ? (Object) 0x1p63 : (Object) (-l)) : (Object) (-(Double) n));
+        } else {
+            throw expected("'+' or '-' and a number (SET takes a value, or a column plus or minus a number)");
+        }
+        if (tok.kind() != Token.Kind.NUMBER) {
+            throw expected("a number");
+        }
+        Object n = tok.value();
+        advance();
+        return new Statement.Arithmetic(column, minus, n);
     }
 
     private Statement delete() {

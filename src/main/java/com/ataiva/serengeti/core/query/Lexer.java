@@ -173,7 +173,8 @@ final class Lexer {
     private Token symbol(int start, char c) {
         char n = charAt(start + 1);
         String text = switch (c) {
-            case '(', ')', ',', '.', ';', '*', '=' -> String.valueOf(c);
+            // A '-' before a digit starts a number, and "--" a comment; only the rest of them get here.
+            case '(', ')', ',', '.', ';', '*', '=', '+', '-' -> String.valueOf(c);
             case '<' -> n == '=' ? "<=" : n == '>' ? "<>" : "<";
             case '>' -> n == '=' ? ">=" : ">";
             case '!' -> {

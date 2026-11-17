@@ -447,14 +447,34 @@ public sealed interface Statement {
         }
     }
 
+    /** {@code column = value}: {@code value} is a literal, or an {@link Arithmetic} computed from the row. */
     record Assignment(String column, Object value) {
         public Assignment {
             Objects.requireNonNull(column, "column");
-            Values.requireLiteral(value);
+            if (!(value instanceof Arithmetic)) {
+                Values.requireLiteral(value);
+            }
         }
     }
 
-    /** {@code where} may be null. */
+    /**
+     * {@code column + number} or, with {@code minus}, {@code column - number}: the right side of an assignment
+     * that reads a column of the row. {@code column} is not {@code _id}; {@code number} is a {@link Long} or a
+     * finite {@link Double}.
+     */
+    record Arithmetic(String column, boolean minus, Object number) {
+        public Arithmetic {
+            Objects.requireNonNull(column, "column");
+            if (column.equals(Executor.ID)) {
+                throw new IllegalArgumentException("_id is a string: it cannot be added to");
+            }
+            if (!(number instanceof Long) && !(number instanceof Double d && Double.isFinite(d))) {
+                throw new IllegalArgumentException("not a number: " + number);
+            }
+        }
+    }
+
+    /** {@code where} may be null. Every right side reads the row as it was before the statement. */
     record Update(String db, String table, List<Assignment> assignments, Expr where) implements Statement {
         public Update {
             Objects.requireNonNull(db, "db");

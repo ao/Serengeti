@@ -115,6 +115,80 @@ final class Values {
         return ScalarOrder.sortOrder(a, b);
     }
 
+    /** True for the integers of a row ({@link Long}; and the smaller boxes, which rows built in Java may hold). */
+    static boolean isInteger(Object v) {
+        return v instanceof Long || v instanceof Integer || v instanceof Short || v instanceof Byte;
+    }
+
+    static boolean isNumber(Object v) {
+        return isInteger(v) || v instanceof Double || v instanceof Float;
+    }
+
+    /** What a value that is not a number is, for a message: "a string", "an array". */
+    static String kind(Object v) {
+        if (v instanceof String) {
+            return "a string";
+        }
+        if (v instanceof Boolean) {
+            return "a boolean";
+        }
+        if (v instanceof java.util.Map<?, ?>) {
+            return "an object";
+        }
+        if (v instanceof java.util.Collection<?>) {
+            return "an array";
+        }
+        return "not a number";
+    }
+
+    /** Integers of at most this size convert to a double exactly. */
+    private static final long EXACT_IN_DOUBLE = 1L << 53;
+
+    /**
+     * {@code a + b}, or {@code a - b} with {@code minus}, for two numbers ({@link #isNumber}). Two integers give
+     * a {@link Long}, exactly. With a double on either side the result is the double nearest the exact result:
+     * one rounding, also for an integer beyond 2^53, which a conversion to double would round first; a zero
+     * result has the sign double arithmetic gives it.
+     *
+     * @throws ArithmeticException {@code overflows a 64-bit integer} or {@code overflows a double}
+     */
+    static Object add(Object a, boolean minus, Object b) {
+        if (isInteger(a) && isInteger(b)) {
+            long x = ((Number) a).longValue();
+            long y = ((Number) b).longValue();
+            try {
+                return minus ? Math.subtractExact(x, y) : Math.addExact(x, y);
+            } catch (ArithmeticException overflow) {
+                throw new ArithmeticException("overflows a 64-bit integer");
+            }
+        }
+        double x = ((Number) a).doubleValue();
+        double y = ((Number) b).doubleValue();
+        double r = minus ? x - y : x + y;
+        if ((isInteger(a) && !exactInDouble(a)) || (isInteger(b) && !exactInDouble(b))) {
+            java.math.BigDecimal e = exact(a);
+            e = minus ? e.subtract(exact(b)) : e.add(exact(b));
+            // A zero is exact either way, and double arithmetic gives it its sign.
+            if (e.signum() != 0) {
+                r = e.doubleValue();
+            }
+        }
+        if (!Double.isFinite(r)) {
+            throw new ArithmeticException("overflows a double");
+        }
+        return r;
+    }
+
+    private static boolean exactInDouble(Object integer) {
+        long v = ((Number) integer).longValue();
+        return v >= -EXACT_IN_DOUBLE && v <= EXACT_IN_DOUBLE;
+    }
+
+    private static java.math.BigDecimal exact(Object n) {
+        return isInteger(n) ? java.math.BigDecimal.valueOf(((Number) n).longValue())
+                : new java.math.BigDecimal(((Number) n).doubleValue());
+    }
+
     /** The literal as query text. */
     static String format(Object v) {
         if (v == null) {

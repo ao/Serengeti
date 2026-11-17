@@ -41,6 +41,7 @@ def run(host):
     words(c)
     strings_and_ids(c)
     numbers(c)
+    arithmetic(c)
     statements(c)
     limits(c)
     ordering(c)
@@ -281,6 +282,69 @@ def numbers(c):
     expect("v = 0 finds 0, 0.0 and -0.0", 3, c.count("q.n", "v = 0 AND (v < 1e-300 AND v > -1e-300)"))
     expect("the largest long equals itself only, not the double 2^63", 1, c.count("q.n", "v = 9223372036854775807"))
     expect("and the double 2^63 is above it", 3, c.count("q.n", "v > 9223372036854775807"))
+
+
+def arithmetic(c):
+    section("UPDATE ... SET c = column + number")
+    c.ok("CREATE TABLE IF NOT EXISTS q.ar")
+    c.ok("DELETE FROM q.ar")
+    c.ok("INSERT INTO q.ar (_id, n, d, big, z, s, b, top, bottom, huge) VALUES "
+         "('a', 1, 0.5, 9007199254740992, -0.0, 'x', TRUE, 9223372036854775807, -9223372036854775808, 1e308)")
+    for label, rhs, want in [("an integer plus an integer is an integer", "n + 1", 2),
+                             ("minus a negative number", "n - -3", 4),
+                             ("a minus glued to the number is the operator", "n-1", 0),
+                             ("an integer plus a double is a double", "n + 0.5", 1.5),
+                             ("a whole double is still a double", "n + 1.0", 2.0),
+                             ("a double minus an integer", "d - 1", -0.5),
+                             ("2^53 + 1 stays exact as an integer", "big + 1", 9007199254740993),
+                             ("2^53 + 1 with a double rounds once, to even", "big + 1.0", 9007199254740992.0),
+                             ("-0.0 - 0.0 is -0.0", "z - 0.0", -0.0),
+                             ("-0.0 + 0 is 0.0", "z + 0", 0.0),
+                             ("the largest integer is reached exactly", "n + 9223372036854775806", 9223372036854775807),
+                             ("a missing column gives null", "nope + 1", None)]:
+        j = accepted(f"SET r = {rhs}: {label}", c, f"UPDATE q.ar SET r = {rhs} WHERE _id = 'a'")
+        if j is None:
+            continue
+        s, j, data = c.q("SELECT r FROM q.ar WHERE _id = 'a'")
+        got = j["rows"][0][0]
+        check(f"SET r = {rhs} reads back as {want!r}", got == want and type(got) is type(want) and str(got) == str(want),
+              f"got {got!r} in {short(data)}")
+    c.ok("UPDATE q.ar SET big = big + 1 WHERE _id = 'a'")
+    data = c.q("SELECT big, z FROM q.ar WHERE _id = 'a'")[2]
+    check("the answer has 2^53 + 1 and -0.0 as written", b'"rows":[[9007199254740993,-0.0]]' in data, short(data))
+    for label, rhs, needle in [("a string", "s + 1", "cannot set r = s + 1 in the row with _id 'a': s is a string"),
+                               ("a boolean", "b - 1", "b is a boolean"),
+                               ("past the largest integer", "top + 1", "the result overflows a 64-bit integer"),
+                               ("past the smallest integer", "bottom - 1", "the result overflows a 64-bit integer"),
+                               ("past the largest double", "huge + 1e308", "the result overflows a double")]:
+        refused(f"SET r = {rhs}, {label}, is refused", c, f"UPDATE q.ar SET r = {rhs}", needle)
+    refused("SET r = _id + 1 is refused", c, "UPDATE q.ar SET r = _id + 1", "_id is a string")
+    refused("SET r = n * 2 is refused", c, "UPDATE q.ar SET r = n * 2", "expected '+' or '-'")
+    refused("SET r = n + m is refused", c, "UPDATE q.ar SET r = n + m", "expected a number")
+    refused("SET r = 1 + n is refused", c, "UPDATE q.ar SET r = 1 + n", None)
+    expect("the refused statements wrote nothing", [[None]], c.rows("SELECT r FROM q.ar"))
+    c.ok("INSERT INTO q.ar (_id, stock) VALUES ('g', 2)")
+    take = "UPDATE q.ar SET stock = stock - 1 WHERE _id = 'g' AND stock > 0"
+    expect("a guarded decrement takes the stock to zero and stops", [1, 1, 0],
+           [c.ok(take)["affected"] for _ in range(3)])
+    expect("and the stock is 0", [[0]], c.rows("SELECT stock FROM q.ar WHERE _id = 'g'"))
+    # All or nothing: row 'a' can be computed, and so can 'g' (no n gives null), but not 's'.
+    c.ok("INSERT INTO q.ar (_id, n) VALUES ('s', 'text')")
+    refused("a statement with one row that cannot be computed is refused", c, "UPDATE q.ar SET n = n + 1",
+            "in the row with _id 's': n is a string")
+    expect("and changed no row", [["a", 1], ["g", None], ["s", "text"]], c.rows("SELECT _id, n FROM q.ar"))
+    # An index on the column: the rows move in it, each once, and a lookup finds them at the new value.
+    c.ok("CREATE TABLE IF NOT EXISTS q.ark")
+    c.ok("DELETE FROM q.ark")
+    c.ok("INSERT INTO q.ark (_id, k) VALUES " + ", ".join(f"('k{i:02d}', {i})" for i in range(1, 21)))
+    c.ok("CREATE INDEX IF NOT EXISTS ON q.ark (k)")
+    expect("SET k = k + 1 WHERE k > 0 changes each of 20 rows once", 20,
+           c.ok("UPDATE q.ark SET k = k + 1 WHERE k > 0")["affected"])
+    expect("the values are 2 to 21", [[20, 2, 21, 230]], c.rows("SELECT COUNT(*), MIN(k), MAX(k), SUM(k) FROM q.ark"))
+    expect("the index finds the new value", [["k20"]], c.rows("SELECT _id FROM q.ark WHERE k = 21"))
+    expect("and not the old one", [], c.rows("SELECT _id FROM q.ark WHERE k = 1"))
+    expect("the index and a scan agree", c.rows("SELECT _id FROM q.ark WHERE k >= 10 OR k >= 10"),
+           c.rows("SELECT _id FROM q.ark WHERE k >= 10"))
 
 
 def statements(c):

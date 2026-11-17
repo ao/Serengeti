@@ -569,6 +569,91 @@ class ClusterTest {
         }
     }
 
+    @Test
+    void concurrentIncrementsThroughOneNodeAreAllOnEveryNode() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        for (int i = 0; i < 3; i++) {
+            waitWritable(i);
+        }
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES ('c', 0)").statusCode());
+        java.util.Queue<String> failed = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        List<Thread> writers = new ArrayList<>();
+        for (int t = 0; t < 8; t++) {
+            Thread w = new Thread(() -> {
+                for (int k = 0; k < 50; k++) {
+                    try {
+                        HttpResponse<String> r = write(0, "UPDATE d.t SET n = n + 1 WHERE _id = 'c'", null);
+                        if (r.statusCode() != 200 || !r.body().contains("\"affected\":1")) {
+                            failed.add(r.statusCode() + " " + r.body());
+                        }
+                    } catch (Exception e) {
+                        failed.add(e.toString());
+                    }
+                }
+            });
+            writers.add(w);
+            w.start();
+        }
+        for (Thread w : writers) {
+            w.join();
+        }
+        assertEquals(List.of(), List.copyOf(failed));
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has all 400 increments", () -> has(n, "SELECT n FROM d.t", List.of(List.of(400L))));
+            assertEquals(List.of(), conflictValues(n, "t", "n"), "node " + n);
+        }
+    }
+
+    @Test
+    void incrementsOnTwoNodesThatHadNotSeenEachOtherAreAConflictThatTheNextWriteResolves() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        for (int i = 0; i < 3; i++) {
+            waitWritable(i);
+        }
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        assertEquals(200, query(0, "INSERT INTO d.t (_id, n) VALUES ('c', 0)").statusCode());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has the row", () -> has(n, "SELECT n FROM d.t", List.of(List.of(0L))));
+        }
+        // Node 0 adds 2 while the others are down, then node 1 adds 1 while the others are down: each computes
+        // from the row as it holds it, and neither has seen the other's write.
+        stop(1);
+        stop(2);
+        for (int k = 0; k < 2; k++) {
+            assertEquals(200, write(0, "UPDATE d.t SET n = n + 1 WHERE _id = 'c'", "local").statusCode());
+        }
+        stop(0);
+        start(1);
+        Thread.sleep(1200);
+        assertEquals(200, write(1, "UPDATE d.t SET n = n + 1 WHERE _id = 'c'", "local").statusCode());
+        start(0);
+        start(2);
+        // Both versions are kept on every node, and the row's value is the later write's: node 1's 1.
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " lists both versions, node 1's current",
+                    () -> conflictValues(n, "t", "n").equals(List.of(1L, 2L)));
+            assertTrue(has(n, "SELECT n FROM d.t", List.of(List.of(1L))), "node " + n);
+        }
+        // The next write has seen both versions, so it replaces them; it computes from the current one.
+        waitWritable(0);
+        assertEquals(200, query(0, "UPDATE d.t SET n = n + 1 WHERE _id = 'c'").statusCode());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has no conflict left", () -> conflictValues(n, "t", "n").isEmpty());
+            eventually("node " + n + " has n = 2", () -> has(n, "SELECT n FROM d.t", List.of(List.of(2L))));
+        }
+    }
+
     /** The 'side' of each version SHOW CONFLICTS lists on node i, current first. */
     @SuppressWarnings("unchecked")
     private List<Object> conflictSides(int i) {

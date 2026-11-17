@@ -16,8 +16,11 @@ A write goes to whichever node the client calls. That node:
 4. answers 200 once a majority, itself included, has it, or 503 after 5 seconds without a majority.
 
 A 503 from step 4 means the write is in this node's log but may not be on a majority. It may still
-reach the other nodes later, through the sync below. Retrying the same statement is safe for UPDATE and
-DELETE; an INSERT with an explicit `_id` then fails with "already exists" if the first attempt did spread.
+reach the other nodes later, through the sync below. Retrying the same statement is safe for DELETE and
+for an UPDATE that sets values; an INSERT with an explicit `_id` then fails with "already exists" if the
+first attempt did spread. An UPDATE that computes from the row (`SET n = n + 1`) is applied again by a
+retry, so a counter can count twice; a guard that the first attempt makes false (`WHERE _id = 'a' AND n =
+41`) makes the retry change nothing.
 
 With 3 nodes, writes need 2; with 5, they need 3. A cluster with 2 nodes needs both, so either one being
 down stops writes.
@@ -128,6 +131,14 @@ SHOW CONFLICTS IN shop.items
 The next write to the row resolves the conflict: the node writing it has seen every version, so its
 write replaces all of them. To keep the current value, write it again; to keep another version, write
 that one. A row whose current version is a delete is resolved by inserting its `_id` again.
+
+`UPDATE ... SET n = n + 1` is computed on the node that receives it, from the row as that node holds it,
+and written as the whole row. On one node, concurrent increments all count (the write lock covers the read).
+Two nodes that each increment a row before either has received the other's write make a conflict like any
+two such writes: both versions are listed, each with its own node's increments, and the row's value is
+the higher version. Nothing adds them up; the next write resolves the conflict, computing from that value.
+`ClusterTest` checks both: 400 concurrent increments through one node of three are all on every node, and
+increments on two nodes that had not seen each other leave a conflict that one more increment resolves.
 
 A version records at most 16 entries. When a row has been written from more nodes than that, the oldest
 entries are folded into one floor ("every write stamped at or before this was seen"), so a write from a

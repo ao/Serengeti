@@ -46,9 +46,13 @@ in an object, `query(statement, { ack, consistency })`, and ignores anything els
 
 With several nodes, list the URLs in order. A read (SELECT or SHOW) that gets no answer or a 503 is tried
 on the next node. A write is sent once: if it reached a node and the answer was lost, or was 503, it may
-have been written (see "Writes" in docs/CONSISTENCY.md), so trying again is your decision. A
+have been written (see "Writes" in docs/CONSISTENCY.md), so trying again is your decision: an
+`UPDATE ... SET n = n + 1` sent twice may count twice. A
 write goes on to the next node only when it cannot have arrived: the connection was refused or the name
 did not resolve.
+
+JavaScript reads every JSON number as a double, so an integer beyond 2^53 (9007199254740992) comes back
+from the JavaScript client as the nearest double; the node and the Python client keep it exact.
 
 For certificates from `serengeti-certs`, give Python `ca_file="ca.pem"`. Node.js reads extra CAs only at
 start: run it with `NODE_EXTRA_CA_CERTS=ca.pem`.

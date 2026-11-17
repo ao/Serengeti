@@ -241,16 +241,43 @@ public final class Executor {
         }
         List<Op> ops = new ArrayList<>();
         Stamp at = stamp(store);
+        // Every op is planned before any is applied, so a row is changed once even when the WHERE reads the
+        // column it sets, and a row that cannot be computed fails the statement with nothing written.
         scan(store, u.db(), u.table(), u.where(), (id, row) -> {
             if (matches(u.where(), id, row)) {
                 Map<String, Object> changed = new LinkedHashMap<>(row);
                 for (Statement.Assignment a : u.assignments()) {
-                    changed.put(a.column(), a.value());
+                    changed.put(a.column(), a.value() instanceof Statement.Arithmetic x ? compute(id, row, a, x)
+                            : a.value());
                 }
                 ops.add(new Op.Put(u.db(), u.table(), id, changed, at));
             }
         });
         return new StorageEngine.Planned<>(ops, new Result.Write(ops.size()));
+    }
+
+    /**
+     * The value of {@code SET c = column + number} for one row, from the row as it was before the statement:
+     * null when the column is missing or null, as in SQL.
+     */
+    private static Object compute(String id, Map<String, Object> row, Statement.Assignment a, Statement.Arithmetic x) {
+        Object v = row.get(x.column());
+        if (v == null) {
+            return null;
+        }
+        if (!Values.isNumber(v)) {
+            throw cannotSet(id, a, x.column() + " is " + Values.kind(v));
+        }
+        try {
+            return Values.add(v, x.minus(), x.number());
+        } catch (ArithmeticException e) {
+            throw cannotSet(id, a, "the result " + e.getMessage());
+        }
+    }
+
+    private static QueryException cannotSet(String id, Statement.Assignment a, String why) {
+        return new QueryException("cannot set " + Printer.assignment(a) + " in the row with _id '" + Lexer.shorten(id)
+                + "': " + why);
     }
 
     /** Columns of SHOW CONFLICTS: one result row per version, the row's value (the newest) first. */

@@ -83,8 +83,7 @@ public final class Printer {
         if (s instanceof Statement.Update u) {
             StringBuilder b = new StringBuilder("UPDATE ").append(u.db()).append('.').append(u.table())
                     .append(" SET ");
-            b.append(u.assignments().stream().map(a -> a.column() + " = " + Values.format(a.value()))
-                    .collect(Collectors.joining(", ")));
+            b.append(u.assignments().stream().map(Printer::assignment).collect(Collectors.joining(", ")));
             where(b, u.where());
             return b.toString();
         }
@@ -94,6 +93,14 @@ public final class Printer {
             return b.toString();
         }
         throw new IllegalArgumentException("unknown statement " + s);
+    }
+
+    /** One assignment of a SET: {@code c = 1}, or {@code c = c + 1}. A negative number keeps its sign: {@code c - -1}. */
+    static String assignment(Statement.Assignment a) {
+        if (a.value() instanceof Statement.Arithmetic x) {
+            return a.column() + " = " + x.column() + (x.minus() ? " - " : " + ") + Values.format(x.number());
+        }
+        return a.column() + " = " + Values.format(a.value());
     }
 
     /** A WHERE condition. */
