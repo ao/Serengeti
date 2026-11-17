@@ -52,6 +52,10 @@ public final class Printer {
                 }
                 b.append('(').append(values(i.rows().get(r))).append(')');
             }
+            if (i.onConflict() != null) {
+                b.append(i.onConflict().doNothing() ? " ON CONFLICT DO NOTHING" : " ON CONFLICT DO UPDATE SET "
+                        + i.onConflict().assignments().stream().map(Printer::assignment).collect(Collectors.joining(", ")));
+            }
             return b.toString();
         }
         if (s instanceof Statement.Select q) {

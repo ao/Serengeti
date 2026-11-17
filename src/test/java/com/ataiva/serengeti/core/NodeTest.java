@@ -371,6 +371,46 @@ class NodeTest {
     }
 
     @Test
+    void anUpsertOverHttpSaysWhatItInsertedUpdatedAndSkipped() throws Exception {
+        Path data = tmp.resolve("data");
+        Config c = config(data, "SERENGETI_ADMIN_PASSWORD", PW);
+        String upsert = "INSERT INTO shop.items (_id, n) VALUES ('a', 1), ('b', 1) ON CONFLICT DO UPDATE SET n = n + 1";
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertEquals(200, query(n, "CREATE DATABASE shop").statusCode());
+            assertEquals(200, query(n, "CREATE TABLE shop.items").statusCode());
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, n, s) VALUES ('a', 9007199254740992, 'x')").statusCode());
+            HttpResponse<String> r = query(n, upsert);
+            assertEquals(200, r.statusCode(), r.body());
+            assertEquals("{\"type\":\"write\",\"affected\":2,\"inserted\":1,\"updated\":1,\"skipped\":0,\"ids\":[\"a\",\"b\"]}",
+                    r.body().strip());
+            r = query(n, "INSERT INTO shop.items (_id, n) VALUES ('b', 5), ('c', 5) ON CONFLICT DO NOTHING");
+            assertEquals("{\"type\":\"write\",\"affected\":1,\"inserted\":1,\"updated\":0,\"skipped\":1,\"ids\":[\"c\"]}",
+                    r.body().strip());
+            r = query(n, "INSERT INTO shop.items (n) VALUES (1) ON CONFLICT DO NOTHING");
+            assertEquals(400, r.statusCode(), r.body());
+            assertEquals("ON CONFLICT needs _id in the column list: a row without _id gets a new one, so it cannot"
+                    + " conflict at position 38",com.ataiva.serengeti.core.json.Json.parseObject(r.body()).get("error"));
+            r = query(n, "INSERT INTO shop.items (_id, n) VALUES ('d', 1), ('d', 2) ON CONFLICT DO NOTHING");
+            assertEquals(400, r.statusCode(), r.body());
+            r = query(n, "INSERT INTO shop.items (_id, n) VALUES ('e', 1), ('a', 1) ON CONFLICT DO UPDATE SET n = n + 0.5,"
+                    + " s = s + 1");
+            assertEquals(400, r.statusCode(), r.body());
+            assertEquals("cannot set s = s + 1 in the row with _id 'a': s is a string",
+                    com.ataiva.serengeti.core.json.Json.parseObject(r.body()).get("error"));
+            assertTrue(query(n, "SELECT _id, n FROM shop.items").body()
+                    .contains("\"rows\":[[\"a\",9007199254740993],[\"b\",1],[\"c\",5]]"), "the refused statements wrote nothing");
+        }
+        try (Node n = Node.start(c, Node.QUERIES)) {
+            assertTrue(query(n, "SELECT _id, n FROM shop.items").body()
+                    .contains("\"rows\":[[\"a\",9007199254740993],[\"b\",1],[\"c\",5]]"));
+            HttpResponse<String> r = query(n, upsert);
+            assertTrue(r.body().contains("\"affected\":2,\"inserted\":0,\"updated\":2,\"skipped\":0"), r.body());
+            assertTrue(query(n, "SELECT _id, n FROM shop.items WHERE _id IN ('a', 'b')").body()
+                    .contains("\"rows\":[[\"a\",9007199254740994],[\"b\",2]]"));
+        }
+    }
+
+    @Test
     void scheduledBackupsRestoreIntoANodeWithTheRows() throws Exception {
         Path data = tmp.resolve("data");
         Path backups = tmp.resolve("backups");

@@ -27,6 +27,11 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(list(r), [("bolt", 120), ("nut", 300)])
         self.assertEqual(r.dicts()[1], {"name": "nut", "qty": 300})
         self.assertEqual(len(self.db.query("SHOW TABLES IN py")), 1)
+        u = self.db.query("INSERT INTO py.items (_id, qty) VALUES ('bolt', 1), ('pin', 5) ON CONFLICT DO UPDATE SET qty = qty + 1")
+        self.assertEqual((u["affected"], u["inserted"], u["updated"], u["skipped"], u["ids"]), (2, 1, 1, 0, ["bolt", "pin"]))
+        u = self.db.query("INSERT INTO py.items (_id, qty) VALUES ('nut', 1) ON CONFLICT DO NOTHING")
+        self.assertEqual((u["affected"], u["skipped"], u["ids"]), (0, 1, []))
+        self.assertEqual(list(self.db.query("SELECT qty FROM py.items WHERE _id IN ('bolt', 'nut', 'pin')")), [(121,), (300,), (5,)])
         self.db.query("DELETE FROM py.items")
 
     def test_errors_carry_the_status_and_the_nodes_message(self):

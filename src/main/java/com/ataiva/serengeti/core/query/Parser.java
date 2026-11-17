@@ -186,6 +186,12 @@ public final class Parser {
         return false;
     }
 
+    private void expectWord(String w) {
+        if (!acceptWord(w)) {
+            throw expected(w.toUpperCase(java.util.Locale.ROOT));
+        }
+    }
+
     private Statement insert() {
         expectKeyword("into");
         String[] q = qualifiedName();
@@ -216,7 +222,26 @@ public final class Parser {
             }
             rows.add(row);
         } while (acceptSymbol(","));
-        return new Statement.Insert(q[0], q[1], columns, rows);
+        // ON, CONFLICT, DO and NOTHING are not reserved: nothing else may follow the tuples.
+        int onAt = tok.start();
+        Statement.OnConflict onConflict = null;
+        if (acceptWord("on")) {
+            expectWord("conflict");
+            expectWord("do");
+            if (acceptWord("nothing")) {
+                onConflict = Statement.OnConflict.DO_NOTHING;
+            } else if (acceptKeyword("update")) {
+                expectKeyword("set");
+                onConflict = new Statement.OnConflict(assignments());
+            } else {
+                throw expected("NOTHING or UPDATE");
+            }
+            if (!seen.contains(Executor.ID)) {
+                throw new ParseException("ON CONFLICT needs _id in the column list: a row without _id gets a new one,"
+                        + " so it cannot conflict", onAt);
+            }
+        }
+        return new Statement.Insert(q[0], q[1], columns, rows, onConflict);
     }
 
     private Statement select() {
@@ -457,6 +482,13 @@ public final class Parser {
     private Statement update() {
         String[] q = qualifiedName();
         expectKeyword("set");
+        List<Statement.Assignment> sets = assignments();
+        Expr where = acceptKeyword("where") ? expr() : null;
+        return new Statement.Update(q[0], q[1], sets, where);
+    }
+
+    /** The assignments after SET, of UPDATE or of ON CONFLICT DO UPDATE: each column once. */
+    private List<Statement.Assignment> assignments() {
         List<Statement.Assignment> sets = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         do {
@@ -468,8 +500,7 @@ public final class Parser {
             expectSymbol("=");
             sets.add(new Statement.Assignment(c, tok.kind() == Token.Kind.NAME ? arithmetic() : value()));
         } while (acceptSymbol(","));
-        Expr where = acceptKeyword("where") ? expr() : null;
-        return new Statement.Update(q[0], q[1], sets, where);
+        return sets;
     }
 
     /**

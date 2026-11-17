@@ -177,8 +177,12 @@ public sealed interface Statement {
         }
     }
 
-    /** Each row in {@code rows} has one value per entry in {@code columns}. */
-    record Insert(String db, String table, List<String> columns, List<List<Object>> rows) implements Statement {
+    /**
+     * Each row in {@code rows} has one value per entry in {@code columns}. {@code onConflict} is null without
+     * ON CONFLICT; with it, {@code columns} lists {@code _id}.
+     */
+    record Insert(String db, String table, List<String> columns, List<List<Object>> rows, OnConflict onConflict)
+            implements Statement {
         public Insert {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
@@ -188,6 +192,9 @@ public sealed interface Statement {
             }
             if (columns.stream().distinct().count() != columns.size()) {
                 throw new IllegalArgumentException("INSERT columns must be distinct");
+            }
+            if (onConflict != null && !columns.contains(Executor.ID)) {
+                throw new IllegalArgumentException("ON CONFLICT needs _id in the column list");
             }
             List<List<Object>> copy = new ArrayList<>(rows.size());
             for (List<Object> row : rows) {
@@ -200,9 +207,32 @@ public sealed interface Statement {
             rows = Collections.unmodifiableList(copy);
         }
 
+        public Insert(String db, String table, List<String> columns, List<List<Object>> rows) {
+            this(db, table, columns, rows, null);
+        }
+
         @Override
         public <R> R accept(Visitor<R> v) {
             return v.insert(this);
+        }
+    }
+
+    /**
+     * What an INSERT does with a tuple whose {@code _id} is a live row: {@code ON CONFLICT DO NOTHING} when
+     * {@code assignments} is empty, else {@code ON CONFLICT DO UPDATE SET} them, as UPDATE would.
+     */
+    record OnConflict(List<Assignment> assignments) {
+        public static final OnConflict DO_NOTHING = new OnConflict(List.of());
+
+        public OnConflict {
+            assignments = List.copyOf(assignments);
+            if (assignments.stream().map(Assignment::column).distinct().count() != assignments.size()) {
+                throw new IllegalArgumentException("ON CONFLICT DO UPDATE columns must be distinct");
+            }
+        }
+
+        public boolean doNothing() {
+            return assignments.isEmpty();
         }
     }
 

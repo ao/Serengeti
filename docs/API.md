@@ -163,6 +163,15 @@ Reads return the column names and one array per row:
 {"type":"write","affected":2,"ids":["8f0c...","1d2e..."]}
 ```
 
+`INSERT ... ON CONFLICT` (docs/QUERY.md) also returns how many of its tuples were inserted, updated and
+skipped. `affected` is `inserted` plus `updated`, and `ids` lists the rows written, in tuple order, and is
+there even when empty. Other answers are as before, so a client that reads only `affected` and `ids` reads
+these too.
+
+```json
+{"type":"write","affected":2,"inserted":1,"updated":1,"skipped":1,"ids":["bolt","nut"]}
+```
+
 ## Password
 
 ```

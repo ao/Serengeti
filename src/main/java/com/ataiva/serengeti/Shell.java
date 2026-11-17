@@ -74,6 +74,7 @@ final class Shell {
               INSERT INTO shop.items (_id, name, qty) VALUES ('bolt', 'bolt', 120)
               SELECT name, qty FROM shop.items WHERE qty > 100 ORDER BY qty LIMIT 10
               UPDATE shop.items SET qty = qty - 1 WHERE _id = 'bolt' AND qty > 0
+              INSERT INTO shop.items (_id, qty) VALUES ('nut', 1) ON CONFLICT DO UPDATE SET qty = qty + 1
             A statement runs when you press Enter on a complete one, or end it with ;. An incomplete statement
             continues on the next line.
             help      this text
@@ -581,7 +582,10 @@ final class Shell {
             }
         } else if (format == Format.TABLE) {
             Object affected = m.get("affected");
-            out.println("OK, " + affected + " affected" + timing);
+            // INSERT ... ON CONFLICT also says how its tuples went.
+            String upsert = m.containsKey("skipped") ? " (" + m.get("inserted") + " inserted, " + m.get("updated")
+                    + " updated, " + m.get("skipped") + " skipped)" : "";
+            out.println("OK, " + affected + " affected" + upsert + timing);
         }
         return true;
     }

@@ -104,6 +104,29 @@ class ShellTest {
     }
 
     @Test
+    void anUpsertSaysWhatItInsertedUpdatedAndSkipped() throws Exception {
+        int port = freePort();
+        try (Node n = Node.start(Config.load(null, nodeEnv(port)), Node.QUERIES)) {
+            // ON CONFLICT DO and qty + are incomplete, so the statement goes on to the next line.
+            Run r = remote(port, """
+                    CREATE DATABASE shop; CREATE TABLE shop.items
+                    INSERT INTO shop.items (_id, qty) VALUES ('bolt', 1)
+                    INSERT INTO shop.items (_id, qty) VALUES ('bolt', 1), ('nut', 1) ON CONFLICT DO
+                      UPDATE SET qty = qty +
+                      1
+                    INSERT INTO shop.items (_id, qty) VALUES ('bolt', 1), ('nut', 1), ('pin', 1) ON CONFLICT DO NOTHING
+                    SELECT _id, qty FROM shop.items
+                    """);
+            assertEquals(0, r.status(), r.err());
+            assertTrue(r.out().startsWith("OK, 1 affected\nOK, 1 affected\nOK, 1 affected\n"
+                    + "OK, 2 affected (1 inserted, 1 updated, 0 skipped)\nOK, 1 affected (1 inserted, 0 updated, 2 skipped)\n"),
+                    r.out());
+            assertTrue(r.out().contains("bolt |   2\n") && r.out().contains("nut  |   1\n") && r.out().contains("pin  |   1\n"),
+                    r.out());
+        }
+    }
+
+    @Test
     void aScriptStopsAtTheFirstFailure() throws Exception {
         int port = freePort();
         try (Node n = Node.start(Config.load(null, nodeEnv(port)), Node.QUERIES)) {

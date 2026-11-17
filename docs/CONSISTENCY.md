@@ -18,9 +18,13 @@ A write goes to whichever node the client calls. That node:
 A 503 from step 4 means the write is in this node's log but may not be on a majority. It may still
 reach the other nodes later, through the sync below. Retrying the same statement is safe for DELETE and
 for an UPDATE that sets values; an INSERT with an explicit `_id` then fails with "already exists" if the
-first attempt did spread. An UPDATE that computes from the row (`SET n = n + 1`) is applied again by a
-retry, so a counter can count twice; a guard that the first attempt makes false (`WHERE _id = 'a' AND n =
-41`) makes the retry change nothing.
+first attempt did spread. `INSERT ... ON CONFLICT DO NOTHING` makes that retry safe: a row the first
+attempt wrote is skipped, and the answer says so (`"skipped"`) instead of failing; so does `ON CONFLICT DO
+UPDATE` that sets values only. An UPDATE that computes from the row (`SET n = n + 1`), and `ON CONFLICT DO
+UPDATE SET n = n + 1`, is applied again by a retry, so a counter can count twice; for UPDATE, a guard that
+the first attempt makes false (`WHERE _id = 'a' AND n = 41`) makes the retry change nothing. A retry sent
+to a node that has not yet received the first attempt inserts the row there too, which makes a conflict of
+two equal versions (see "What this is not").
 
 With 3 nodes, writes need 2; with 5, they need 3. A cluster with 2 nodes needs both, so either one being
 down stops writes.
@@ -139,6 +143,9 @@ two such writes: both versions are listed, each with its own node's increments, 
 the higher version. Nothing adds them up; the next write resolves the conflict, computing from that value.
 `ClusterTest` checks both: 400 concurrent increments through one node of three are all on every node, and
 increments on two nodes that had not seen each other leave a conflict that one more increment resolves.
+`INSERT ... ON CONFLICT` is decided the same way, from the row as the receiving node holds it: two nodes
+that each upsert an `_id` that neither has both insert it, a conflict as two inserts make, and
+`ClusterTest` checks that SHOW CONFLICTS lists both on every node and that the next upsert resolves it.
 
 A version records at most 16 entries. When a row has been written from more nodes than that, the oldest
 entries are folded into one floor ("every write stamped at or before this was seen"), so a write from a
@@ -165,7 +172,8 @@ when no majority is reachable.
 
 It is not linearizable and has no transactions across statements. Insert-unless-exists is checked on the
 receiving node only: two nodes accepting an insert with the same `_id` at the same time both succeed, and
-the row is then a conflict (above). Versions follow wall clocks, so a node whose clock runs ahead has its
+the row is then a conflict (above). The same holds for `INSERT ... ON CONFLICT`, which reads only the
+receiving node's rows. Versions follow wall clocks, so a node whose clock runs ahead has its
 version chosen as the current one when it should not be; changes stamped more than 60 seconds ahead of the receiving node's clock are refused (and
 logged with the sending node), which bounds how far one bad clock can reach. Keep clocks synced with NTP.
 

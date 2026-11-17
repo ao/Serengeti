@@ -25,8 +25,9 @@ show        = "SHOW" "DATABASES"
             | "SHOW" "CONFLICTS" "IN" table ;
 
 insert      = "INSERT" "INTO" table "(" name { "," name } ")"
-              "VALUES" tuple { "," tuple } ;
+              "VALUES" tuple { "," tuple } [ conflict ] ;
 tuple       = "(" value { "," value } ")" ;
+conflict    = "ON" "CONFLICT" "DO" ( "NOTHING" | "UPDATE" "SET" assignment { "," assignment } ) ;
 
 select      = "SELECT" [ "DISTINCT" ] ( "*" | item { "," item } )
               "FROM" table [ "WHERE" expr ] [ "GROUP" "BY" name { "," name } ] [ "HAVING" expr ]
@@ -60,10 +61,11 @@ integer     = digits ;
 
 The keywords are: AND, ASC, BY, COUNT, CREATE, DATABASE, DATABASES, DELETE, DESC, DROP, EXISTS,
 FALSE, FROM, IF, IN, INSERT, INTO, IS, LIMIT, NOT, NULL, OR, ORDER, SELECT, SET, SHOW, TABLE, TABLES,
-TRUE, UPDATE, VALUES, WHERE. They cannot be used as names. AVG, CONFLICTS, DISTINCT, GROUP, HAVING,
-INDEX, INDEXES, LIKE, MAX, MIN, ON and SUM are not reserved: they have their meaning only where the
-grammar puts them, so `SELECT sum, group FROM shop.items WHERE like = 1` reads three columns, and
-`sum(sum)` adds up a column called `sum`. DISTINCT is the keyword right after SELECT unless a comma or
+TRUE, UPDATE, VALUES, WHERE. They cannot be used as names. AVG, CONFLICT, CONFLICTS, DISTINCT, DO, GROUP,
+HAVING, INDEX, INDEXES, LIKE, MAX, MIN, NOTHING, ON and SUM are not reserved: they have their meaning only
+where the grammar puts them, so `SELECT sum, group FROM shop.items WHERE like = 1` reads three columns,
+`sum(sum)` adds up a column called `sum`, and ON CONFLICT is read only after the last tuple of an INSERT,
+where nothing else may come. DISTINCT is the keyword right after SELECT unless a comma or
 FROM follows, and right after `COUNT(` unless `)` follows: `SELECT distinct FROM t` reads a column called
 distinct, `SELECT DISTINCT distinct FROM t` its distinct values, `COUNT(distinct)` counts its values and
 `COUNT(DISTINCT distinct)` its distinct values. HAVING is the keyword only after the table, the WHERE
@@ -75,7 +77,9 @@ binds tighter than `OR`.
 
 Further parse rules:
 
-- An INSERT lists each column once, and each tuple has one value per column.
+- An INSERT lists each column once, and each tuple has one value per column. With ON CONFLICT, `_id` is one
+  of the columns (a row inserted without one gets a new random `_id`, so it cannot conflict), and DO UPDATE
+  SET takes UPDATE's assignments, with no WHERE (see "INSERT ... ON CONFLICT").
 - An UPDATE sets each column once. On the right of its `=` is a value, or a column (not `_id`) plus or
   minus a number; nothing else, no `*` or `/`, parentheses, two columns or functions (see "UPDATE from
   the row"). A minus glued to the number is the operator there: `n -1` and `n-1` are `n - 1`. `n--1` is
@@ -119,8 +123,8 @@ A value is a string, a number, a boolean or null.
   numbers are 64-bit doubles. A number too large for a double is a parse error.
 - Each row has a string key in the column `_id`. INSERT may set it (it must be a non-empty
   string); otherwise a random UUID is used. Inserting an `_id` that already exists in the table is
-  an error, and so is setting `_id` in an UPDATE, even to the value it has. A deleted row's `_id` can
-  be used again.
+  an error unless the INSERT says what to do instead (ON CONFLICT), and so is setting `_id` in an UPDATE,
+  even to the value it has. A deleted row's `_id` can be used again.
 - A column a row does not have reads as null. `INSERT ... VALUES (NULL)` and `SET c = NULL` store
   an explicit null, which reads the same.
 - Tables have no schema: any row can have any columns.
@@ -387,6 +391,13 @@ row, in insert order:
 {"type":"write","affected":2,"ids":["a","5f0c6f0e-..."]}
 ```
 
+An INSERT with ON CONFLICT also says how many tuples it inserted, updated and skipped; `affected` is
+`inserted` plus `updated`, and `ids` lists the rows it wrote, which may be none:
+
+```
+{"type":"write","affected":2,"inserted":1,"updated":1,"skipped":1,"ids":["b","d"]}
+```
+
 `CREATE ... IF NOT EXISTS` on an existing object and `DROP ... IF EXISTS` on a missing one return
 `"affected":0`.
 
@@ -485,11 +496,52 @@ again after a 503 or a lost answer is applied again if the first one was written
 2.1 nodes answer this form with a parse error. During a rolling upgrade, send it to 2.2 nodes; what they
 write is a normal row write, which 2.1 nodes take.
 
+## INSERT ... ON CONFLICT
+
+A plain INSERT fails when a tuple's `_id` is a row of the table. With ON CONFLICT it does what follows DO
+with that tuple instead: NOTHING skips it, and UPDATE SET changes the row that is there, as UPDATE would.
+Tuples whose `_id` is not in the table are inserted either way.
+
+```
+INSERT INTO shop.counts (_id, n) VALUES ('a', 1) ON CONFLICT DO UPDATE SET n = n + 1;
+INSERT INTO shop.items (_id, name) VALUES ('tea', 'Tea'), ('jam', 'Jam') ON CONFLICT DO NOTHING;
+```
+
+The first makes the counter with n = 1 the first time and adds 1 every time after. The second inserts
+whichever of the two items is not there yet and leaves the others as they are.
+
+- DO UPDATE SET takes UPDATE's assignments, a value or a column plus or minus a number, with the rules of
+  "UPDATE from the row" (types, null, overflow). The right side reads the row that is there, not the tuple.
+  The tuple's values are written only when it is inserted, so in the counter `VALUES ('a', 1)` gives the
+  first value and SET every one after. There is no `EXCLUDED` and no WHERE: to set a column to the
+  tuple's value on a conflict too, write that value in SET.
+- The tuples are handled in order under the write lock (see "Writes and time"), so concurrent statements
+  on one node never both insert an `_id` and never lose an increment: a unit test runs 16 threads that
+  each send the counter above 500 times for one new `_id`, and n ends at 8,000, from one insert and 7,999
+  updates.
+- A deleted row is no row: its `_id` is inserted. A row in conflict (versions written on nodes that had
+  not seen each other's, see CONSISTENCY.md) is there, and DO UPDATE reads its value, the current version;
+  that write has seen every version, so it resolves the conflict. DO NOTHING writes nothing and leaves the
+  conflict. A row whose current version is a delete reads as deleted, so its tuple is inserted.
+- One `_id` twice in one statement is refused, as without ON CONFLICT: `_id 'a' is listed twice: an INSERT
+  ... ON CONFLICT takes each _id once`. `SET _id = ...` is refused, as in UPDATE.
+- A statement writes all its tuples or none. When the assignments cannot be computed for one row that is
+  there (`SET n = n + 1` where n is a string), nothing is written, not even the new rows, and the message
+  names the first such row in tuple order: `cannot set n = n + 1 in the row with _id 'b': n is a string`.
+
+Each row inserted or changed is a normal write of the whole row, so it replicates and conflicts as any
+write does. Two nodes that each upsert one `_id` before either has received the other's write make a
+conflict, as two inserts of it would: if neither had the row, both insert it; SHOW CONFLICTS lists both
+versions, and the next write resolves it. A retry after a 503 or a lost answer is safe with DO NOTHING,
+and with DO UPDATE that sets values only; with arithmetic it is applied again (CONSISTENCY.md, "Writes").
+
+2.1 nodes answer ON CONFLICT with a parse error. During a rolling upgrade, send it to 2.2 nodes.
+
 ## Writes and time
 
 Each write statement is checked and applied in one step under the storage engine's write lock, so
 for example two concurrent inserts of the same `_id` cannot both succeed on one node, and `SET n = n + 1`
-reads the row and writes it in that one step. All ops of
+(in UPDATE or in ON CONFLICT DO UPDATE) reads the row and writes it in that one step. All ops of
 one statement carry the same hybrid logical clock stamp. Before stamping, the executor moves its
 clock past the newest stamp in the store, so writes after a restart or after receiving newer data
 are not lost to an older stamp.
@@ -501,6 +553,7 @@ CREATE DATABASE shop;
 CREATE TABLE shop.items;
 INSERT INTO shop.items (_id, name, price) VALUES ('tea', 'Tea', 3), ('cake', 'Cake', 2.5);
 INSERT INTO shop.items (name) VALUES ('Jam');
+INSERT INTO shop.items (_id, name, views) VALUES ('tea', 'Tea', 1) ON CONFLICT DO UPDATE SET views = views + 1;
 SELECT * FROM shop.items WHERE price >= 2 AND name != 'Cake' ORDER BY price DESC LIMIT 10;
 SELECT COUNT(*) FROM shop.items WHERE price IS NULL;
 SELECT name FROM shop.items WHERE _id IN ('tea', 'cake') OR name LIKE 'J%';

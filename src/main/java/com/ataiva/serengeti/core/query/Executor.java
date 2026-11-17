@@ -199,13 +199,29 @@ public final class Executor {
         return engine.read(store -> names("database", store.databases().stream().filter(shown).toList()));
     }
 
+    /**
+     * INSERT, tuple by tuple in order. With ON CONFLICT, a tuple whose {@code _id} is a live row (one SELECT
+     * reads: not a tombstone, and the current version when the row is in conflict) is skipped (DO NOTHING) or
+     * has the assignments applied to that row (DO UPDATE), reading it as UPDATE does; its other values are not
+     * written. Without it, such a tuple fails the statement. All tuples are planned before any is written.
+     */
     private StorageEngine.Planned<Result> insert(Store store, Statement.Insert i) {
         requireTable(store, i.db(), i.table());
+        Statement.OnConflict onConflict = i.onConflict();
+        if (onConflict != null) {
+            for (Statement.Assignment a : onConflict.assignments()) {
+                if (a.column().equals(ID)) {
+                    throw new QueryException("_id cannot be changed");
+                }
+            }
+        }
         Stamp at = stamp(store);
         int idIndex = i.columns().indexOf(ID);
         List<Op> ops = new ArrayList<>(i.rows().size());
         List<String> ids = new ArrayList<>(i.rows().size());
         Set<String> seen = new HashSet<>();
+        long updated = 0;
+        long skipped = 0;
         for (List<Object> values : i.rows()) {
             Map<String, Object> row = new LinkedHashMap<>();
             String id = null;
@@ -222,14 +238,34 @@ public final class Executor {
             if (id == null) {
                 id = UUID.randomUUID().toString();
             }
-            if (!seen.add(id) || store.row(i.db(), i.table(), id) != null) {
+            boolean twice = !seen.add(id);
+            if (twice && onConflict != null) {
+                throw new QueryException("_id '" + Lexer.shorten(id) + "' is listed twice: an INSERT ... ON CONFLICT"
+                        + " takes each _id once");
+            }
+            Map<String, Object> existing = store.row(i.db(), i.table(), id);
+            if (twice || (existing != null && onConflict == null)) {
                 throw new QueryException("a row with _id '" + Lexer.shorten(id) + "' already exists in '"
                         + i.db() + "." + i.table() + "'");
+            }
+            if (existing != null) {
+                if (onConflict.doNothing()) {
+                    skipped++;
+                    continue;
+                }
+                row = new LinkedHashMap<>(existing);
+                for (Statement.Assignment a : onConflict.assignments()) {
+                    row.put(a.column(), a.value() instanceof Statement.Arithmetic x ? compute(id, existing, a, x)
+                            : a.value());
+                }
+                updated++;
             }
             ops.add(new Op.Put(i.db(), i.table(), id, row, at));
             ids.add(id);
         }
-        return new StorageEngine.Planned<>(ops, new Result.Write(ops.size(), ids));
+        Result.Write.Upsert upsert = onConflict == null ? null
+                : new Result.Write.Upsert(ops.size() - updated, updated, skipped);
+        return new StorageEngine.Planned<>(ops, new Result.Write(ops.size(), ids, upsert));
     }
 
     private StorageEngine.Planned<Result> update(Store store, Statement.Update u) {

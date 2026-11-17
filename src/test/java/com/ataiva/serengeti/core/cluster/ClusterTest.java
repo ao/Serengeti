@@ -654,6 +654,58 @@ class ClusterTest {
         }
     }
 
+    @Test
+    void upsertsOnTwoNodesThatHadNotSeenEachOtherAreAConflictAsTwoInsertsAre() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        for (int i = 0; i < 3; i++) {
+            waitWritable(i);
+        }
+        assertEquals(200, query(0, "CREATE DATABASE d").statusCode());
+        assertEquals(200, query(0, "CREATE TABLE d.t").statusCode());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has the table", () -> has(n, "SELECT COUNT(*) FROM d.t", List.of(List.of(0L))));
+        }
+        String upsert = "INSERT INTO d.t (_id, n) VALUES ('c', 1) ON CONFLICT DO UPDATE SET n = n + 1";
+        // Node 0 inserts the row and adds 1 while the others are down; then node 1, which has no row, inserts it.
+        stop(1);
+        stop(2);
+        HttpResponse<String> r = write(0, upsert, "local");
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(r.body().contains("\"inserted\":1,\"updated\":0,\"skipped\":0"), r.body());
+        r = write(0, upsert, "local");
+        assertTrue(r.body().contains("\"inserted\":0,\"updated\":1,\"skipped\":0"), r.body());
+        stop(0);
+        start(1);
+        Thread.sleep(1200);
+        r = write(1, upsert, "local");
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(r.body().contains("\"inserted\":1,\"updated\":0,\"skipped\":0"), "node 1 had no row: " + r.body());
+        start(0);
+        start(2);
+        // Both versions are kept on every node, and the row's value is the later write's: node 1's 1.
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " lists both versions, node 1's current",
+                    () -> conflictValues(n, "t", "n").equals(List.of(1L, 2L)));
+            assertTrue(has(n, "SELECT n FROM d.t", List.of(List.of(1L))), "node " + n);
+        }
+        // DO NOTHING writes nothing, so the conflict stays; the next upsert has seen both versions and resolves it.
+        waitWritable(0);
+        r = query(0, "INSERT INTO d.t (_id, n) VALUES ('c', 9) ON CONFLICT DO NOTHING");
+        assertTrue(r.body().contains("\"affected\":0,\"inserted\":0,\"updated\":0,\"skipped\":1"), r.body());
+        assertEquals(List.of(1L, 2L), conflictValues(0, "t", "n"));
+        r = query(0, upsert);
+        assertTrue(r.body().contains("\"inserted\":0,\"updated\":1,\"skipped\":0"), r.body());
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has no conflict left", () -> conflictValues(n, "t", "n").isEmpty());
+            eventually("node " + n + " has n = 2", () -> has(n, "SELECT n FROM d.t", List.of(List.of(2L))));
+        }
+    }
+
     /** The 'side' of each version SHOW CONFLICTS lists on node i, current first. */
     @SuppressWarnings("unchecked")
     private List<Object> conflictSides(int i) {

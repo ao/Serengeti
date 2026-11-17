@@ -133,6 +133,77 @@ class ParserTest {
     }
 
     @Test
+    void insertOnConflict() {
+        List<List<Object>> rows = List.of(List.of("a", 1L), List.of("b", 2L));
+        assertEquals(new Statement.Insert("d", "t", List.of("_id", "n"), rows, Statement.OnConflict.DO_NOTHING),
+                parse("INSERT INTO d.t (_id, n) VALUES ('a', 1), ('b', 2) ON CONFLICT DO NOTHING"));
+        assertEquals(new Statement.Insert("d", "t", List.of("_id", "n"), rows, new Statement.OnConflict(List.of(
+                set("n", "n", false, 1L), new Statement.Assignment("seen", true), set("m", "n", true, 0.5)))),
+                parse("insert into d.t (_id, n) values ('a', 1), ('b', 2) on conflict do update set n = n + 1, seen = TRUE,"
+                        + " m = n-0.5;"));
+        assertEquals(null, ((Statement.Insert) parse("INSERT INTO d.t (_id) VALUES ('a')")).onConflict());
+        for (String s : List.of("INSERT INTO d.t (_id, n) VALUES ('a', 1) ON CONFLICT DO UPDATE SET n = n + 1",
+                "INSERT INTO d.t (n, _id) VALUES (1, 'a'), (-0.0, 'b') ON CONFLICT DO NOTHING",
+                "INSERT INTO d.t (_id, n) VALUES ('a', 1) ON CONFLICT DO UPDATE SET n = n - -1, m = NULL, k = 'x', j = j + 1.0E300",
+                "INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO UPDATE SET _id = 'b'")) {
+            roundTrips(s);
+        }
+        assertEquals("INSERT INTO d.t (_id, n) VALUES ('a', 1) ON CONFLICT DO UPDATE SET n = n + 1, m = m - 1",
+                Printer.print(parse("INSERT INTO d.t (_id,n) VALUES ('a',1) On Conflict Do Update Set n=n+1,m=m-1")));
+        // ON, CONFLICT, DO and NOTHING are not reserved: they are names everywhere else.
+        assertEquals(new Statement.Insert("on", "conflict", List.of("_id", "do", "nothing", "on", "conflict"),
+                List.of(List.of("a", 1L, 2L, 3L, 4L)), new Statement.OnConflict(List.of(
+                set("nothing", "do", false, 1L), set("do", "nothing", true, 1L), set("conflict", "on", false, 0L)))),
+                parse("INSERT INTO on.conflict (_id, do, nothing, on, conflict) VALUES ('a', 1, 2, 3, 4)"
+                        + " ON CONFLICT DO UPDATE SET nothing = do + 1, do = nothing - 1, conflict = on + 0"));
+        roundTrips("SELECT do, nothing FROM on.conflict WHERE conflict = 1 AND on IS NULL ORDER BY do");
+        roundTrips("UPDATE on.conflict SET do = do + 1, nothing = 2 WHERE on = 1");
+    }
+
+    @Test
+    void insertOnConflictErrors() {
+        assertEquals("ON CONFLICT needs _id in the column list: a row without _id gets a new one, so it cannot conflict",
+                failsAt("INSERT INTO d.t (n) VALUES (1) ON CONFLICT DO NOTHING", "ON"));
+        assertTrue(failsAt("INSERT INTO d.t (n, id) VALUES (1, 'a') ON CONFLICT DO UPDATE SET n = n + 1", "ON")
+                .startsWith("ON CONFLICT needs _id"));
+        assertEquals("expected CONFLICT but found name 'conflicts'",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICTS DO NOTHING", "CONFLICTS"));
+        assertEquals("expected CONFLICT but found end of input", failsAtEnd("INSERT INTO d.t (_id) VALUES ('a') ON"));
+        assertEquals("expected DO but found end of input", failsAtEnd("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT"));
+        assertEquals("expected DO but found name 'nothing'",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT NOTHING", "NOTHING"));
+        assertEquals("expected NOTHING or UPDATE but found end of input",
+                failsAtEnd("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO"));
+        assertEquals("expected NOTHING or UPDATE but found SET",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO SET n = 1", "SET"));
+        assertEquals("expected SET but found name 'n'",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO UPDATE n = 1", "n = 1"));
+        assertEquals("expected a name but found end of input",
+                failsAtEnd("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO UPDATE SET"));
+        assertTrue(failsAtEnd("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO UPDATE SET n = n")
+                .startsWith("expected '+' or '-'"));
+        assertEquals("column 'n' is set twice",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO UPDATE SET n = 1, N = 2", "N = 2"));
+        assertEquals("_id is a string: it cannot be added to",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO UPDATE SET n = _id + 1", "_id + 1"));
+        // Nothing follows: no WHERE, no second clause, and ON CONFLICT comes after every tuple.
+        assertEquals("expected end of input but found WHERE",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO UPDATE SET n = 1 WHERE n > 0", "WHERE"));
+        assertEquals("expected end of input but found name 'on'",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO NOTHING on conflict do nothing", "on conflict"));
+        assertEquals("expected end of input but found ','",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') ON CONFLICT DO NOTHING, ('b')", ", ('b')"));
+        assertEquals("expected end of input but found name 'do'",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') DO NOTHING", "DO"));
+        assertEquals("expected end of input but found name 'conflict'",
+                failsAt("INSERT INTO d.t (_id) VALUES ('a') CONFLICT DO NOTHING", "CONFLICT"));
+        assertThrows(IllegalArgumentException.class, () -> new Statement.Insert("d", "t", List.of("n"),
+                List.of(List.of(1L)), Statement.OnConflict.DO_NOTHING));
+        assertThrows(IllegalArgumentException.class, () -> new Statement.OnConflict(List.of(
+                new Statement.Assignment("n", 1L), new Statement.Assignment("n", 2L))));
+    }
+
+    @Test
     void select() {
         assertEquals(new Statement.Select("d", "t", new Projection.All(), null, null, null),
                 parse("SELECT * FROM d.t"));

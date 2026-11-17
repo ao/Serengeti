@@ -132,6 +132,15 @@ GitHub release notes and tags.
   two nodes before either received the other's are a conflict (SHOW CONFLICTS), which the next write
   resolves. Only a column plus or minus a number: no other operators, parentheses or functions. 2.1 nodes
   answer this form with a parse error. See docs/QUERY.md, "UPDATE from the row".
+- `INSERT ... ON CONFLICT DO NOTHING` and `INSERT ... ON CONFLICT DO UPDATE SET ...`, such as `INSERT INTO
+  t (_id, n) VALUES ('a', 1) ON CONFLICT DO UPDATE SET n = n + 1`. Under the write lock, each tuple whose
+  `_id` is not a row of the table is inserted; one whose `_id` is a row (also one in conflict; a deleted row
+  is none) is skipped, or has UPDATE's assignments applied to that row, reading it as UPDATE does, and the
+  tuple's other values are not written. The column list must have `_id`, one `_id` twice is refused, and a
+  row that cannot be computed fails the statement with nothing written. The answer adds `inserted`,
+  `updated` and `skipped` to `affected` and `ids` (docs/API.md); the shell prints them. ON, CONFLICT, DO and
+  NOTHING are not reserved. DO NOTHING makes a retried insert safe; DO UPDATE with arithmetic does not. 2.1
+  nodes answer ON CONFLICT with a parse error. See docs/QUERY.md, "INSERT ... ON CONFLICT".
 - Indexes on 2 to 4 columns: `CREATE INDEX ON db.t (a, b)`, `DROP INDEX ON db.t (a, b)`, and `a, b` in
   `SHOW INDEXES`. The index keeps the rows in the ORDER BY order of a, then b. A WHERE whose top-level AND
   has `=`, IN or a LIKE without wildcards on its first columns, and then any of `<`, `<=`, `>`, `>=` and a

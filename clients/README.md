@@ -47,7 +47,8 @@ in an object, `query(statement, { ack, consistency })`, and ignores anything els
 With several nodes, list the URLs in order. A read (SELECT or SHOW) that gets no answer or a 503 is tried
 on the next node. A write is sent once: if it reached a node and the answer was lost, or was 503, it may
 have been written (see "Writes" in docs/CONSISTENCY.md), so trying again is your decision: an
-`UPDATE ... SET n = n + 1` sent twice may count twice. A
+`UPDATE ... SET n = n + 1` sent twice may count twice, and `INSERT ... ON CONFLICT DO NOTHING` sent twice
+skips the row the first one wrote. A
 write goes on to the next node only when it cannot have arrived: the connection was refused or the name
 did not resolve.
 

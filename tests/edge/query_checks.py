@@ -42,6 +42,7 @@ def run(host):
     strings_and_ids(c)
     numbers(c)
     arithmetic(c)
+    upsert(c)
     statements(c)
     limits(c)
     ordering(c)
@@ -345,6 +346,74 @@ def arithmetic(c):
     expect("and not the old one", [], c.rows("SELECT _id FROM q.ark WHERE k = 1"))
     expect("the index and a scan agree", c.rows("SELECT _id FROM q.ark WHERE k >= 10 OR k >= 10"),
            c.rows("SELECT _id FROM q.ark WHERE k >= 10"))
+
+
+def upsert(c):
+    section("INSERT ... ON CONFLICT DO NOTHING | DO UPDATE SET")
+    c.ok("CREATE TABLE IF NOT EXISTS q.up")
+    c.ok("DELETE FROM q.up")
+    c.ok("INSERT INTO q.up (_id, n, s) VALUES ('a', 1, 'x'), ('b', 5, 'y')")
+    j = accepted("DO NOTHING over an existing and a new row", c,
+                 "INSERT INTO q.up (_id, n) VALUES ('a', 10), ('c', 3) ON CONFLICT DO NOTHING")
+    expect("it answers affected 1, inserted 1, updated 0, skipped 1 and the id written",
+           {"type": "write", "affected": 1, "inserted": 1, "updated": 0, "skipped": 1, "ids": ["c"]}, j)
+    expect("and left the existing row as it was", [["a", 1, "x"], ["b", 5, "y"], ["c", 3, None]],
+           c.rows("SELECT _id, n, s FROM q.up"))
+    j = accepted("DO UPDATE SET n = n + 1 over an existing and a new row", c,
+                 "INSERT INTO q.up (_id, n, s) VALUES ('b', 10, 'new'), ('d', 4, 'd') ON CONFLICT DO UPDATE SET n = n + 1")
+    expect("it answers affected 2, inserted 1, updated 1, skipped 0 and both ids",
+           {"type": "write", "affected": 2, "inserted": 1, "updated": 1, "skipped": 0, "ids": ["b", "d"]}, j)
+    expect("SET changed the existing row, and the tuple's other values were not written", [["b", 6, "y"], ["d", 4, "d"]],
+           c.rows("SELECT _id, n, s FROM q.up WHERE _id IN ('b', 'd')"))
+    counter = "INSERT INTO q.up (_id, n) VALUES ('ctr', 1) ON CONFLICT DO UPDATE SET n = n + 1"
+    expect("the counter of QUERY.md inserts once, then updates", [[1, 0], [0, 1], [0, 1]],
+           [[j["inserted"], j["updated"]] for j in (c.ok(counter) for _ in range(3))])
+    expect("and n is 3", [[3]], c.rows("SELECT n FROM q.up WHERE _id = 'ctr'"))
+    expect("every tuple skipped: affected 0 and an empty ids",
+           {"type": "write", "affected": 0, "inserted": 0, "updated": 0, "skipped": 2, "ids": []},
+           c.ok("INSERT INTO q.up (_id, n) VALUES ('a', 0), ('b', 0) ON CONFLICT DO NOTHING"))
+    expect("a plain INSERT answers as before", {"type": "write", "affected": 1, "ids": ["plain"]},
+           c.ok("INSERT INTO q.up (_id) VALUES ('plain')"))
+    c.ok("DELETE FROM q.up WHERE _id = 'a'")
+    j = c.ok("INSERT INTO q.up (_id, n) VALUES ('a', 1) ON CONFLICT DO UPDATE SET n = n + 1")
+    expect("a deleted row counts as absent: the tuple is inserted", [1, 0], [j["inserted"], j["updated"]])
+    expect("with the tuple's n, not the old n + 1", [[1, None]], c.rows("SELECT n, s FROM q.up WHERE _id = 'a'"))
+    for label, query, needle in [
+            ("ON CONFLICT without _id in the columns", "INSERT INTO q.up (n) VALUES (1) ON CONFLICT DO NOTHING",
+             "ON CONFLICT needs _id in the column list"),
+            ("the same _id twice", "INSERT INTO q.up (_id) VALUES ('z'), ('z') ON CONFLICT DO NOTHING",
+             "_id 'z' is listed twice"),
+            ("SET _id", "INSERT INTO q.up (_id) VALUES ('a') ON CONFLICT DO UPDATE SET _id = 'b'", "_id cannot be changed"),
+            ("a WHERE after DO UPDATE", "INSERT INTO q.up (_id) VALUES ('a') ON CONFLICT DO UPDATE SET n = 1 WHERE n > 0",
+             "expected end of input but found WHERE"),
+            ("ON CONFLICTS", "INSERT INTO q.up (_id) VALUES ('a') ON CONFLICTS DO NOTHING", "expected CONFLICT"),
+            ("DO without NOTHING or UPDATE", "INSERT INTO q.up (_id) VALUES ('a') ON CONFLICT DO", "expected NOTHING or UPDATE"),
+            ("ON CONFLICT before VALUES", "INSERT INTO q.up (_id) ON CONFLICT DO NOTHING VALUES ('a')", "expected VALUES"),
+            ("SET n = _id + 1", "INSERT INTO q.up (_id) VALUES ('a') ON CONFLICT DO UPDATE SET n = _id + 1",
+             "_id is a string")]:
+        refused(f"{label} is refused", c, query, needle)
+    c.ok("INSERT INTO q.up (_id, n) VALUES ('str', 'text')")
+    before = c.rows("SELECT * FROM q.up")
+    refused("a row that cannot be computed fails the whole statement", c,
+            "INSERT INTO q.up (_id, n) VALUES ('new', 1), ('ctr', 1), ('str', 1) ON CONFLICT DO UPDATE SET n = n + 1",
+            "cannot set n = n + 1 in the row with _id 'str': n is a string")
+    expect("and nothing was written, neither the new row nor the counter", before, c.rows("SELECT * FROM q.up"))
+    c.ok("CREATE INDEX IF NOT EXISTS ON q.up (n)")
+    c.ok("INSERT INTO q.up (_id, n) VALUES ('ctr', 1), ('i1', 50) ON CONFLICT DO UPDATE SET n = n + 100")
+    expect("an index on the column SET changes finds the new value", [["ctr"]], c.rows("SELECT _id FROM q.up WHERE n = 103"))
+    expect("and the inserted row", [["i1"]], c.rows("SELECT _id FROM q.up WHERE n = 50"))
+    expect("and not the old value", [], c.rows("SELECT _id FROM q.up WHERE n = 3"))
+    expect("the index and a scan agree", c.rows("SELECT _id FROM q.up WHERE n >= 1 OR n >= 1"),
+           c.rows("SELECT _id FROM q.up WHERE n >= 1"))
+    # ON, CONFLICT, DO and NOTHING are not reserved.
+    steps = ["CREATE DATABASE do", "CREATE TABLE do.conflict",
+             "INSERT INTO do.conflict (_id, on, nothing) VALUES ('a', 1, 2) ON CONFLICT DO NOTHING",
+             "INSERT INTO do.conflict (_id, on, nothing) VALUES ('a', 1, 2) ON CONFLICT DO UPDATE SET on = nothing + 1,"
+             " nothing = on - 1", "UPDATE do.conflict SET do = 1 WHERE on = 3"]
+    for s in steps:
+        accepted(f"ON, CONFLICT, DO and NOTHING as names: {s}", c, s)
+    expect("SELECT on, nothing, do FROM do.conflict", [[3, 0, 1]], c.rows("SELECT on, nothing, do FROM do.conflict"))
+    c.ok("DROP DATABASE do")
 
 
 def statements(c):

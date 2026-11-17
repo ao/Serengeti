@@ -100,7 +100,8 @@ class QueryProperties {
                 "DELETE", "CREATE", "DROP", "DATABASE", "TABLE", "IF", "EXISTS", "SHOW", "TABLES", "IN",
                 "ORDER", "BY", "DESC", "LIMIT", "COUNT", "--", "\n", " ", ".", "!", "x".repeat(70), "é",
                 "LIKE", "GROUP", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\'", "'\\%_'", "%", "_", "\\", "IN (1, 2)",
-                "DISTINCT", "HAVING", "COUNT(*)", "COUNT(DISTINCT a)", "ASC", "+", "-", "a + 1", "a - -1", "a-1");
+                "DISTINCT", "HAVING", "COUNT(*)", "COUNT(DISTINCT a)", "ASC", "+", "-", "a + 1", "a - -1", "a-1",
+                "ON", "CONFLICT", "DO", "NOTHING", "ON CONFLICT DO NOTHING", "ON CONFLICT DO UPDATE SET a = a + 1");
     }
 
     @Provide
@@ -113,8 +114,10 @@ class QueryProperties {
     // Generators for statements.
 
     private static Arbitrary<String> names() {
-        // distinct and having are keywords only where the grammar puts them, and names everywhere else.
-        Arbitrary<String> common = Arbitraries.of("a", "b", "x1", "_id", "price", "name_2", "_", "distinct", "having");
+        // distinct, having, on, conflict, do and nothing are keywords only where the grammar puts them, and names
+        // everywhere else.
+        Arbitrary<String> common = Arbitraries.of("a", "b", "x1", "_id", "price", "name_2", "_", "distinct", "having",
+                "on", "conflict", "do", "nothing");
         Arbitrary<String> random = Arbitraries.strings().withCharRange('a', 'z').withChars('_', '0', '9')
                 .ofMinLength(1).ofMaxLength(Lexer.MAX_NAME_LENGTH);
         return Arbitraries.oneOf(common, random).filter(Lexer::isValidName);
@@ -275,16 +278,22 @@ class QueryProperties {
         });
     }
 
+    /** INSERTs, half of them with ON CONFLICT (DO NOTHING, or DO UPDATE SET as UPDATE's), which lists _id. */
     private static Arbitrary<Statement> inserts() {
         Arbitrary<List<String>> columns = names().list().uniqueElements().ofMinSize(1).ofMaxSize(4);
+        Arbitrary<Statement.OnConflict> onConflict = Arbitraries.oneOf(Arbitraries.just(Statement.OnConflict.DO_NOTHING),
+                assignments().map(Statement.OnConflict::new));
         return Combinators.combine(names(), names(), columns.flatMap(cols -> literals().list().ofSize(cols.size())
-                        .list().ofMinSize(1).ofMaxSize(3).map(rows -> new Object[] {cols, rows})))
-                .as((db, t, pair) -> {
+                        .list().ofMinSize(1).ofMaxSize(3).map(rows -> new Object[] {cols, rows})), onConflict.injectNull(0.5))
+                .as((db, t, pair, oc) -> {
                     @SuppressWarnings("unchecked")
-                    List<String> cols = (List<String>) pair[0];
+                    List<String> cols = new ArrayList<>((List<String>) pair[0]);
                     @SuppressWarnings("unchecked")
                     List<List<Object>> rows = (List<List<Object>>) pair[1];
-                    return new Statement.Insert(db, t, cols, rows);
+                    if (oc != null && !cols.contains(Executor.ID)) {
+                        cols.set(0, Executor.ID);
+                    }
+                    return new Statement.Insert(db, t, cols, rows, oc);
                 });
     }
 
@@ -304,8 +313,9 @@ class QueryProperties {
         return Arbitraries.oneOf(literals(), arithmetic);
     }
 
-    private static Arbitrary<Statement> updates() {
-        Arbitrary<List<Statement.Assignment>> sets = names().list().uniqueElements().ofMinSize(1).ofMaxSize(3)
+    /** The assignments of a SET: 1 to 3 columns, each once. */
+    private static Arbitrary<List<Statement.Assignment>> assignments() {
+        return names().list().uniqueElements().ofMinSize(1).ofMaxSize(3)
                 .flatMap(cols -> setValues().list().ofSize(cols.size()).map(vals -> {
                     List<Statement.Assignment> out = new ArrayList<>();
                     for (int i = 0; i < cols.size(); i++) {
@@ -313,7 +323,10 @@ class QueryProperties {
                     }
                     return out;
                 }));
-        return Combinators.combine(names(), names(), sets, exprs(3).injectNull(0.3)).as(Statement.Update::new);
+    }
+
+    private static Arbitrary<Statement> updates() {
+        return Combinators.combine(names(), names(), assignments(), exprs(3).injectNull(0.3)).as(Statement.Update::new);
     }
 
     @Provide

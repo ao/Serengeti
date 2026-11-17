@@ -45,10 +45,12 @@ JUNK = KEYWORDS + SYMBOLS + VALUES + [
     "[", "]", "{", "}", ":", "::", "==", "=<", "<<", "!==", chr(0), chr(0xA0), chr(0x1F600), chr(0xFF0A),
     chr(0x2028), "\t", "\x0b", "N'x'", "X'00'", "0x10", "1_0", "NaN", "Infinity", "LIKE", "JOIN", "GROUP", "ALL",
     "(" * 70, "NOT " * 70, "SELECT * FROM f.t", "IN", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\b'", "'\\'", "BY",
-    "HAVING", "DISTINCT", "OFFSET", "ILIKE", "ESCAPE"]
+    "HAVING", "DISTINCT", "OFFSET", "ILIKE", "ESCAPE", "CONFLICT", "DO", "NOTHING", "EXCLUDED", "RETURNING"]
+# Words that are keywords only where the grammar puts them, written in either case.
+UNRESERVED = ("ON", "CONFLICT", "DO", "NOTHING")
 SEMANTIC = ("does not exist", "already exists", "already has an index", "has no index", "_id must be",
             "_id cannot be changed", "_id needs no index", "_id cannot be a column of an index", "over the maximum",
-            "nested more than", "overflows a", "cannot set",
+            "nested more than", "overflows a", "cannot set", "is listed twice: an INSERT ... ON CONFLICT",
             "would make more than", "would hold more than")
 AGGREGATES = ["COUNT", "SUM", "MIN", "MAX", "AVG"]
 # Pieces of LIKE patterns: wildcards, the three escapes, and characters the stored values hold.
@@ -236,6 +238,15 @@ class Gen:
         k = self.r.random()
         return ["WHERE"] + (self.deep() if k < 0.05 else self.prefix_terms() if k < 0.35 else self.expr())
 
+    def sets(self):
+        """The assignments of UPDATE's SET or ON CONFLICT DO UPDATE SET: 1 to 3 columns, each a literal or a column
+        plus or minus a number (which a string or boolean in the row refuses)."""
+        r = self.r
+        cols = r.sample(["a", "b", "v", "on", "index"], r.randint(1, 3))
+        return sum(([c, "=", self.value(), ","] if r.random() < 0.6 else
+                    [c, "=", self.case(r.choice(SOURCES)), r.choice(["+", "-"]), r.choice(NUMBERS), ","]
+                    for c in cols), [])[:-1]
+
     def index_columns(self):
         """1 to 4 distinct columns of CREATE or DROP INDEX, more often one or two; sometimes _id, which is refused."""
         n = self.r.choice([1, 1, 1, 2, 2, 3, 4])
@@ -276,22 +287,28 @@ class Gen:
         if k < 0.45:
             cols = r.sample(["a", "b", "v", "on", "_id"], r.randint(1, 3))
             n = r.randint(1, 4)
+            # ON CONFLICT needs _id; its ids come from a few, so that tuples meet rows that exist (and, rarely,
+            # one id twice, which is refused).
+            upsert = "_id" in cols and r.random() < 0.5
+            pool = r.sample(range(40), n) if r.random() < 0.9 else [r.randrange(40) for _ in range(n)]
             toks = ["INSERT", "INTO"] + self.table() + ["("] + sum(([c, ","] for c in cols), [])[:-1] + [")", "VALUES"]
             tuples = []
-            for _ in range(n):
+            for i in range(n):
                 vals = []
                 for c in cols:
-                    vals.append(f"'r{r.randrange(10**9)}'" if c == "_id" and r.random() < 0.9 else self.value())
+                    if c == "_id" and r.random() < 0.9:
+                        vals.append(f"'u{pool[i]}'" if upsert else f"'r{r.randrange(10**9)}'")
+                    else:
+                        vals.append(self.value())
                 tuples.append(["("] + sum(([v, ","] for v in vals), [])[:-1] + [")"])
             toks += sum((t + [","] for t in tuples), [])[:-1]
+            if upsert:
+                words = ["ON", "CONFLICT", "DO"] + (["NOTHING"] if r.random() < 0.4 else ["UPDATE", "SET"] + self.sets())
+                toks += [w.lower() if w in UNRESERVED and r.random() < 0.2 else w for w in words]
+                return toks, "upsert"
             return toks, "insert"
         if k < 0.60:
-            cols = r.sample(["a", "b", "v", "on", "index"], r.randint(1, 3))
-            # A literal, or a column plus or minus a number (which a string or boolean in the row refuses).
-            sets = sum(([c, "=", self.value(), ","] if r.random() < 0.6 else
-                        [c, "=", self.case(r.choice(SOURCES)), r.choice(["+", "-"]), r.choice(NUMBERS), ","]
-                        for c in cols), [])[:-1]
-            return ["UPDATE"] + self.table() + ["SET"] + sets + self.where(), "update"
+            return ["UPDATE"] + self.table() + ["SET"] + self.sets() + self.where(), "update"
         if k < 0.70:
             return ["DELETE", "FROM"] + self.table() + (self.where() or ["WHERE", "v", "=", self.value()]), "delete"
         if k < 0.80:

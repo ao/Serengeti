@@ -38,23 +38,40 @@ public sealed interface Result {
 
     /**
      * The outcome of a write: how many databases, tables or rows it changed. {@code ids} lists the
-     * {@code _id} of each inserted row, in insert order; it is empty for other statements.
+     * {@code _id} of each row an INSERT wrote, in the order of its tuples; it is empty for other statements.
+     * {@code upsert} is null but for INSERT ... ON CONFLICT.
      */
-    record Write(long affected, List<String> ids) implements Result {
+    record Write(long affected, List<String> ids, Upsert upsert) implements Result {
+        /** The tuples of an INSERT ... ON CONFLICT: inserted and updated (together {@code affected}), and skipped. */
+        public record Upsert(long inserted, long updated, long skipped) {}
+
         public Write {
             ids = List.copyOf(ids);
+            if (upsert != null && upsert.inserted() + upsert.updated() != affected) {
+                throw new IllegalArgumentException("affected is not inserted + updated");
+            }
+        }
+
+        public Write(long affected, List<String> ids) {
+            this(affected, ids, null);
         }
 
         public Write(long affected) {
             this(affected, List.of());
         }
 
+        /** {@code affected}, then with ON CONFLICT {@code inserted}, {@code updated} and {@code skipped}, then {@code ids}. */
         @Override
         public Map<String, Object> toJson() {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("type", "write");
             m.put("affected", affected);
-            if (!ids.isEmpty()) {
+            if (upsert != null) {
+                m.put("inserted", upsert.inserted());
+                m.put("updated", upsert.updated());
+                m.put("skipped", upsert.skipped());
+            }
+            if (!ids.isEmpty() || upsert != null) {
                 m.put("ids", ids);
             }
             return m;

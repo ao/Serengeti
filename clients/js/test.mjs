@@ -19,6 +19,11 @@ test("writes and reads", async () => {
   assert.deepEqual(r.columns, ["name", "qty"]);
   assert.deepEqual([...r], [["bolt", 120], ["nut", 300]]);
   assert.deepEqual(r.objects()[1], { name: "nut", qty: 300 });
+  let u = await db.query("INSERT INTO js.items (_id, qty) VALUES ('bolt', 1), ('pin', 5) ON CONFLICT DO UPDATE SET qty = qty + 1");
+  assert.deepEqual([u.affected, u.inserted, u.updated, u.skipped, u.ids], [2, 1, 1, 0, ["bolt", "pin"]]);
+  u = await db.query("INSERT INTO js.items (_id, qty) VALUES ('nut', 1) ON CONFLICT DO NOTHING");
+  assert.deepEqual([u.affected, u.skipped, u.ids], [0, 1, []]);
+  assert.deepEqual([...(await db.query("SELECT qty FROM js.items WHERE _id IN ('bolt', 'nut', 'pin')"))], [[121], [300], [5]]);
   await db.query("DELETE FROM js.items");
 });
 
