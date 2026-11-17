@@ -326,9 +326,10 @@ first ordered column) and the keys reach the index's last column, each row it re
 and the read is always used. Otherwise it may read rows the other terms leave out, possibly the whole index
 before the page is full, so it gets a share of what the query would read without it, and if the page is not
 full by then, the query reads and sorts as it would without the index. The share is 1/96 of the table's rows
-when that read is the scan, or of an `_id` range's rows (counted up to 16,384), and 1/5 of the rows an index
-read would find when it is one (less when the read merges many IN values: 1/50 for 1,000), since a row read
-through an index costs 8 to 10 times one read by a scan, and those rows are sorted after. When the share is
+when that read is the scan, or of an `_id` range's rows (counted up to 16,384), and of the rows an index read
+would find when it is one, 1/5 when that read gathers them (a range, a union) and 1/16 when it streams them
+(`=`, IN), and less when the ordered read merges many IN values (1/50 and 1/160 for 1,000), since a row read
+through an index costs 3 to 10 times one read by a scan, and those rows are sorted after. When the share is
 smaller than the rows it must find (OFFSET included), the ordered read is not tried. The share bounds the
 worst case, a condition that no row meets: on 200,000 rows of 10 columns, `WHERE c = 'none' ORDER BY at DESC
 LIMIT 10` takes 32 ms against 28 for the same statement answered by the sort (in-process medians of 31, the

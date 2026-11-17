@@ -1913,10 +1913,17 @@ public final class Store {
 
     /** As {@link #forEachRow}, stopping at the first row for which {@code visitor} returns false. */
     public void forEachRowWhile(String db, String table, java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        forEachRowWhile(db, table, null, visitor);
+    }
+
+    /** As above, from the first id after {@code after} (from the first id when it is null). */
+    public void forEachRowWhile(String db, String table, String after,
+            java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
         if (!tableExists(db, table)) {
             return;
         }
-        for (Map.Entry<String, RowState> e : dbs.get(db).tables.get(table).rows.entrySet()) {
+        TreeMap<String, RowState> rows = dbs.get(db).tables.get(table).rows;
+        for (Map.Entry<String, RowState> e : (after == null ? rows : rows.tailMap(after, false)).entrySet()) {
             Map<String, Object> v = e.getValue().value();
             if (v != null && !visitor.test(e.getKey(), v)) {
                 return;
@@ -2137,12 +2144,18 @@ public final class Store {
     /** As {@link #forEachIndexed(String, String, String, Lookup, BiConsumer)}, stopping when {@code visitor} returns false. */
     public boolean forEachIndexedWhile(String db, String table, String column, Lookup l,
             java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        return forEachIndexedWhile(db, table, column, l, null, visitor);
+    }
+
+    /** As above, visiting only ids after {@code after} (all when it is null), skipped before their rows are read. */
+    public boolean forEachIndexedWhile(String db, String table, String column, Lookup l, String after,
+            java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
         Iterable<String> ids = indexedIds(db, table, column, l);
         if (ids == null) {
             return false;
         }
         TableState t = dbs.get(db).tables.get(table);
-        for (String id : ids) {
+        for (String id : after(ids, after)) {
             RowState r = t.rows.get(id);
             if (r != null && r.value() != null && !visitor.test(id, r.value())) {
                 break;
@@ -2338,6 +2351,12 @@ public final class Store {
      */
     public boolean forEachUnionWhile(String db, String table, List<IndexRead> reads,
             java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        return forEachUnionWhile(db, table, reads, null, visitor);
+    }
+
+    /** As above, visiting only ids after {@code after} (all when it is null), skipped before their rows are read. */
+    public boolean forEachUnionWhile(String db, String table, List<IndexRead> reads, String after,
+            java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
         if (!tableExists(db, table)) {
             return false;
         }
@@ -2361,7 +2380,7 @@ public final class Store {
             if (ids == null) {
                 return false;
             }
-            parts.add(ids);
+            parts.add(after(ids, after));
         }
         for (String id : parts.size() == 1 ? parts.get(0) : merged(parts)) {
             RowState r = t.rows.get(id);
@@ -2370,6 +2389,57 @@ public final class Store {
             }
         }
         return true;
+    }
+
+    /**
+     * The ids of {@code ids}, which come in id order, after {@code after} (all of them when it is null): a view
+     * of a sorted set from there, or the ids before it skipped as they come, before any row is read for them.
+     */
+    @SuppressWarnings("unchecked")
+    static Iterable<String> after(Iterable<String> ids, String after) {
+        if (after == null) {
+            return ids;
+        }
+        if (ids instanceof java.util.NavigableSet<?> n) {
+            java.util.NavigableSet<String> s = (java.util.NavigableSet<String>) n;
+            // A view of part of a map takes no key outside its range: answer those ends without asking it.
+            if (s.isEmpty() || after.compareTo(s.first()) < 0) {
+                return s;
+            }
+            if (after.compareTo(s.last()) >= 0) {
+                return List.of();
+            }
+            return s.tailSet(after, false);
+        }
+        return () -> new java.util.Iterator<>() {
+            private final java.util.Iterator<String> it = ids.iterator();
+            private String next = advance();
+
+            private String advance() {
+                while (it.hasNext()) {
+                    String id = it.next();
+                    if (id.compareTo(after) > 0) {
+                        return id;
+                    }
+                }
+                return null;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return next != null;
+            }
+
+            @Override
+            public String next() {
+                if (next == null) {
+                    throw new java.util.NoSuchElementException();
+                }
+                String out = next;
+                next = it.hasNext() ? it.next() : null;
+                return out;
+            }
+        };
     }
 
     /** Number of rows, over every table, that hold more than one version; for metrics. */

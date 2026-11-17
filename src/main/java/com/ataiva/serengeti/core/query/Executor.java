@@ -391,7 +391,8 @@ public final class Executor {
             java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
         List<Plan> plans = candidates(store, db, table, where);
         Choice first = cheapestChoice(store, db, table, plans, List.of());
-        if (first != null && gathers(first.plan())) {
+        // A read that would gather more than the store gathers is refused anyway: no streaming first (review 22j).
+        if (first != null && gathers(first.plan()) && first.rows() <= Store.MATERIALIZE_LIMIT) {
             List<Plan> streaming = new ArrayList<>();
             for (Plan p : plans) {
                 if (!gathers(p)) {
@@ -427,8 +428,8 @@ public final class Executor {
                         return;
                     }
                     String after = last[0];
-                    scanWhile(store, db, table, plans, first.plan(),
-                            (id, row) -> id.compareTo(after) <= 0 || visitor.test(id, row));
+                    // Each read, and the scan if every read refuses, starts after it (review 22j).
+                    scanWhile(store, db, table, plans, first.plan(), after, visitor);
                     return;
                 }
             }
@@ -470,16 +471,22 @@ public final class Executor {
     /** As above, with the candidate reads and the cheapest of them ({@code first}, null for none) already found. */
     private static void scanWhile(Store store, String db, String table, List<Plan> plans, Plan first,
             java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        scanWhile(store, db, table, plans, first, null, visitor);
+    }
+
+    /** As above, visiting only rows whose _id comes after {@code after} (all when it is null). */
+    private static void scanWhile(Store store, String db, String table, List<Plan> plans, Plan first, String after,
+            java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
         List<Plan> tried = new ArrayList<>();
         // A read that would gather too many ids visits nothing and says so: the next cheapest is tried (review 22f).
         for (Plan via = first; via != null; via = cheapest(store, db, table, plans, tried)) {
-            if (via.isUnion() ? store.forEachUnionWhile(db, table, via.reads(), visitor)
-                    : store.forEachIndexedWhile(db, table, via.column(), via.lookup(), visitor)) {
+            if (via.isUnion() ? store.forEachUnionWhile(db, table, via.reads(), after, visitor)
+                    : store.forEachIndexedWhile(db, table, via.column(), via.lookup(), after, visitor)) {
                 return;
             }
             tried.add(via);
         }
-        store.forEachRowWhile(db, table, visitor);
+        store.forEachRowWhile(db, table, after, visitor);
     }
 
     /**
@@ -946,6 +953,9 @@ public final class Executor {
     /** The share of an index read's rows an ordered read may take when the read without order is that index read. */
     static final int ORDERED_SHARE_OF_INDEX_READ = 5;
 
+    /** As {@link #ORDERED_SHARE_OF_INDEX_READ}, when that index read streams rather than gathers (see gathers). */
+    static final int ORDERED_SHARE_OF_STREAMED_READ = 16;
+
     /**
      * The most ids of an _id range an ordered read's budget counts: past it, the table's rows stand (review 22i:
      * counting a page's 96 shares cost twice reading a long page in order).
@@ -974,7 +984,9 @@ public final class Executor {
                 for (List<Object> values : op.where().equal()) {
                     streams = Math.min(streams * Math.max(1, values.size()), MAX_LOOKUP_TUPLES);
                 }
-                share = ORDERED_SHARE_OF_INDEX_READ * Math.max(1, 64 - Long.numberOfLeadingZeros(streams - 1));
+                // A read that streams (=, IN) costs about a third of one that gathers each row (review 22j).
+                int perRow = gathers(unordered.plan()) ? ORDERED_SHARE_OF_INDEX_READ : ORDERED_SHARE_OF_STREAMED_READ;
+                share = perRow * Math.max(1, 64 - Long.numberOfLeadingZeros(streams - 1));
             }
         }
         long budget = rows / share;
@@ -1167,44 +1179,55 @@ public final class Executor {
     }
 
     /**
-     * The first {@code keep} rows by {@code order} of those added, which come in any order: a list until it
-     * holds that many, then a heap whose head is the last of them. So a sort holds at most {@code keep} rows,
-     * not every match, and gives the first {@code keep} that sorting them all would: {@code order} ends with
-     * _id, so no two rows tie.
+     * The first {@code keep} rows by {@code order} of those added, which come in any order. A sort holds at most
+     * {@link #BUFFER} times {@code keep} rows, not every match, and gives the first {@code keep} that sorting
+     * them all would: {@code order} ends with _id, so no two rows tie.
      */
     static final class Top {
+        /**
+         * How many times {@code keep} rows are held before they are cut: rows in the reverse of the order are all
+         * kept, and each cut costs about as many comparisons as it holds, so the fewer cuts the closer to one sort.
+         */
+        static final int BUFFER = 4;
         private final Comparator<Match> order;
-        private final long keep;
-        private List<Match> list = new ArrayList<>();
-        private java.util.PriorityQueue<Match> heap;
+        private final int keep;
+        private final ArrayList<Match> rows = new ArrayList<>();
+        /** Once the rows were cut to {@code keep}, the last of them: a row not before it is not among the first. */
+        private Match bound;
 
         Top(Comparator<Match> order, long keep) {
-            if (keep < 1) {
+            if (keep < 1 || keep > Integer.MAX_VALUE / BUFFER) {
                 throw new IllegalArgumentException("keep " + keep);
             }
             this.order = order;
-            this.keep = keep;
+            this.keep = (int) keep;
         }
 
+        /**
+         * Rows before the bound are kept until there are BUFFER times {@code keep}, then sorted and cut to the first
+         * {@code keep}. The sort (TimSort) finds runs, so rows that come in the order, or in its reverse (newest
+         * first, read in _id order), cost O(1) each; a heap cost about 2 log2(keep) comparisons a row there and
+         * was 6 times slower than the sort it replaced (review 22j).
+         */
         void add(Match m) {
-            if (heap == null) {
-                list.add(m);
-                if (list.size() == keep) {
-                    heap = new java.util.PriorityQueue<>(list.size(), order.reversed());
-                    heap.addAll(list);
-                    list = null;
-                }
-            } else if (order.compare(m, heap.peek()) < 0) {
-                heap.poll();
-                heap.add(m);
+            if (bound != null && order.compare(m, bound) >= 0) {
+                return;
+            }
+            rows.add(m);
+            if (rows.size() >= BUFFER * keep) {
+                rows.sort(order);
+                rows.subList(keep, rows.size()).clear();
+                bound = rows.get(keep - 1);
             }
         }
 
         /** The rows kept, in {@code order}. */
         List<Match> sorted() {
-            List<Match> out = heap == null ? list : new ArrayList<>(heap);
-            out.sort(order);
-            return out;
+            rows.sort(order);
+            if (rows.size() > keep) {
+                rows.subList(keep, rows.size()).clear();
+            }
+            return rows;
         }
     }
 
