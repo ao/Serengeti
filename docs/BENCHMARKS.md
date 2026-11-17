@@ -253,13 +253,18 @@ What changed, and why:
   `"ack": "local"` from 2,052 to 2,870. 2.2 answers on 64 request threads instead of 16, so more writes wait
   for the same fsync. At 1 and 8 clients nothing changed.
 - With `fsync=interval` or `off`, 2.2 is 7 to 11% slower (13,225 to 11,731 inserts/s at 32 clients), with a
-  lower p99 (17.1 to 7.7 ms): the same 64 threads contend where the disk is not the limit.
+  lower p99 (17.1 to 7.7 ms): the same 64 threads contend where the disk is not the limit. After the
+  changes to the request log in the section below, measured the next day, 2.2 takes 3 to 9% more of these
+  inserts than 2.1 at 8 and 32 clients, and 6 to 8% fewer at 1.
 - Filtered scans over 100,000 rows are 2.5 times as fast (`WHERE n = x`: 239 to 608 requests/s), and 30%
   faster over 10,000. COUNT(*) over 10,000 and 100,000 rows is 26 to 29% slower (11,316 to 8,336, and 1,361
   to 973). Both come from the collector: the 2.2 image sets G1, while 2.1's left the choice to the JVM, which
   takes SerialGC in a 1 GiB container. The same 2.2 image with 2.1's JVM setting (`serial75`, table below)
   counts 100,000 rows 1,325 times a second and scans them 287 times.
 - The cheapest requests (a lookup by `_id`, COUNT(*) of 1,000 rows, an index lookup) are 12 to 16% slower.
+  The causes were the request log's lock and G1's concurrent cycles; after changes to the request log, 2.2
+  looks rows up by `_id` 25% faster than 2.1, measured the next day: see
+  [The request log and G1's concurrent cycles](#the-request-log-and-g1s-concurrent-cycles).
 - CREATE INDEX is 5 to 12 times faster (0.47 to 0.10 s on 100,000 rows).
 - In a three-node cluster under writes, CPU is within 20% of 2.1's and peer traffic within 3%; at rest both
   send about 20% more, the account digest each node asks its peers for every few seconds.
@@ -445,6 +450,153 @@ An earlier session the same day, on another c7g.2xlarge, 2.2 at 4721304 with one
 | SELECT COUNT(*) | 10000 | 11269 | 9033 | 9073 | 8797 | 8464 | 9628 | 10621 |
 | SELECT * WHERE n = x | 100000 | 221 | 525 | 604 | 669 | 559 | 818 | 266 |
 | SELECT COUNT(*) | 100000 | 1197 | 795 | 873 | 1060 | 804 | 1409 | 1225 |
+
+## The request log and G1's concurrent cycles
+
+Why 2.2's cheapest requests were slower than 2.1's, and what changed. Measured on 2026-11-17 on another
+dedicated c7g.2xlarge (same type, disk and method as above, nothing else running). The profiles are
+async-profiler 4.2 attached to the node for 30 s at a time, CPU sampled by itimer every 1 ms and the wall
+clock per thread, with oha at 8 clients looking up rows by `_id` in the 1,000-row table, after the same
+preload, request bodies and 1,000-row SELECT and COUNT(*) runs that scenario c makes first. The rates in the
+first table come from that setup, the median of 3 runs of 20 s; the tables after it are `tests/bench/report.sh`
+output.
+
+Two things set the rate of the cheapest requests.
+
+Every request logs one line at INFO through java.util.logging's console handler, which formats and writes
+each record while it holds one lock. At 8 clients the request threads spent most of their wall-clock time
+waiting for that lock, 81% on 2.1 (16 threads) and 93% on 2.2 (64 threads), so the lock set the rate of
+every cheap request; that is why a lookup by `_id`, COUNT(*) of 1,000 rows and an index lookup all ran at
+16,600 to 17,400 a second on 2.1. 44% of the CPU time the lock was held went to a stack walk:
+SimpleFormatter asks each record for its source class, which the node's format does not print, and a record
+logged without one walks the stack to find it. Parsing the format pattern again for each record was 30% of
+what was left. With the request log switched off through a logging configuration (a diagnostic, not a
+setting the node offers), 2.2 at 3057fda answered 29,124 lookups a second.
+
+With scenario c's tables loaded (111,000 rows, about 65 MB left after a young collection), G1 keeps the heap
+at about 160 MB of its 616 MB maximum, since its pauses take under 1% of the time. Its adaptive start of
+marking leaves room for the young generation (about 85 MB) and for what is allocated while marking, so it
+starts a concurrent cycle at every other young collection: 106 in 20 s, each about 66 ms, with 9 to 13% of
+the node's CPU on the marking threads. SerialGC, which 2.1's image ends up with, has nothing like it. With
+`-XX:InitialRAMPercentage=60` the heap starts at its maximum and no cycle started at this data size; the
+node then held 550 MiB of memory instead of 241.
+
+Lookups by `_id`, 1,000 rows, 8 clients; memory in use at the end as `docker stats` counts it. The first
+eight rows come from two batches of runs on the same machine, in which 2.2 at 3057fda measured 15,234 and
+15,270, and the last six from two more.
+
+| Build and setting | Requests/s | Concurrent cycles in 20 s | Memory in use, MiB |
+|---|---:|---:|---:|
+| 2.1 b983d15 | 17,102 | 0 | 257 |
+| 2.2 3057fda | 15,270 | 106 | 241 |
+| 2.2 3057fda, `SERENGETI_HTTP_THREADS=16` | 15,860 | 80 | |
+| 2.2 3057fda, `MALLOC_ARENA_MAX=64` | 15,072 | 105 | |
+| 2.2 3057fda, `-XX:-G1UseAdaptiveIHOP` | 15,203 | 107 | |
+| 2.2 3057fda, `-XX:+UseSerialGC` | 16,620 | 0 | |
+| 2.2 3057fda, `-XX:InitialRAMPercentage=60` | 17,176 | 0 | 550 |
+| 2.2 3057fda, `-XX:InitialRAMPercentage=60`, 16 threads | 17,339 | 0 | 569 |
+| 2.2, the request log names its source | 19,515 | 94 | 270 |
+| and builds its line without String.format (2474c5d) | 19,801 | 101 | 255 |
+| and reads a small body with a buffer of its size (5160197) | 19,694 | 102 | 246 |
+| and formats log lines with LogFormat (6d33229) | 21,756 | 71 | 262 |
+| 6d33229, `-XX:InitialRAMPercentage=60` | 24,677 | 0 | 565 |
+| 6d33229, `SERENGETI_HTTP_THREADS=16` | 22,185 | 117 | 224 |
+
+The changes keep the log's text: the request line is logged with the source a stack walk would find
+(2474c5d), and LogFormat writes exactly what SimpleFormatter writes with the node's pattern; a record with a
+stack trace, or a default locale whose digits are not ASCII, still goes to SimpleFormatter (6d33229). After
+them the request threads spend 4% of their wall-clock time waiting for the log's lock, against 73% before
+6d33229. What the lock still holds is mostly the write and flush of each line to standard error, one system
+call per line, kept so that a line is out when its request ends. The 8 KiB body buffer was 15% of what a
+lookup allocated; reading a small body with a buffer of its size did not change the rate.
+
+Nothing else on the path cost measurably more in 2.2: authentication (the verified-password cache and
+`Users.Access`) took 1.3% of the request threads' CPU, and with the concurrent cycles out of the way
+(`InitialRAMPercentage=60`) 2.2 at 3057fda looked rows up at 2.1's rate. Lock contention other than the
+log's was negligible on both.
+
+### Machine and method
+
+- Machine: EC2 c7g.2xlarge: Neoverse-V1, 8 cores, 15.3 GiB memory, Ubuntu 24.04.5 LTS, Linux 7.0.0-1014-aws (aarch64). Docker: Ubuntu 24.04.5 LTS; Docker 29.10.0; kernel 7.0.0-1014-aws; 8 CPUs; 16425988096 bytes; aarch64. Containers see 8 CPUs; no model name in /proc/cpuinfo (CPU implementer 0x41).
+- Disk: gp3 EBS, 3000 IOPS, 125 MB/s; device Amazon Elastic Block Store, 120 GiB. Data volumes are on ext4 under /var/lib/docker. The mean time of one 4 KiB O_DSYNC write there (`dd oflag=dsync`, one write at a time, in a data volume of the image, at the start of each run), the least one `fsync=always` write can take: A: 2.809 ms (500 writes); B: 2.281 ms (500 writes); C: 2.745 ms (500 writes).
+- A: image `serengeti:b21` (linux/arm64, id sha256:6a4bfaae5135), version 2.1.0-SNAPSHOT, built from commit b983d1550ac9ab65ac6bf85fa1b82817a7df7438. Run from 2026-11-17T08:48Z to 2026-11-17T09:10Z (UTC) with the harness at commit 6d332292cda8.
+- B: image `serengeti:b22` (linux/arm64, id sha256:077cd5ddd88e), version 2.2.0-SNAPSHOT, built from commit 3057fda9a4d0c7a3f72e51907323b42995dad97f. Run from 2026-11-17T09:10Z to 2026-11-17T09:32Z (UTC) with the harness at commit 6d332292cda8.
+- C: image `serengeti:p22` (linux/arm64, id sha256:6dccdf861270), version 2.2.0-SNAPSHOT, built from commit 6d332292cda81e16b2809925043e726e1ea992a5. Run from 2026-11-17T09:32Z to 2026-11-17T09:55Z (UTC) with the harness at commit 6d332292cda8.
+- Other load: A: 0 other containers at the start; the host's CPUs 0% busy before the first scenario (after waiting 0 s) and at most 0% before any scenario, with no benchmark node running; load averages 1.05 1.43 1.95 at the start, 7.34 7.16 6.06 at the end; B: 0 other containers at the start; the host's CPUs 0% busy before the first scenario (after waiting 0 s) and at most 0% before any scenario, with no benchmark node running; load averages 7.07 7.11 6.05 at the start, 8.65 8.53 7.73 at the end; C: 0 other containers at the start; the host's CPUs 0% busy before the first scenario (after waiting 0 s) and at most 0% before any scenario, with no benchmark node running; load averages 7.96 8.39 7.68 at the start, 11.30 10.94 9.46 at the end.
+- Memory caps: 1g per Serengeti node (the JVM's maximum heap is then A: 768; B: 616; C: 616 MiB), 384m for the load generator. No CPU limits. Java: openjdk version "21.0.13" 2026-10-20 LTS;OpenJDK Runtime Environment Temurin-21.0.13+9 (build 21.0.13+9-LTS).
+- Load generator: oha 1.16.0 from `ghcr.io/hatoo/oha:1.16.0`, in a container on the same private Docker network as the nodes. HTTP/1.1 with keep-alive, Basic auth, one connection per concurrent request.
+- Runs: each figure in scenarios a to d is from 3 run(s) of 15 s, each after a 5 s warm-up that is not counted, each on a new table. Requests/s is the median of the runs, with the lowest and highest in brackets; the latencies and fsync figures are those of the run with the median rate. Latency is the time from sending a request to the end of its response, as the load generator saw it. Errors (non-200 answers and failed requests) are listed under a table when there were any.
+- Rows: `{"_id": <uuid>, "n": <integer>, "s": <28-character string>}`. After each insert run the table's row count is checked against the number of acknowledged inserts, and in a cluster every node must reach that count; then the table is dropped, so every run starts with the same rows in memory.
+- Settings: defaults except `SERENGETI_FSYNC`, the cluster settings and TLS. The server keeps a verified password for 60 s, so a run may include one bcrypt check; 2.0 and 2.1 answer on 16 request threads, so concurrency 32 queues there; 2.2 answers on 64 (`http_threads`).
+- Reproduce: `tests/bench/run.sh` (`QUICK=1` for a short run; `IMAGE=name:tag` for another image), then `tests/bench/report.sh NAME=OUT ...` to put runs side by side.
+
+### b. Single node, plain HTTP: INSERT with other fsync settings
+
+| Config | Concurrency | Requests/s, A | Requests/s, B | Requests/s, C | p50 ms, A | p50 ms, B | p50 ms, C | p99 ms, A | p99 ms, B | p99 ms, C | Writes per fsync (mean fsync), A | Writes per fsync (mean fsync), B | Writes per fsync (mean fsync), C |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| fsync=interval | 1 | 6001 (5856-6100) | 5498 (5433-5534) | 5495 (5439-5545) | 0.15 | 0.17 | 0.18 | 0.20 | 0.22 | 0.22 | 6002.1 (6.13 ms) | 5498.6 (4.20 ms) | 5495.8 (5.73 ms) |
+| fsync=interval | 8 | 13626 (13072-14619) | 13040 (13003-13239) | 14805 (14334-14853) | 0.49 | 0.56 | 0.50 | 0.85 | 1.11 | 0.90 | 13627.9 (7.13 ms) | 13041.7 (6.33 ms) | 14807.5 (6.93 ms) |
+| fsync=interval | 32 | 13638 (13235-14105) | 12316 (11842-13258) | 14098 (13523-14490) | 1.90 | 2.18 | 1.95 | 19.4 | 7.29 | 4.32 | 14295.7 (6.13 ms) | 12320.4 (7.40 ms) | 14101.9 (6.87 ms) |
+| fsync=off | 1 | 5943 (5886-6098) | 5478 (5379-5519) | 5566 (5496-5617) | 0.16 | 0.17 | 0.17 | 0.20 | 0.23 | 0.21 | no fsync | no fsync | no fsync |
+| fsync=off | 8 | 13622 (13090-14594) | 13170 (13138-13214) | 14414 (14268-14849) | 0.49 | 0.56 | 0.50 | 0.83 | 1.08 | 0.89 | no fsync | no fsync | no fsync |
+| fsync=off | 32 | 13582 (13275-14119) | 11910 (11807-13251) | 14169 (13736-14652) | 1.91 | 2.19 | 1.91 | 19.2 | 7.92 | 3.81 | no fsync | no fsync | no fsync |
+
+### c. Single node reads, concurrency 8
+
+No indexes. `SELECT * FROM t WHERE n = x` returns one row; x is a random value, the same sequence in every run. `WHERE _id = x` looks up a random id of the table, also the same sequence in every run.
+
+| Query | Rows in table | Requests/s, A | Requests/s, B | Requests/s, C | p50 ms, A | p50 ms, B | p50 ms, C | p99 ms, A | p99 ms, B | p99 ms, C |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| SELECT * WHERE n = x | 1000 | 15330 (15329-15382) | 13188 (13124-13213) | 17097 (17058-17131) | 0.49 | 0.54 | 0.39 | 1.09 | 1.66 | 1.47 |
+| SELECT COUNT(*) | 1000 | 16982 (16867-17000) | 15426 (15402-15539) | 22214 (22165-22429) | 0.46 | 0.48 | 0.30 | 0.96 | 1.34 | 1.15 |
+| SELECT * WHERE _id = x | 1000 | 16699 (16683-16756) | 14699 (14687-14733) | 20961 (20903-21028) | 0.45 | 0.49 | 0.31 | 0.95 | 1.40 | 1.21 |
+| SELECT * WHERE n = x | 10000 | 4668 (4535-4703) | 6070 (6070-6077) | 6454 (6378-6460) | 1.50 | 1.12 | 1.10 | 3.51 | 3.73 | 3.43 |
+| SELECT COUNT(*) | 10000 | 11584 (11577-11667) | 15441 (15405-15502) | 22292 (22287-22296) | 0.64 | 0.48 | 0.30 | 1.50 | 1.33 | 1.17 |
+| SELECT * WHERE _id = x | 10000 | 16624 (16507-16669) | 14712 (14703-14731) | 20897 (20833-20953) | 0.45 | 0.49 | 0.31 | 0.97 | 1.39 | 1.20 |
+| SELECT * WHERE n = x | 100000 | 227 (226-228) | 576 (576-579) | 554 (553-557) | 35.1 | 12.7 | 13.2 | 45.9 | 24.7 | 25.1 |
+| SELECT COUNT(*) | 100000 | 1310 (1299-1318) | 15431 (15396-15432) | 22245 (22155-22291) | 5.76 | 0.48 | 0.30 | 10.7 | 1.35 | 1.15 |
+| SELECT * WHERE _id = x | 100000 | 16643 (16573-16684) | 14633 (14576-14656) | 20767 (20750-20815) | 0.45 | 0.49 | 0.31 | 0.96 | 1.39 | 1.20 |
+
+### c-index. Single node reads through an index on n, concurrency 8
+
+The same node and tables as c, after `CREATE INDEX ON t (n)` on each. Both queries compare n with a random value, the same sequence in every run. Time each CREATE INDEX took: A: 1000 rows 0.12 s, 10000 rows 0.10 s, 100000 rows 0.55 s; B: 1000 rows 0.01 s, 10000 rows 0.01 s, 100000 rows 0.11 s; C: 1000 rows 0.02 s, 10000 rows 0.01 s, 100000 rows 0.12 s.
+
+| Query | Rows in table | Requests/s, A | Requests/s, B | Requests/s, C | p50 ms, A | p50 ms, B | p50 ms, C | p99 ms, A | p99 ms, B | p99 ms, C |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| SELECT * WHERE n = x | 1000 | 17230 (16883-17309) | 14928 (14598-14945) | 20748 (20078-20759) | 0.45 | 0.49 | 0.32 | 0.88 | 1.37 | 1.23 |
+| SELECT COUNT(*) WHERE n = x | 1000 | 17361 (16947-17373) | 15083 (14765-15158) | 20793 (20445-21062) | 0.45 | 0.49 | 0.32 | 0.86 | 1.37 | 1.23 |
+| SELECT * WHERE n = x | 10000 | 17038 (16733-17146) | 14908 (14545-14931) | 20544 (19930-20553) | 0.46 | 0.49 | 0.32 | 0.89 | 1.39 | 1.24 |
+| SELECT COUNT(*) WHERE n = x | 10000 | 17253 (16779-17293) | 15013 (14728-15089) | 20670 (20214-20692) | 0.45 | 0.49 | 0.32 | 0.87 | 1.39 | 1.22 |
+| SELECT * WHERE n = x | 100000 | 16977 (16584-17036) | 14844 (14517-14935) | 20009 (19816-20335) | 0.46 | 0.50 | 0.33 | 0.89 | 1.39 | 1.27 |
+| SELECT COUNT(*) WHERE n = x | 100000 | 17169 (16779-17174) | 14878 (14571-15029) | 20480 (19867-20566) | 0.45 | 0.49 | 0.32 | 0.88 | 1.39 | 1.26 |
+
+### What the two choices cost after these changes
+
+C with one setting changed per run, the same machine, after the runs above, `tests/bench/run.sh` with
+`NODE_ARGS`: `init60` is `-e JDK_JAVA_OPTIONS=-XX:InitialRAMPercentage=60` (G1's heap starts at its
+maximum), `t16` is `-e SERENGETI_HTTP_THREADS=16`. The C column is from the run above; the other two ran
+scenario c from 09:55Z to 10:14Z and b from 10:26Z to 10:40Z. Requests/s, median of 3 runs:
+
+| Scenario | Query or setting | Clients | C | init60 | t16 |
+|---|---|---:|---:|---:|---:|
+| c | `SELECT * WHERE _id = x`, 100,000 rows | 8 | 20767 | 23598 | 21592 |
+| c | `SELECT COUNT(*)`, 1,000 rows | 8 | 22214 | 25206 | 23075 |
+| c | `SELECT * WHERE n = x`, 1,000 rows | 8 | 17097 | 19451 | 18316 |
+| c | `SELECT * WHERE n = x`, 10,000 rows | 8 | 6454 | 7636 | 6804 |
+| c | `SELECT * WHERE n = x`, 100,000 rows | 8 | 554 | 969 | 602 |
+| b | INSERT, fsync=interval | 1 | 5495 | 5726 | 5965 |
+| b | INSERT, fsync=interval | 8 | 14805 | 15250 | 15059 |
+| b | INSERT, fsync=interval | 32 | 14098 | 14779 | 14969 |
+| b | INSERT, fsync=off | 1 | 5566 | 5575 | 5973 |
+| b | INSERT, fsync=off | 8 | 14414 | 15099 | 15196 |
+| b | INSERT, fsync=off | 32 | 14169 | 14625 | 15187 |
+
+A heap that starts at its maximum takes 14% more cheap reads and 75% more scans of 100,000 rows here, and
+costs memory: the node held about 300 MiB more at this data size (first table), and it was not run against
+the memory limit's tests (`tests/memory`). 16 request threads take 4% more cheap reads and bring a single
+client's inserts back to 2.1's rate (5,965 against 6,001), and give back what the 64 threads bought: one node
+doing durable writes at 32 clients took 2,640 writes/s on 16 threads and 4,827 on 64 (2.2 against 2.1,
+above). The image keeps both settings as they were.
 
 ## Running it again
 

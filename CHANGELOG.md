@@ -239,6 +239,11 @@ GitHub release notes and tags.
 - The image uses G1 (2.1's image left the choice to the JVM, which takes SerialGC in a container under
   2 GiB) and gives the heap 60% of the container's memory (was 75%), leaving room for the log's
   page cache: at 75% a container filling with data was killed by the kernel before the heap was full.
+- Each request's log line costs less inside the console handler's lock, which every line passes through
+  and which bounded the rate of the cheapest requests: the line names its source, so the record no longer
+  walks the stack for it, and the node formats log lines itself instead of parsing SimpleFormatter's
+  pattern for each record. The text is the same. Lookups by `_id` at 8 clients went from 14,633 to 20,767
+  a second on one node (2.1: 16,643; EC2 c7g.2xlarge, docs/BENCHMARKS.md).
 
 ## [Unreleased] - 2.1.0
 

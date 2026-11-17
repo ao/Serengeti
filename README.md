@@ -195,7 +195,7 @@ Serengeti is smaller than both, and young: 2.0 was its first usable release.
 
 GitHub Actions runs these on every change:
 
-- 479 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
+- 489 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
   syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
   the writes no other write had seen, one that restarts, crashes and checkpoints a node at random and
   checks that every change feed cursor it gave out gets the same changes again or 410, and others that
@@ -239,10 +239,16 @@ the spread and every table.
 | Lookup by `_id` in 100,000 rows, 8 clients | 16,724 reads/s | 14,618 reads/s |
 
 2.2 answers on 64 request threads instead of 16 and its image uses G1, which scans faster than the
-SerialGC 2.1's image ends up with. The cheapest requests are 12 to 16% slower, and non-durable writes
-(`fsync=interval`) 7 to 11% slower. `COUNT(*)` without WHERE no longer visits the rows: in the session
-above it was 973 reads/s, and 15,100 after that change, measured later on another c7g.2xlarge; see
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md#22-against-21).
+SerialGC 2.1's image ends up with. In that session the cheapest requests were 12 to 16% slower, and
+non-durable writes (`fsync=interval`) 7 to 11% slower. `COUNT(*)` without WHERE no longer visits the rows:
+in the session above it was 973 reads/s, and 15,100 after that change, measured later on another
+c7g.2xlarge; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md#22-against-21).
+
+Each request's log line was formatted and written under one lock, which bounded the rate of the cheapest
+requests in both versions. With that made cheaper, in a later session on another c7g.2xlarge, 2.2 looked
+rows up by `_id` 20,767 times a second at 8 clients against 2.1's 16,643, and took 3 to 9% more
+non-durable inserts than 2.1 at 8 and 32 clients (6 to 8% fewer at 1); see
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md#the-request-log-and-g1s-concurrent-cycles).
 
 2.1 against 2.0.0, measured in an earlier session:
 
