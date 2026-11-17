@@ -12,8 +12,7 @@ public final class Serengeti {
 
     public static void main(String[] args) {
         // One line per log record, to stdout's companion stderr, before any logger exists.
-        System.setProperty("java.util.logging.SimpleFormatter.format",
-                "%1$tY-%1$tm-%1$tdT%1$tH:%1$tM:%1$tS.%1$tL%1$tz %4$s %3$s: %5$s%6$s%n");
+        System.setProperty(LogFormat.PROPERTY, LogFormat.PATTERN);
         // Drop clients that take more than 30 s to send a request. There is no limit on reading a response: the
         // JDK closes a connection whose response is overdue while it holds the set every request passes
         // through, and closing a TLS connection waits for a write blocked on a peer that stopped reading, so one
@@ -77,6 +76,8 @@ public final class Serengeti {
             if (health) {
                 System.exit(probe(config) ? 0 : 1);
             }
+            // The same lines as SimpleFormatter writes, made faster: every request logs one (see LogFormat).
+            LogFormat.install(java.util.logging.Logger.getLogger(""));
             Node node = Node.start(config, Node.QUERIES);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {
