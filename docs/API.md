@@ -197,18 +197,30 @@ value, also an UPDATE that leaves the value as it was; a conflicting version tha
 value is not a change (see CONSISTENCY.md). After `create_table` or
 `create_db`, read the table or database again: when one is created again after a drop, rows that another
 node wrote after the drop can become visible, and they are not listed one by one. A change is listed once
-this node has it on disk. A write that fails to reach the disk (a full disk, say) is answered 500, taken
+this node has it on disk; with `fsync` `interval` that is after the once-a-second force that covers it, so
+up to about a second after the write is acknowledged. A write that fails to reach the disk (a full disk, say) is answered 500, taken
 back and never listed, and the node goes on. After an fsync of the log fails, the node no longer knows what
 is on disk: the feed answers 503 from then on, until the node is restarted.
 
 To follow a table from the start: take a cursor with `after=now`, read the table with SELECT, then follow
 from the cursor. A change can then arrive for a row the SELECT already showed; apply changes by `_id`.
 
-A node keeps its last `changes_buffer` changes (10,000 by default) in memory, from when it started; with
-`changes_buffer` 0 it keeps none and this route answers 404. A
-cursor from before a restart, from another node, or older than what the node still holds gets 410: read
-the table again and follow from `after=now`. Cursors belong to the node that gave them. At most 32 requests
-wait at once; more answer at once, with whatever there is.
+A node keeps its last `changes_buffer` changes (10,000 by default, fewer when they are large); with
+`changes_buffer` 0 it keeps none and this route answers 404. They outlive a restart and a crash (`kill -9`,
+a machine that loses power): at start the node replays its write-ahead log, which lists the log's changes
+again with the same numbers, after the changes it kept in `changes.jsonl` at its last checkpoint (see
+CONFIGURATION.md, "Data directory"). A cursor from before the restart goes on where it was, and gets the
+same changes it would have got before, as long as they are still held. A write that a crash cut off was
+not acknowledged and not listed, so it changes nothing for cursors.
+
+The part of the cursor before the colon is the feed's epoch. The node keeps it in its data directory and
+starts a new one only when it can no longer give the same answers: after `serengeti restore`, on a data
+directory that was emptied or has no `changes.jsonl` (also the first start on 2.2 after an older version),
+after a log that lost a record it had whole (a damaged disk), after a crash in the milliseconds of a
+checkpoint between writing the snapshot and emptying the log, and, with `fsync` `off`, after any stop that
+was not clean. The node logs which at start. A cursor from another epoch, from another node, or older than
+what the node still holds gets 410: read the table again and follow from `after=now`. Cursors belong to the
+node that gave them. At most 32 requests wait at once; more answer at once, with whatever there is.
 
 ## Accounts
 

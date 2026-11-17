@@ -27,8 +27,15 @@ GitHub release notes and tags.
   up to 60 s. A change is listed once the node has it on disk, and the feed answers 503 after an fsync of
   the log fails. A node keeps the last `changes_buffer` (10,000) changes, fewer when together they would
   take more than a sixteenth of the heap (metrics `serengeti_changes_held` and `serengeti_changes_bytes`);
-  an older cursor, or one from before a restart, gets 410. See
-  docs/API.md, "Changes".
+  an older cursor gets 410. See docs/API.md, "Changes".
+- Change feed cursors outlive a restart, a crash and a checkpoint on the same node. At start the node replays
+  its log with the feed attached, which lists the log's changes again with the same numbers; each
+  checkpoint writes the epoch and the last `changes_buffer` changes to `changes.jsonl`, and
+  `changes-marks.jsonl` records where tombstones were dropped so the replay drops them at the same place.
+  Nothing more is written per write. The epoch changes only after a restore, on an emptied directory, after
+  a log that lost a whole record, after a crash inside a checkpoint's last steps, and with `fsync` `off`
+  after a stop that was not clean. With `fsync` `interval`, a change is now listed after the force that
+  covers it. See docs/CONFIGURATION.md, "Data directory".
 - Accounts and roles. An admin creates, changes and deletes accounts over `/v1/users`; each account is
   `metrics` (`/metrics` and `/v1/status` only), `read` (SELECT and SHOW), `write` (also writes and schema
   changes) or `admin` (also accounts and backups), and a write by a read account is refused with 403. In a

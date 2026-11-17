@@ -172,8 +172,9 @@ cursor=$(curl -s -u "admin:$SERENGETI_PASSWORD" 'http://127.0.0.1:1985/v1/change
 curl -s -u "admin:$SERENGETI_PASSWORD" "http://127.0.0.1:1985/v1/changes?db=shop&table=items&after=$cursor&wait=30"
 ```
 
-The [clients](clients/) wrap this as `follow()`. A node keeps its recent changes in memory only, so a
-cursor from before a restart gets 410: read the table again and follow from now. See
+The [clients](clients/) wrap this as `follow()`. A node keeps its last 10,000 changes (`changes_buffer`),
+also across a restart or a crash, so a cursor goes on where it was; one older than that, from another node,
+or from before a restore gets 410: read the table again and follow from now. See
 [docs/API.md](docs/API.md#changes).
 
 ## How it compares
@@ -194,10 +195,13 @@ Serengeti is smaller than both, and young: 2.0 was its first usable release.
 
 GitHub Actions runs these on every change:
 
-- 464 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
+- 479 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
   syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
-  the writes no other write had seen, and others that compare index lookups and GROUP BY with scans;
-- 111 checks against the built image on amd64 and arm64, including `kill -9` during writes, account roles
+  the writes no other write had seen, one that restarts, crashes and checkpoints a node at random and
+  checks that every change feed cursor it gave out gets the same changes again or 410, and others that
+  compare index lookups and GROUP BY with scans;
+- 122 checks against the built image on amd64 and arm64, including `kill -9` during writes (and a change
+  feed cursor followed across the kills and a `docker restart`), account roles
   and accounts limited to some databases, a second node refused on a data directory in use, the shell and
   backup commands, and scheduled backups;
 - 39 checks on a 3-node TLS cluster in Docker: nodes killed and restarted, one partitioned with iptables,

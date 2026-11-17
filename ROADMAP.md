@@ -16,7 +16,8 @@ here has a date.
   needs HTTP Basic credentials. Accounts have a role (metrics, read, write or admin), read and write accounts
   can be limited to some databases, and accounts replicate across the cluster. The first admin password comes from the environment, a file or a one-time setup token.
   Failed logins are limited per address.
-- A change feed: `GET /v1/changes` follows a table's changes with a cursor and a long poll.
+- A change feed: `GET /v1/changes` follows a table's changes with a cursor and a long poll; cursors
+  outlive a restart of the node.
 - A memory limit: writes that add data are refused with 503 before the data fills the heap.
 - HTTPS with a PKCS#12 key store, TLS 1.2 and 1.3 only ([docs/CONFIGURATION.md](docs/CONFIGURATION.md)),
   and `serengeti-certs` in the image to make a cluster's certificates.
@@ -46,8 +47,7 @@ here has a date.
 
 ## Possible next steps
 
-Not committed to, and in no particular order: clients published as packages; a change feed that survives
-a restart.
+Not committed to, and in no particular order: clients published as packages.
 
 ## Not planned
 

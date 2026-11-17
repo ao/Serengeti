@@ -35,7 +35,8 @@ in an object, `query(statement, { ack, consistency })`, and ignores anything els
   [docs/CONSISTENCY.md](../docs/CONSISTENCY.md).
 - `changes(db, after, table, wait, limit)` for one page of the change feed (Python returns `(changes,
   cursor)`, JavaScript `{ changes, cursor }`), and `follow(db, table)`, which yields changes as they come,
-  from now on. Cursors belong to one node, so both use the first URL.
+  from now on. Cursors belong to one node, so both use the first URL. A cursor outlives a restart of that
+  node: after `Unavailable`, call `changes` again with the last cursor.
 - `users()`, `set_user` / `setUser` (password, role and `databases`: a list limits the account to those
   databases, None or null removes the limit, left out keeps it), `delete_user` / `deleteUser` (an
   admin's) and `status()`.

@@ -23,7 +23,7 @@ node exit with status 2 and a one-line message.
 | `discovery_cidr` | none | Opt-in: find peers by asking `/internal/hello` on `port` at every address in this range, at most 256 addresses (a /24 or /120). Needs TLS and `cluster_size`. |
 | `write_ack` | `majority` | In a cluster: `majority` acknowledges a write once a majority of nodes has it; `local` once this node has it, even with no peer reachable. Requests override it with `"ack"`. See [CONSISTENCY.md](CONSISTENCY.md). |
 | `tombstone_ttl_hours` | `168` | How long a delete's tombstone is kept (it is dropped at the next 10-minute boundary after). A cluster node away longer than this less 20 minutes must be emptied to rejoin. Set it the same on every node. 1 to 87600. |
-| `changes_buffer` | `10000` | How many recent changes the node keeps in memory for `GET /v1/changes` (see API.md, "Changes"), 0 to 1,000,000; `0` turns the feed off, and the route answers 404. Each held change keeps its row's value alive, so a large buffer of large rows costs memory. |
+| `changes_buffer` | `10000` | How many recent changes the node keeps in memory for `GET /v1/changes` (see API.md, "Changes"), 0 to 1,000,000; `0` turns the feed off, and the route answers 404. Each held change keeps its row's value alive, so a large buffer of large rows costs memory. The changes outlive a restart (`changes.jsonl`, below). Started with `0`, the node deletes the feed's files, and the next start with a buffer begins a new epoch. |
 | `http_threads` | `64` | Threads that answer HTTP requests, 1 to 1024. A request holds one while it is read, run and answered, so a client that sends slowly holds one for up to 30 s; half of them at most wait on `GET /v1/changes`. |
 | `memory_limit_percent` | `60` | Writes that add data (INSERT, UPDATE, CREATE) are refused with 503 once the rows and index entries held are estimated to take this share of the maximum heap; deletes and drops are always taken and make room at once. 10 to 100; `100` turns it off. Every database is held in memory, so this is the node's capacity. The image gives the heap 60% of the container's memory: a 512 MiB container holds an estimated 185 MiB of data with the default. |
 | `backup_dir` | none | Directory for scheduled backups, created if missing (mode 0700). Not the data directory or inside it. See [Scheduled backups](#scheduled-backups). The image has an empty `/backups` for a volume. |
@@ -83,7 +83,9 @@ are changed with `POST /v1/password` or `PUT /v1/users/NAME`.
 | File | Contents |
 |---|---|
 | `wal.log` | Write-ahead log: length, CRC32C and JSON per batch. |
-| `snapshot.jsonl` | The state at the last checkpoint. The log is folded into it after 64 MiB. |
+| `snapshot.jsonl` | The state at the last checkpoint. The log is folded into it after 64 MiB. Its first line has a checkpoint id, new at each checkpoint, which `changes.jsonl` names. |
+| `changes.jsonl` | The change feed's epoch, the number the log's first change gets, and the last `changes_buffer` changes the feed held at the last checkpoint, which the emptied log no longer has. Written with each checkpoint, as `changes.jsonl.next` until the log is emptied, then renamed. At start the node replays the log after these changes, so cursors outlive a restart. Used only with the snapshot whose id it names; without it, or with another snapshot, the feed starts a new epoch. |
+| `changes-marks.jsonl` | Where in the log tombstones were dropped since the last checkpoint (one line each, forced before they are dropped), so that the replay drops them at the same place and lists the same changes. With `fsync` `off`, also the node's starts and clean stops. Emptied at each checkpoint. |
 | `indexes.jsonl` | Index definitions, rewritten whenever an index is created or dropped. Kept out of the log so a 2.0 binary can still open the directory. Present once an index has been created. |
 | `accounts.json` | Every account as a bcrypt hash (cost 12) with its role, the versions of its changes, and the tombstones of deleted accounts. Mode 0600; a node refuses to start if others can read it. |
 | `users.json` | The admin and write accounts again, in the form 2.0 and 2.1 read, so a node can be rolled back (read accounts cannot log in on those). If an older version changed a password here, the next start takes that change, dated by the file's time. Mode 0600; a node refuses to start if others can read it. |
@@ -96,6 +98,15 @@ Back up a running node with `GET /v1/backup` (admin account, see [API.md](API.md
 backups on a schedule (`backup_dir`, below). Copying the directory of a stopped node also works; the copy
 keeps that node's `node-id`, so start it in place of that node, not beside it. A backup holds the data only:
 `accounts.json`, `users.json`, `node-id` and `setup-token` are not in it.
+
+A copy of the directory also carries on the node's change feed. A node started on an older copy (or a disk
+snapshot) cannot tell, and a cursor it gave out after the copy was made may then be continued with other
+changes: delete `changes.jsonl` from such a copy before starting it, so the feed begins a new epoch.
+`serengeti restore` needs no such step. 2.0 and 2.1 ignore the feed's files and the snapshot's id; after a
+rollback, 2.2 goes on with the changes the older version logged, or starts a new epoch if that version
+wrote a snapshot. 2.1 drops tombstones without recording where, and a peer's older write to such a row
+then lists differently on replay, so if 2.1 ran on the directory in a cluster, delete `changes.jsonl` before
+starting 2.2 again.
 
 ## Scheduled backups
 

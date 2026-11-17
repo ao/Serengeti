@@ -61,6 +61,9 @@ req() {
 
 status() { req "$@" | sed -n 1p; }
 body() { req "$@" | tail -n +2; }
+cursor_of() { # a /v1/changes answer -> its cursor
+  echo "$1" | sed 's/.*"cursor":"\([^"]*\)".*/\1/'
+}
 query() { # node query  -> status
   status "$1" POST /v1/query "admin:$PW" "$(printf '{"query": "%s"}' "$2")"
 }
@@ -228,6 +231,7 @@ node crash -v "$(volume crash):/data" -e SERENGETI_ADMIN_PASSWORD="$PW"
 wait_up crash
 query crash "CREATE DATABASE d" >/dev/null
 query crash "CREATE TABLE d.t" >/dev/null
+crash_cursor=$(cursor_of "$(body crash GET '/v1/changes?db=d&after=now' "admin:$PW")")
 docker exec "$RUN-client" sh -c ': > /tmp/acked'
 for round in $(seq 1 "$KILL_ROUNDS"); do
   docker exec -d "$RUN-client" sh -c '
@@ -253,6 +257,53 @@ docker exec "$RUN-client" sh -c 'curl -s -u "$1" -H "Content-Type: application/j
 lost=$(docker exec "$RUN-client" sh -c 'wc -l < /tmp/lost' | tr -d ' ')
 if [ "$acked" -gt 0 ]; then ok "writes were acknowledged before the kills ($acked)"; else bad "kill test" "no writes acknowledged"; fi
 expect "every acknowledged write survived kill -9 ($acked acknowledged)" 0 "$lost"
+# The cursor taken before the first kill, followed to the end: every acknowledged insert once, none twice.
+docker exec "$RUN-client" sh -c '
+  c=$1; : > /tmp/feed
+  while :; do
+    out=$(curl -s -u "$2" "http://crash:1985/v1/changes?db=d&table=t&limit=10000&after=$c")
+    ids=$(echo "$out" | grep -o "\"_id\":\"[^\"]*\"" | cut -d"\"" -f4)
+    [ -n "$ids" ] || break
+    echo "$ids" >> /tmp/feed
+    c=$(echo "$out" | sed "s/.*\"cursor\":\"\([^\"]*\)\".*/\1/")
+  done
+  sort /tmp/feed > /tmp/feed.sorted' sh "$crash_cursor" "admin:$PW"
+listed=$(docker exec "$RUN-client" sh -c 'wc -l < /tmp/feed.sorted' | tr -d ' ')
+twice=$(docker exec "$RUN-client" sh -c 'uniq -d /tmp/feed.sorted | wc -l' | tr -d ' ')
+unlisted=$(docker exec "$RUN-client" sh -c 'sort -u /tmp/acked | comm -23 - /tmp/feed.sorted | wc -l' | tr -d ' ')
+expect "a cursor from before $KILL_ROUNDS kills lists every acknowledged insert ($listed listed)" 0 "$unlisted"
+expect "and none twice" 0 "$twice"
+
+echo "# following a table across docker restart and kill -9"
+node feed -v "$(volume feed):/data" -e SERENGETI_ADMIN_PASSWORD="$PW"
+wait_up feed
+query feed "CREATE DATABASE f" >/dev/null
+query feed "CREATE TABLE f.t" >/dev/null
+f0=$(cursor_of "$(body feed GET '/v1/changes?db=f&after=now' "admin:$PW")")
+query feed "INSERT INTO f.t (_id, n) VALUES ('a', 1), ('b', 2)" >/dev/null
+first=$(body feed GET "/v1/changes?db=f&table=t&after=$f0" "admin:$PW")
+contains "two changes listed" '"_id":"b"' "$first"
+f1=$(cursor_of "$first")
+docker restart "$RUN-feed" >/dev/null
+wait_up feed
+expect "after docker restart, the same cursor gets the same changes" "$first" \
+  "$(body feed GET "/v1/changes?db=f&table=t&after=$f0" "admin:$PW")"
+expect "and the newest cursor is where it was" "$f1" "$(cursor_of "$(body feed GET '/v1/changes?db=f&after=now' "admin:$PW")")"
+query feed "UPDATE f.t SET n = 3 WHERE _id = 'a'" >/dev/null
+second=$(body feed GET "/v1/changes?db=f&table=t&after=$f1" "admin:$PW")
+contains "a change after the restart" '"row":{"n":3}' "$second"
+docker kill -s KILL "$RUN-feed" >/dev/null
+docker start "$RUN-feed" >/dev/null
+wait_up feed
+expect "after kill -9, the cursor from before the restart gets the same changes" "$second" \
+  "$(body feed GET "/v1/changes?db=f&table=t&after=$f1" "admin:$PW")"
+contains "the log says the epoch was kept" "epoch $(echo "$f0" | cut -d: -f1) kept" "$(docker logs "$RUN-feed" 2>&1 | tail -20)"
+query feed "DELETE FROM f.t WHERE _id = 'b'" >/dev/null
+expect "the first cursor now lists all four" 4 \
+  "$(body feed GET "/v1/changes?db=f&table=t&after=$f0" "admin:$PW" | grep -o '"_id"' | wc -l | tr -d ' ')"
+expect "a cursor of another epoch is 410" 410 "$(status feed GET '/v1/changes?db=f&after=0123456789ab:1' "admin:$PW")"
+expect "changes.jsonl holds row values, and has the snapshot's mode" "$(docker exec "$RUN-feed" stat -c %a /data/snapshot.jsonl)" \
+  "$(docker exec "$RUN-feed" stat -c %a /data/changes.jsonl)"
 
 echo "# readiness, metrics, request log, backup and restore"
 expect "ready needs no credentials" 200 "$(status env GET /ready)"
