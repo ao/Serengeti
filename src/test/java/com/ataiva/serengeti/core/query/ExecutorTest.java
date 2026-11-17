@@ -443,7 +443,7 @@ class ExecutorTest {
                     rows("SELECT COUNT(*) FROM shop.items WHERE " + w).rows(),
                     rows("SELECT _id FROM shop.items WHERE " + w + " ORDER BY _id LIMIT 3").rows()), w);
         }
-        // The read that names the most columns is taken; of those, the one with the fewest rows.
+        // The read with the fewest rows is taken; of equal ones, the one that names the most columns.
         assertEquals(plan("kind,qty", List.of(List.of(1L)), new Store.Lookup.Compare(">", 5L)), planOf("kind = 1 AND qty > 5"));
         assertEquals(plan("kind,qty,name", List.of(List.of(2L), List.of(4L)), new Store.Lookup.Prefix("ap")),
                 planOf("name LIKE 'ap%' AND qty = 4 AND kind = 2"));

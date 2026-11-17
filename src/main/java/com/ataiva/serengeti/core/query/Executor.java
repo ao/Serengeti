@@ -301,19 +301,28 @@ public final class Executor {
      */
     private static void scan(Store store, String db, String table, Expr where,
             java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
-        Plan via = cheapestIndexedTerm(store, db, table, where);
-        if (via == null || !store.forEachIndexed(db, table, via.column(), via.lookup(), visitor)) {
-            store.forEachRow(db, table, visitor);
+        List<Plan> plans = candidates(store, db, table, where);
+        List<Plan> tried = new ArrayList<>();
+        // A read that would gather too many ids visits nothing and says so: the next cheapest is tried (review 22f).
+        for (Plan via; (via = cheapest(store, db, table, plans, tried)) != null; tried.add(via)) {
+            if (store.forEachIndexed(db, table, via.column(), via.lookup(), visitor)) {
+                return;
+            }
         }
+        store.forEachRow(db, table, visitor);
     }
 
     /** As {@link #scan}, stopping at the first row for which {@code visitor} returns false. */
     private static void scanWhile(Store store, String db, String table, Expr where,
             java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
-        Plan via = cheapestIndexedTerm(store, db, table, where);
-        if (via == null || !store.forEachIndexedWhile(db, table, via.column(), via.lookup(), visitor)) {
-            store.forEachRowWhile(db, table, visitor);
+        List<Plan> plans = candidates(store, db, table, where);
+        List<Plan> tried = new ArrayList<>();
+        for (Plan via; (via = cheapest(store, db, table, plans, tried)) != null; tried.add(via)) {
+            if (store.forEachIndexedWhile(db, table, via.column(), via.lookup(), visitor)) {
+                return;
+            }
         }
+        store.forEachRowWhile(db, table, visitor);
     }
 
     /**
@@ -331,12 +340,18 @@ public final class Executor {
     static final int MAX_LOOKUP_TUPLES = 1_000;
 
     /**
-     * The index read for {@code where} that names the most columns of the condition, and of those the one
-     * that visits the fewest rows: a term of {@code where} (itself, or one of a top-level AND) on an indexed
-     * column or _id, or for an index on several columns the terms of the AND that fix its first columns
-     * (see {@link #composite}).
+     * The index read for {@code where} that visits the fewest rows, and of equal ones the one that names the most
+     * columns, then the first: a term of {@code where} (itself, or one of a top-level AND) on an indexed column
+     * or _id, or for an index on several columns the terms of the AND that fix its first columns (see
+     * {@link #composite}). Null when there is none. Every estimate is exact but those of _id ranges, which are
+     * the table's rows, so fewer columns named can mean fewer rows (review 22f).
      */
     static Plan cheapestIndexedTerm(Store store, String db, String table, Expr where) {
+        return cheapest(store, db, table, candidates(store, db, table, where), List.of());
+    }
+
+    /** The reads of an index that could answer {@code where}: one per term, then one per index on several columns. */
+    static List<Plan> candidates(Store store, String db, String table, Expr where) {
         List<Expr> terms = where instanceof Expr.And a ? a.terms() : where == null ? List.of() : List.of(where);
         List<Plan> plans = new ArrayList<>();
         for (Expr t : terms) {
@@ -346,25 +361,29 @@ public final class Executor {
             }
         }
         if (!terms.isEmpty()) {
-            List<Plan> composites = new ArrayList<>();
             for (List<String> columns : store.compositeIndexes(db, table)) {
                 Plan p = composite(columns, terms);
                 if (p != null) {
-                    composites.add(p);
+                    plans.add(p);
                 }
             }
-            // The most columns first, so the estimate of a read that names fewer than the best one is not taken.
-            composites.sort(Comparator.comparingInt(Plan::named).reversed());
-            plans.addAll(composites);
         }
+        return plans;
+    }
+
+    /**
+     * Of {@code plans} not in {@code skip}, the one that visits the fewest rows, as {@link #cheapestIndexedTerm}.
+     * Each estimate stops counting once it passes the best so far, so a large range costs little to rule out.
+     */
+    static Plan cheapest(Store store, String db, String table, List<Plan> plans, java.util.Collection<Plan> skip) {
         Plan best = null;
         long bestCount = Long.MAX_VALUE;
         for (Plan p : plans) {
-            if (best != null && p.named() < best.named()) {
+            if (skip.contains(p)) {
                 continue;
             }
-            long n = store.indexEstimate(db, table, p.column(), p.lookup());
-            if (n >= 0 && (best == null || p.named() > best.named() || n < bestCount)) {
+            long n = store.indexEstimate(db, table, p.column(), p.lookup(), bestCount);
+            if (n >= 0 && (best == null || n < bestCount || (n == bestCount && p.named() > best.named()))) {
                 best = p;
                 bestCount = n;
             }

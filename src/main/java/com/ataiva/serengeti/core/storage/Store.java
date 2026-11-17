@@ -65,8 +65,17 @@ public final class Store {
         final TreeMap<String, IndexState> indexes = new TreeMap<>();
 
         IndexState index(String column) {
-            return indexes.computeIfAbsent(column,
-                    c -> c.indexOf(',') >= 0 ? new TupleIndex(c, dropped) : new ColumnIndex(c, dropped));
+            return indexes.computeIfAbsent(column, c -> {
+                IndexState ix = c.indexOf(',') >= 0 ? new TupleIndex(c, dropped) : new ColumnIndex(c, dropped);
+                ix.current = this::current;
+                return ix;
+            });
+        }
+
+        /** The current value of row {@code id}, null if it has none. */
+        Map<String, Object> current(String id) {
+            RowState r = rows.get(id);
+            return r == null ? null : r.value();
         }
 
         void drop(Stamp at, long expiry) {
@@ -214,6 +223,12 @@ public final class Store {
         /** Ids held across all keys, and distinct keys, for the weight estimate. */
         long entries;
         long keys;
+        /**
+         * The current value of a row of the table. A key is the value of the row that put it there; when that
+         * row leaves and others stay, the key is put again with one of theirs, or it would keep the old row's
+         * value alive, uncounted (review 22f).
+         */
+        java.util.function.Function<String, Map<String, Object>> current = id -> null;
 
         IndexState(Stamp dropped) {
             this.dropped = dropped;
@@ -265,9 +280,17 @@ public final class Store {
         abstract Iterable<String> ids(Lookup l);
 
         long estimate(Lookup l) {
+            return estimate(l, Long.MAX_VALUE);
+        }
+
+        /** As {@link #estimate(Lookup)}, but once the count passes {@code atMost} it may stop and return it. */
+        long estimate(Lookup l, long atMost) {
             long n = 0;
             for (java.util.TreeSet<String> s : sets(l)) {
                 n += s.size();
+                if (n > atMost) {
+                    break;
+                }
             }
             return n;
         }
@@ -347,6 +370,14 @@ public final class Store {
                 if (ids.isEmpty()) {
                     m.remove(v);
                     keys--;
+                } else if (v instanceof String && m.ceilingKey(v) == v) {
+                    // Only a string can be large; numbers and booleans are a few bytes.
+                    Map<String, Object> other = current.apply(ids.first());
+                    Object w = other == null ? null : other.get(column);
+                    if (w instanceof String && w != v && w.equals(v)) {
+                        m.remove(v);
+                        m.put(w, ids);
+                    }
                 }
             }
         }
@@ -494,8 +525,24 @@ public final class Store {
                 if (ids.isEmpty()) {
                     map.remove(k);
                     keys--;
+                } else if (holdsStringOf(map.ceilingKey(k), k)) {
+                    Object[] w = keyOf(current.apply(ids.first()));
+                    if (w != null && compareTuples(w, k) == 0) {
+                        map.remove(k);
+                        map.put(w, ids);
+                    }
                 }
             }
+        }
+
+        /** True if {@code stored} holds one of the strings of {@code leaving} itself (only a string can be large). */
+        private static boolean holdsStringOf(Object[] stored, Object[] leaving) {
+            for (int i = 0; i < leaving.length; i++) {
+                if (leaving[i] instanceof String && stored[i] == leaving[i]) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         @Override
@@ -522,9 +569,32 @@ public final class Store {
 
         @Override
         java.util.Collection<java.util.TreeSet<String>> sets(Lookup l) {
+            List<java.util.TreeSet<String>> out = new ArrayList<>();
+            for (java.util.Collection<java.util.TreeSet<String>> r : ranges(l)) {
+                out.addAll(r);
+            }
+            return out;
+        }
+
+        @Override
+        long estimate(Lookup l, long atMost) {
+            long n = 0;
+            for (java.util.Collection<java.util.TreeSet<String>> r : ranges(l)) {
+                for (java.util.TreeSet<String> s : r) {
+                    n += s.size();
+                    if (n > atMost) {
+                        return n;
+                    }
+                }
+            }
+            return n;
+        }
+
+        /** The key ranges {@code l} reads, as views of the map in key order, one per tuple of equal values at most. */
+        private List<java.util.Collection<java.util.TreeSet<String>>> ranges(Lookup l) {
             Lookup.Composite c = (Lookup.Composite) l;
             int k = c.equal().size();
-            List<java.util.TreeSet<String>> out = new ArrayList<>();
+            List<java.util.Collection<java.util.TreeSet<String>>> out = new ArrayList<>();
             for (Object[] p : tuples(c.equal())) {
                 Object[] lo = bound(p, null, LOW);
                 Object[] hi = bound(p, null, HIGH);
@@ -542,7 +612,7 @@ public final class Store {
                     }
                 }
                 if (lo != null && compareTuples(lo, hi) <= 0) {
-                    out.addAll(map.subMap(lo, true, hi, true).values());
+                    out.add(map.subMap(lo, true, hi, true).values());
                 }
             }
             return out;
@@ -1751,6 +1821,11 @@ public final class Store {
 
     /** As above, for any {@link Lookup}; for {@code _id}, exact for equality and an upper bound otherwise. */
     public long indexEstimate(String db, String table, String column, Lookup l) {
+        return indexEstimate(db, table, column, l, Long.MAX_VALUE);
+    }
+
+    /** As above; once a count passes {@code atMost} it may stop there, returning a number above {@code atMost}. */
+    public long indexEstimate(String db, String table, String column, Lookup l, long atMost) {
         if (!tableExists(db, table)) {
             return -1;
         }
@@ -1768,7 +1843,7 @@ public final class Store {
             return t.rows.size();
         }
         IndexState ix = answering(t, column, l);
-        return ix == null ? -1 : ix.estimate(l);
+        return ix == null ? -1 : ix.estimate(l, atMost);
     }
 
     /**
