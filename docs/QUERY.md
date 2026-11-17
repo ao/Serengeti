@@ -258,17 +258,21 @@ SELECT * FROM shop.orders WHERE (customer = 'c1' AND placed > '2026-06') OR cust
   rows than `a = 1 OR b = 2`.
 - The union is used only when its reads find at most 1/16 of the table's rows, counted that way. A row read
   through an index costs about ten times one read by a scan, so a larger union would be slower than the scan.
-  A range or LIKE prefix of `_id` is counted for this up to that share.
+  A range or LIKE prefix of `_id` is counted for this, and can be a branch when it holds at most 1,024 rows.
 - An OR is read through at most 32 reads (those of the ORs inside it included) that look up at most 4,000
   values in all (an IN list counts its values, a read of an index on several columns its combinations of
   values); with more it scans.
-- A range (`<`, `>`, a LIKE prefix) is gathered into `_id` order before its first row is read, as above;
-  the ranges of one union gather at most 100,000 rows in all, and if they would gather more, the next read
-  or the scan is used instead.
+- A union, like a range (`<`, `>`, a LIKE prefix), is gathered into `_id` order before its first row is
+  read; the ranges of one union gather at most 100,000 rows in all, and if they would gather more, the next
+  read or the scan is used instead.
 
 The rows come in `_id` order, so LIMIT and a keyset page (`WHERE (status = 'open' OR assignee = 'me') AND _id
-> 'k' ORDER BY _id LIMIT 50`) stop after their rows. COUNT(*), GROUP BY, UPDATE and DELETE read through the
-union as SELECT does.
+> 'k' ORDER BY _id LIMIT 50`) stop after their rows. Gathering costs the whole union even when the page
+fills after a few rows, so a page whose read would gather (a union, or a range) first reads in `_id` order
+through a read that does not gather (an `_id` range, an `=` or IN term on an indexed column) or the table, for
+a share of what the gathered read would gather: half of it through the table or `_id`, 1/16 through an
+index. If the page is not full by then, the gathered read goes on after the last `_id` read, so no row is
+read twice. COUNT(*), GROUP BY, UPDATE and DELETE read through the union as SELECT does.
 
 On 200,000 rows, an OR of two indexed columns that each match 0.1% of them (`a = 7 OR b = 13`, 419 rows)
 takes 0.84 ms instead of 28 by the scan, its COUNT(*) 0.62 ms, and `kind = 3 AND (a = 7 OR b = 13)` 0.64 ms
@@ -317,12 +321,13 @@ large table").
 When every term of the WHERE is one the read answers (the terms that fix columns, and comparisons on the
 first ordered column) and the keys reach the index's last column, each row it reads belongs to the answer,
 and the read is always used. Otherwise it may read rows the other terms leave out, possibly the whole index
-before the page is full, so it gets a share: it reads at most 1/96 of the rows the query would read
-without it (those the lookup it would use finds, the rows of an `_id` range or prefix counted, or the
-whole table), and if the page is not full by then, the query reads and sorts as it would without the
-index. When that share is smaller than the page, the ordered read is not tried. A row read through an
-index costs 12 to 16 times one read by a scan, so the share bounds the worst case, a condition that no row
-meets: on 200,000 rows of 10 columns, `WHERE c = 'none' ORDER BY at DESC LIMIT 10` takes 32 ms against 28
+before the page is full, so it gets a share of what the query would read without it, and if the page is
+not full by then, the query reads and sorts as it would without the index. The share is 1/96 of the
+table's rows when that read is the scan, or of an `_id` range's rows (counted up to 16,384), and 1/5 of the
+rows an index read would find when it is one (less when the read merges many IN values: 1/50 for 1,000), since
+a row read through an index costs 8 to 10 times one read by a scan, and those rows are sorted after. When
+the share is smaller than the page, the ordered read is not tried. The share bounds the worst case, a
+condition that no row meets: on 200,000 rows of 10 columns, `WHERE c = 'none' ORDER BY at DESC LIMIT 10` takes 32 ms against 28
 for the same statement answered by the sort (in-process medians of 31, the two statements in turn, on a
 c7g.4xlarge, JDK 17). With 10% of the rows matching it takes 0.23 ms instead of 40, and `ORDER BY at DESC
 LIMIT 10` 0.07 ms instead of 330 (medians on a c7g.4xlarge container limited to 4 CPUs).

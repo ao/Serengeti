@@ -158,9 +158,10 @@ GitHub release notes and tags.
   placed DESC LIMIT 10` with one on `(customer, placed)`. A range on the first ordered column narrows the
   read. On 200,000 rows in-process (c7g.4xlarge container limited to 4 CPUs, JDK 17), `ORDER BY at DESC
   LIMIT 10` takes 0.07 ms instead of 293. The answer is the sort's, row for row. When the WHERE has terms
-  the read does not answer, or its keys stop before the index's last column, it reads at most 1/96 of the
-  rows the query would read without it, then reads and sorts as before: a condition that no row meets
-  costs about a sixth more (32 ms instead of 28 on 200,000 rows of 10 columns, c7g.4xlarge). To place rows
+  the read does not answer, or its keys stop before the index's last column, it reads a share of the rows
+  the query would read without it (1/96 of a scan's, 1/5 of an index read's), then reads and sorts as
+  before: a condition that no row meets costs about a sixth more (32 ms instead of 28 on 200,000 rows of 10
+  columns, c7g.4xlarge). To place rows
   in that order, an index now also keeps the rows where its column is missing, null, an object or an array
   (found by no lookup, as before): 40 bytes each on one column, counted towards the memory limit. That
   applies to existing indexes from the first start on 2.2, so a node close to `memory_limit_percent` with
@@ -174,8 +175,10 @@ GitHub release notes and tags.
   1/16 of the table's rows, are at most 32 and look up at most 4,000 values; otherwise the OR scans as
   before. LIMIT and keyset pages stop after their rows. On 200,000 rows in-process (c7g.2xlarge container
   limited to 4 CPUs, JDK 17), an OR of two columns that each match 0.1% of the rows takes 0.84 ms instead of
-  28. A LIMIT over a union of ranges near the 1/16 bound gathers them first: 5 ms where the scan stops after
-  0.08. See docs/QUERY.md, "OR through indexes".
+  28. A page whose read gathers its ids first (a union, or a range on a column, as in 2.1) now first reads in
+  `_id` order for a share of that size, then goes on through the gathered read after the last `_id` it got:
+  `WHERE a < 31 OR b < 31 LIMIT 10` takes 0.03 ms instead of 3.9, and `WHERE a < 62 LIMIT 10` 0.015 instead
+  of 4.6 (200,000 rows, in-process, c7g.4xlarge). See docs/QUERY.md, "OR through indexes".
 
 ### Fixed
 - An index key kept the value of the row that first had it alive after that row changed or was deleted

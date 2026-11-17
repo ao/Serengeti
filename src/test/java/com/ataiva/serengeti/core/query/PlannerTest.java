@@ -203,6 +203,55 @@ class PlannerTest {
         }
     }
 
+    /**
+     * A page whose read would gather first streams in _id order for a share of the gathered size, then goes on
+     * through the gathered read after the last _id it streamed: the same rows as the scan, whether the page
+     * fills while streaming, after the hand-over, or the matches lie only past the streamed share (review 22i).
+     */
+    @Test
+    void aPageThatWouldGatherStreamsFirstAndHandsOverWithoutLosingARow() throws Exception {
+        int n = 20_000;
+        try (StorageEngine e = rows(tmp.resolve("d"), n, i -> {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("a", (long) (i % 1000));
+            r.put("b", (long) (i % 997));
+            // Only the last 500 rows have a late value.
+            r.put("late", (long) (i >= n - 500 ? i % 50 : 1000 + i));
+            r.put("kind", (long) (i % 10));
+            return r;
+        })) {
+            Query q = new Query(e, new Hlc("n1"));
+            for (String c : List.of("a", "b", "late", "kind")) {
+                q.run("CREATE INDEX ON d.t (" + c + ")");
+            }
+            assertTrue(Executor.gathers(e.read(s -> Executor.cheapestIndexedTerm(s, "d", "t",
+                    ((Statement.Select) Parser.parse("SELECT * FROM d.t WHERE a < 20 OR b < 20")).where()))));
+            for (String w : List.of("a < 20 OR b < 20", "late < 5", "late < 5 OR a = 999", "kind = 3 AND (a < 20 OR b < 20)",
+                    "(a < 20 OR b < 20) AND _id > 'r010000'", "a < 62")) {
+                for (String page : List.of(" LIMIT 1", " LIMIT 10", " LIMIT 400", " ORDER BY _id LIMIT 2000", "")) {
+                    String indexed = "SELECT _id FROM d.t WHERE " + w + page;
+                    String scanned = "SELECT _id FROM d.t WHERE NOT (NOT (" + w + "))" + page;
+                    assertEquals(((Result.Rows) q.run(scanned)).rows(), ((Result.Rows) q.run(indexed)).rows(), indexed);
+                }
+            }
+        }
+    }
+
+    @Test
+    void whichReadsGather() {
+        assertTrue(Executor.gathers(new Executor.Plan("a", new Store.Lookup.Compare(">", 1L))));
+        assertTrue(Executor.gathers(new Executor.Plan("a", new Store.Lookup.Prefix("x"))));
+        assertFalse(Executor.gathers(new Executor.Plan("a", new Store.Lookup.Compare("=", 1L))));
+        assertFalse(Executor.gathers(new Executor.Plan("a", new Store.Lookup.AnyOf(List.of(1L, 2L)))));
+        assertFalse(Executor.gathers(new Executor.Plan("_id", new Store.Lookup.Compare(">", "x"))));
+        assertTrue(Executor.gathers(new Executor.Plan("a,b", new Store.Lookup.Composite(List.of(List.of(1L)), List.of()))));
+        assertFalse(Executor.gathers(new Executor.Plan("a,b",
+                new Store.Lookup.Composite(List.of(List.of(1L), List.of(2L)), List.of()))));
+        assertTrue(Executor.gathers(new Executor.Plan("a,b", new Store.Lookup.Composite(List.of(List.of(1L)),
+                List.of(new Store.Lookup.Compare(">", 1L))))));
+        assertTrue(Executor.gathers(Executor.Plan.union(List.of(new Executor.Plan("a", new Store.Lookup.Compare("=", 1L))))));
+    }
+
     private static boolean collected(WeakReference<?> ref) throws InterruptedException {
         for (int i = 0; i < 20 && ref.get() != null; i++) {
             System.gc();

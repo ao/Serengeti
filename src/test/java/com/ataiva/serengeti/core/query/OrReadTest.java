@@ -231,15 +231,15 @@ class OrReadTest {
         ids("SELECT _id FROM @T WHERE (a = 1 OR a = 2) AND (b = 1 OR b = 2)");
         // Of a union and one read that visit as many rows, the one read.
         assertEquals(read("a", new Store.Lookup.Compare("=", 3L)), plan("(a = 4 OR q = 100000) AND a = 3"));
-        // The cheapest union also bounds the share an ordered read may take (1/96 of what it would visit), and
-        // is the read the query falls back on when the ordered read runs out of it: here a = 1 at p = 1, a = 2
-        // at p = 2 take 3 steps of a budget of 2.
+        // The cheapest union also bounds the share an ordered read may take (1/5 of what that index read would
+        // visit, 1/96 of the table's rows for a scan), and is the read the query falls back on when the ordered
+        // read runs out of it.
         query.run("CREATE INDEX ON d.t (p)");
         for (String w : List.of("(a = 1 OR a = 2) AND s != 'x'", "(s = 's1' OR s = 's2') AND s != 'x'")) {
             Statement.Select q = (Statement.Select) Parser.parse("SELECT * FROM d.t WHERE " + w + " ORDER BY p LIMIT 1");
             Executor.OrderedPlan op = engine.read(s -> Executor.orderedPlan(s, "d", "t", q));
             assertFalse(op.exact());
-            assertEquals(w.startsWith("(a") ? 200L / Executor.ORDERED_SHARE : N / Executor.ORDERED_SHARE,
+            assertEquals(w.startsWith("(a") ? 200L / Executor.ORDERED_SHARE_OF_INDEX_READ : N / Executor.ORDERED_SHARE,
                     (long) engine.read(s -> Executor.orderedBudget(s, q, op, 2)), w);
             ids("SELECT _id, p FROM @T WHERE " + w + " ORDER BY p LIMIT 1");
             ids("SELECT _id, p FROM @T WHERE " + w + " ORDER BY p DESC LIMIT 3");

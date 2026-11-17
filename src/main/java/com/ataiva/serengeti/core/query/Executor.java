@@ -378,11 +378,92 @@ public final class Executor {
         });
     }
 
-    /** As {@link #scan}, stopping at the first row for which {@code visitor} returns false. */
+    /**
+     * As {@link #scan}, stopping at the first row for which {@code visitor} returns false: a page. A read that
+     * gathers its ids before it visits a row (see {@link #gathers}) costs its whole size even when the page
+     * fills after a few rows, which a read that streams in _id order would not (review 22i: `a < 31 OR b < 31
+     * LIMIT 10` took 4 ms where the scan takes 0.1). So such a page first streams: through the cheapest read
+     * that does not gather, or the table, for a share of what the gathered read would gather. If the page is
+     * not full by then, the gathered read goes on after the last _id streamed, so no row is read twice.
+     */
     private static void scanWhile(Store store, String db, String table, Expr where,
             java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
         List<Plan> plans = candidates(store, db, table, where);
-        scanWhile(store, db, table, plans, cheapest(store, db, table, plans, List.of()), visitor);
+        Choice first = cheapestChoice(store, db, table, plans, List.of());
+        if (first != null && gathers(first.plan())) {
+            List<Plan> streaming = new ArrayList<>();
+            for (Plan p : plans) {
+                if (!gathers(p)) {
+                    streaming.add(p);
+                }
+            }
+            Choice s = streaming.isEmpty() ? null : cheapestChoice(store, db, table, streaming, List.of());
+            // A row streamed by the table or an _id range costs about half what gathering an id does; one
+            // streamed through an index, about four times as much.
+            long budget = s == null || ID.equals(s.plan().column()) ? first.rows() / STREAM_SHARE_OF_SCAN
+                    : first.rows() / STREAM_SHARE_OF_INDEX_READ;
+            if (budget > 0) {
+                String[] last = {null};
+                long[] n = {0};
+                boolean[] full = {false};
+                java.util.function.BiPredicate<String, Map<String, Object>> counted = (id, row) -> {
+                    last[0] = id;
+                    if (!visitor.test(id, row)) {
+                        full[0] = true;
+                        return false;
+                    }
+                    return ++n[0] < budget;
+                };
+                boolean read = true;
+                if (s == null) {
+                    store.forEachRowWhile(db, table, counted);
+                } else {
+                    read = store.forEachIndexedWhile(db, table, s.plan().column(), s.plan().lookup(), counted);
+                }
+                if (read) {
+                    // Full, or the streamed read ran out before its budget: it visited every row that may match.
+                    if (full[0] || n[0] < budget) {
+                        return;
+                    }
+                    String after = last[0];
+                    scanWhile(store, db, table, plans, first.plan(),
+                            (id, row) -> id.compareTo(after) <= 0 || visitor.test(id, row));
+                    return;
+                }
+            }
+        }
+        scanWhile(store, db, table, plans, first == null ? null : first.plan(), visitor);
+    }
+
+    /** A page streams for at most 1 in so many of the ids a gathered read would gather, through the table or _id. */
+    static final int STREAM_SHARE_OF_SCAN = 2;
+
+    /** As {@link #STREAM_SHARE_OF_SCAN}, through an index read that streams. */
+    static final int STREAM_SHARE_OF_INDEX_READ = 16;
+
+    /**
+     * True if the store gathers the ids of {@code p}'s read into one set before it visits a row: a union, a
+     * range or prefix on a column, or a read of an index on several columns that leaves columns open. Reads of
+     * _id, of one value and of an IN list on one column, and of whole tuples stream.
+     */
+    static boolean gathers(Plan p) {
+        if (p.isUnion()) {
+            return true;
+        }
+        if (ID.equals(p.column())) {
+            return false;
+        }
+        Store.Lookup l = p.lookup();
+        if (l instanceof Store.Lookup.Compare c) {
+            return !c.op().equals("=");
+        }
+        if (l instanceof Store.Lookup.Prefix) {
+            return true;
+        }
+        if (l instanceof Store.Lookup.Composite c) {
+            return !c.range().isEmpty() || c.equal().size() < p.column().split(",").length;
+        }
+        return false;
     }
 
     /** As above, with the candidate reads and the cheapest of them ({@code first}, null for none) already found. */
@@ -467,6 +548,9 @@ public final class Executor {
      */
     static final int UNION_SHARE = 16;
 
+    /** The most ids of an _id range or prefix that a branch of a union may read (counted when it is planned). */
+    static final long UNION_ID_COUNT = 1_024;
+
     /**
      * The index read for {@code where} that visits the fewest rows, and of equal ones the one that names the most
      * columns, then the first: a term of {@code where} (itself, or one of a top-level AND) on an indexed column
@@ -535,7 +619,19 @@ public final class Executor {
             // An _id range or prefix is counted only up to the caller's cap, not the best so far: counted against the
             // best, the choice depended on the order of the terms, and pages that stopped after a few rows counted
             // thousands of ids first (review 22h). Without a cap its estimate is the table's rows, as before.
-            long n = estimate(store, db, table, p, ID.equals(p.column()) ? atMost : bestCount);
+            long n;
+            if (ID.equals(p.column()) && atMost != Long.MAX_VALUE) {
+                // A branch of a union: its _id range is counted up to UNION_ID_COUNT ids, and one past that is too
+                // large to be a branch (review 22i: counting it up to the share made a rejected OR cost more than
+                // the page its scan reads).
+                long cap = Math.min(atMost, UNION_ID_COUNT);
+                n = estimate(store, db, table, p, cap);
+                if (n > cap) {
+                    n = Long.MAX_VALUE;
+                }
+            } else {
+                n = estimate(store, db, table, p, ID.equals(p.column()) ? atMost : bestCount);
+            }
             if (n >= 0 && n <= bestCount && (best == null || n < bestCount || p.named() > best.named())) {
                 best = p;
                 bestCount = n;
@@ -846,22 +942,41 @@ public final class Executor {
      * wide one slow): a range of fewer than {@code keep} shares is too small, and past that the table's rows
      * stand. The caller passes the same choice to the scan it falls back on, so no estimate is made twice.
      */
+    /** The share of an index read's rows an ordered read may take when the read without order is that index read. */
+    static final int ORDERED_SHARE_OF_INDEX_READ = 5;
+
+    /**
+     * The most ids of an _id range an ordered read's budget counts: past it, the table's rows stand (review 22i:
+     * counting a page's 96 shares cost twice reading a long page in order).
+     */
+    static final long ID_COUNT_LIMIT = 16_384;
+
     static long orderedBudget(Store store, Statement.Select q, OrderedPlan op, long keep, Choice unordered) {
         if (op.exact()) {
             return Long.MAX_VALUE;
         }
         long rows = store.visibleRows(q.db(), q.table());
+        long share = ORDERED_SHARE;
         if (unordered != null) {
-            long n = unordered.rows();
             // A union's estimate already counts its _id ranges (estimate); column is null for it.
             if (ID.equals(unordered.plan().column())) {
-                long enough = keep * ORDERED_SHARE;
+                long enough = Math.min(keep * ORDERED_SHARE, ID_COUNT_LIMIT);
                 long counted = store.indexEstimate(q.db(), q.table(), ID, unordered.plan().lookup(), Math.min(rows, enough));
-                n = counted > enough ? rows : counted;
+                rows = counted > enough ? rows : Math.min(rows, counted);
+            } else {
+                // The read without order goes through an index, at 8 to 10 times a scan's cost a row, and sorts:
+                // a share of the scan's size gave up where a read in order was cheaper (review 22i).
+                rows = Math.min(rows, unordered.rows());
+                // Each step of a read merging many streams costs about log2 of their number in heap work (review
+                // 22i: 1,000 IN streams took 2.5 times the sort with the share alone).
+                long streams = 1;
+                for (List<Object> values : op.where().equal()) {
+                    streams = Math.min(streams * Math.max(1, values.size()), MAX_LOOKUP_TUPLES);
+                }
+                share = ORDERED_SHARE_OF_INDEX_READ * Math.max(1, 64 - Long.numberOfLeadingZeros(streams - 1));
             }
-            rows = Math.min(rows, n);
         }
-        long budget = rows / ORDERED_SHARE;
+        long budget = rows / share;
         return keep <= budget ? budget : -1;
     }
 
