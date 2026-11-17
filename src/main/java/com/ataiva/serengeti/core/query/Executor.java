@@ -532,7 +532,10 @@ public final class Executor {
             if (skip.contains(p)) {
                 continue;
             }
-            long n = estimate(store, db, table, p, bestCount);
+            // An _id range or prefix is counted only up to the caller's cap, not the best so far: counted against the
+            // best, the choice depended on the order of the terms, and pages that stopped after a few rows counted
+            // thousands of ids first (review 22h). Without a cap its estimate is the table's rows, as before.
+            long n = estimate(store, db, table, p, ID.equals(p.column()) ? atMost : bestCount);
             if (n >= 0 && n <= bestCount && (best == null || n < bestCount || p.named() > best.named())) {
                 best = p;
                 bestCount = n;
@@ -838,9 +841,10 @@ public final class Executor {
     /**
      * As above, with the read {@link #scan} would take without order already chosen ({@code unordered}, null for
      * none): the budget is a share of the rows that read visits, its estimate or the table's rows. An {@code _id}
-     * range or prefix is counted, up to {@link #ID_RANGE_COUNT} budgets' worth of rows (review 22g): its estimate
-     * is otherwise the whole table, and a budget from that made a narrow range slow. The caller passes the same
-     * choice to the scan it falls back on, so no estimate is made twice (review 22g).
+     * range or prefix, whose estimate is the whole table, is counted only as far as decides whether the read is
+     * tried (review 22g: a budget from the table made a narrow range slow; review 22h: counting further made a
+     * wide one slow): a range of fewer than {@code keep} shares is too small, and past that the table's rows
+     * stand. The caller passes the same choice to the scan it falls back on, so no estimate is made twice.
      */
     static long orderedBudget(Store store, Statement.Select q, OrderedPlan op, long keep, Choice unordered) {
         if (op.exact()) {
@@ -851,20 +855,15 @@ public final class Executor {
             long n = unordered.rows();
             // A union's estimate already counts its _id ranges (estimate); column is null for it.
             if (ID.equals(unordered.plan().column())) {
-                n = store.indexEstimate(q.db(), q.table(), ID, unordered.plan().lookup(),
-                        Math.min(rows, keep * ORDERED_SHARE * ID_RANGE_COUNT));
+                long enough = keep * ORDERED_SHARE;
+                long counted = store.indexEstimate(q.db(), q.table(), ID, unordered.plan().lookup(), Math.min(rows, enough));
+                n = counted > enough ? rows : counted;
             }
             rows = Math.min(rows, n);
         }
         long budget = rows / ORDERED_SHARE;
         return keep <= budget ? budget : -1;
     }
-
-    /**
-     * Past this many budgets' worth of rows an {@code _id} range is not counted further: it is then wide enough
-     * that an ordered read finds its page within the budget the count gives it, or gives up for little.
-     */
-    static final int ID_RANGE_COUNT = 16;
 
     /** The index read that finds every row for which {@code t} is true, or null if there is none. */
     private static Plan plan(Expr t) {

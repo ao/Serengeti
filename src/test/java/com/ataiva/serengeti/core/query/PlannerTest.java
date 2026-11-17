@@ -137,7 +137,7 @@ class PlannerTest {
             assertEquals(-1L, none, "100 rows: a share of them is fewer than the page");
             Statement.Select wide = select("SELECT _id FROM d.t WHERE _id >= 'r005000' ORDER BY at DESC LIMIT 10");
             long some = e.read(s -> Executor.orderedBudget(s, wide, p, 11));
-            assertEquals(15_000L / Executor.ORDERED_SHARE, some, "15,000 rows, counted");
+            assertEquals(20_000L / Executor.ORDERED_SHARE, some, "past 11 shares, the table's rows (review 22h)");
             for (int from : new int[] {19_900, 5_000}) {
                 // at = i * 7 mod 20,000 is a different value for each i.
                 List<Integer> ids = new ArrayList<>();
@@ -178,6 +178,28 @@ class PlannerTest {
             assertNull(e.read(s -> Executor.orderedPlan(s, "d", "t", byAB)), "b DESC after a ASC: not one direction");
             Statement.Select both = select("SELECT _id FROM d.t ORDER BY a, b LIMIT 10");
             assertTrue(e.read(s -> Executor.orderedPlan(s, "d", "t", both)).exact(), "the keys reach b");
+        }
+    }
+
+    /**
+     * The read chosen does not depend on the order of the terms: an _id range keeps the table's rows as its
+     * estimate whichever term comes first, so an indexed term is read (review 22h).
+     */
+    @Test
+    void theReadChosenDoesNotDependOnTheOrderOfTheTerms() throws Exception {
+        try (StorageEngine e = rows(tmp.resolve("d"), 5_000, i -> Map.of("kind", "k" + i % 10, "half", "h" + i % 2))) {
+            Query q = new Query(e, new Hlc("n1"));
+            q.run("CREATE INDEX ON d.t (kind)");
+            q.run("CREATE INDEX ON d.t (half)");
+            for (String[] pair : new String[][] {{"kind = 'k3'", "_id >= 'r004900'"}, {"half = 'h1'", "_id > 'r000100'"},
+                    {"kind = 'k3'", "_id LIKE 'r0%'"}}) {
+                Expr ab = ((Statement.Select) Parser.parse("SELECT * FROM d.t WHERE " + pair[0] + " AND " + pair[1])).where();
+                Expr ba = ((Statement.Select) Parser.parse("SELECT * FROM d.t WHERE " + pair[1] + " AND " + pair[0])).where();
+                Executor.Plan one = e.read(s -> Executor.cheapestIndexedTerm(s, "d", "t", ab));
+                Executor.Plan other = e.read(s -> Executor.cheapestIndexedTerm(s, "d", "t", ba));
+                assertEquals(one, other, String.join(" AND ", pair));
+                assertTrue(!"_id".equals(one.column()), "the indexed term: " + one);
+            }
         }
     }
 
