@@ -166,6 +166,16 @@ GitHub release notes and tags.
   applies to existing indexes from the first start on 2.2, so a node close to `memory_limit_percent` with
   indexes on sparse columns can refuse writes after the upgrade. See docs/QUERY.md, "ORDER BY through an
   index".
+- An OR whose every branch an index or `_id` answers is read as the union of the branches' reads, in `_id`
+  order and each row once, instead of scanning the table: `WHERE status = 'open' OR assignee = 'me'`, `WHERE
+  kind = 1 AND (a = 1 OR b = 2)`, `WHERE (customer = 'c1' AND placed > '2026-06') OR customer = 'c2'`. Each
+  branch (a term, or an AND of terms) takes the read a WHERE of its own would; an OR in an AND is one more
+  read to choose from, counted as the sum of its branches' rows. It is used when those reads find at most
+  1/16 of the table's rows, are at most 32 and look up at most 4,000 values; otherwise the OR scans as
+  before. LIMIT and keyset pages stop after their rows. On 200,000 rows in-process (c7g.2xlarge container
+  limited to 4 CPUs, JDK 17), an OR of two columns that each match 0.1% of the rows takes 0.84 ms instead of
+  28. A LIMIT over a union of ranges near the 1/16 bound gathers them first: 5 ms where the scan stops after
+  0.08. See docs/QUERY.md, "OR through indexes".
 
 ### Fixed
 - An index key kept the value of the row that first had it alive after that row changed or was deleted

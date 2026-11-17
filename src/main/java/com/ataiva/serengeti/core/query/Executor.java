@@ -358,9 +358,10 @@ public final class Executor {
     /**
      * Visits, in _id order, the live rows that may match {@code where}: through an index when one term of
      * it (the whole condition, or one term of a top-level AND) compares an indexed column or _id with a
-     * value, is an IN list or a LIKE with a literal prefix, or when terms of a top-level AND fix the first
-     * columns of an index on several columns (see {@link #cheapestIndexedTerm}); else every row. Visitors
-     * still check the whole condition, so the choice changes only speed.
+     * value, is an IN list or a LIKE with a literal prefix, is an OR whose every branch an index answers, or
+     * when terms of a top-level AND fix the first columns of an index on several columns (see
+     * {@link #cheapestIndexedTerm}); else every row. Visitors still check the whole condition, so the choice
+     * changes only speed.
      */
     private static void scan(Store store, String db, String table, Expr where,
             java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
@@ -371,61 +372,122 @@ public final class Executor {
     /** As above, with the candidate reads and the cheapest of them ({@code first}, null for none) already found. */
     private static void scan(Store store, String db, String table, List<Plan> plans, Plan first,
             java.util.function.BiConsumer<String, Map<String, Object>> visitor) {
-        List<Plan> tried = new ArrayList<>();
-        // A read that would gather too many ids visits nothing and says so: the next cheapest is tried (review 22f).
-        for (Plan via = first; via != null; via = cheapest(store, db, table, plans, tried)) {
-            if (store.forEachIndexed(db, table, via.column(), via.lookup(), visitor)) {
-                return;
-            }
-            tried.add(via);
-        }
-        store.forEachRow(db, table, visitor);
+        scanWhile(store, db, table, plans, first, (id, row) -> {
+            visitor.accept(id, row);
+            return true;
+        });
     }
 
     /** As {@link #scan}, stopping at the first row for which {@code visitor} returns false. */
     private static void scanWhile(Store store, String db, String table, Expr where,
             java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
         List<Plan> plans = candidates(store, db, table, where);
+        scanWhile(store, db, table, plans, cheapest(store, db, table, plans, List.of()), visitor);
+    }
+
+    /** As above, with the candidate reads and the cheapest of them ({@code first}, null for none) already found. */
+    private static void scanWhile(Store store, String db, String table, List<Plan> plans, Plan first,
+            java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
         List<Plan> tried = new ArrayList<>();
-        for (Plan via; (via = cheapest(store, db, table, plans, tried)) != null; tried.add(via)) {
-            if (store.forEachIndexedWhile(db, table, via.column(), via.lookup(), visitor)) {
+        // A read that would gather too many ids visits nothing and says so: the next cheapest is tried (review 22f).
+        for (Plan via = first; via != null; via = cheapest(store, db, table, plans, tried)) {
+            if (via.isUnion() ? store.forEachUnionWhile(db, table, via.reads(), visitor)
+                    : store.forEachIndexedWhile(db, table, via.column(), via.lookup(), visitor)) {
                 return;
             }
+            tried.add(via);
         }
         store.forEachRowWhile(db, table, visitor);
     }
 
     /**
      * An index read for a condition: what {@code lookup} finds in the index {@code column} (a column, or for
-     * an index on several columns their names joined by commas, see {@link Op#indexKey}).
+     * an index on several columns their names joined by commas, see {@link Op#indexKey}); or, for an OR, the
+     * union of the reads in {@code union} (column and lookup null), each a read of one index.
      */
-    record Plan(String column, Store.Lookup lookup) {
-        /** How many columns of the index the read names: 1, or for an index on several columns those it fixes. */
+    record Plan(String column, Store.Lookup lookup, List<Plan> union) {
+        Plan(String column, Store.Lookup lookup) {
+            this(java.util.Objects.requireNonNull(column), java.util.Objects.requireNonNull(lookup), List.of());
+        }
+
+        /** The read of every row one of {@code reads} finds; none of them may be a union. */
+        static Plan union(List<Plan> reads) {
+            return new Plan(null, null, List.copyOf(reads));
+        }
+
+        boolean isUnion() {
+            return column == null;
+        }
+
+        /**
+         * How many columns of the index the read names: 1, or for an index on several columns those it fixes; 0
+         * for a union, so that a read of one index is taken over a union that visits as many rows.
+         */
         int named() {
-            return lookup instanceof Store.Lookup.Composite c ? c.named() : 1;
+            return isUnion() ? 0 : lookup instanceof Store.Lookup.Composite c ? c.named() : 1;
+        }
+
+        /** The reads of a union, as the store takes them. */
+        List<Store.IndexRead> reads() {
+            List<Store.IndexRead> out = new ArrayList<>(union.size());
+            for (Plan p : union) {
+                out.add(new Store.IndexRead(p.column, p.lookup));
+            }
+            return out;
+        }
+
+        /** How many values the read looks up: those of an IN list, the tuples of an index on several columns, or 1. */
+        long values() {
+            if (lookup instanceof Store.Lookup.AnyOf a) {
+                return a.values().size();
+            }
+            long n = 1;
+            if (lookup instanceof Store.Lookup.Composite c) {
+                for (List<Object> e : c.equal()) {
+                    n *= e.size();
+                }
+            }
+            return n;
         }
     }
 
     /** The most tuples of values one read of an index on several columns looks up: the IN lists' product. */
     static final int MAX_LOOKUP_TUPLES = 1_000;
 
+    /** The most reads one OR is read through (those of the ORs in its branches included); with more, it is a scan. */
+    static final int MAX_UNION_READS = 32;
+
+    /** The most values ({@link Plan#values}) the reads of one OR look up in all; with more, it is a scan. */
+    static final int MAX_UNION_VALUES = 4_000;
+
+    /**
+     * An OR is read through indexes only if its reads visit at most this share (1 in so many) of the table's rows:
+     * a row read through an index costs about 10 times one read by a scan (docs/QUERY.md, "OR through indexes"),
+     * so a larger union would be slower than the scan.
+     */
+    static final int UNION_SHARE = 16;
+
     /**
      * The index read for {@code where} that visits the fewest rows, and of equal ones the one that names the most
      * columns, then the first: a term of {@code where} (itself, or one of a top-level AND) on an indexed column
-     * or _id, or for an index on several columns the terms of the AND that fix its first columns (see
-     * {@link #composite}). Null when there is none. Every estimate is exact but those of _id ranges, which are
-     * the table's rows, so fewer columns named can mean fewer rows (review 22f).
+     * or _id, an OR of such reads ({@link #union}), or for an index on several columns the terms of the AND that
+     * fix its first columns (see {@link #composite}). Null when there is none. Every estimate is exact but those
+     * of _id ranges, which are the table's rows, and of unions, which count a row each read finds, so fewer
+     * columns named can mean fewer rows (review 22f).
      */
     static Plan cheapestIndexedTerm(Store store, String db, String table, Expr where) {
         return cheapest(store, db, table, candidates(store, db, table, where), List.of());
     }
 
-    /** The reads of an index that could answer {@code where}: one per term, then one per index on several columns. */
+    /**
+     * The reads of an index that could answer {@code where}: one per term (for an OR, the union of its branches'
+     * reads, see {@link #union}), then one per index on several columns.
+     */
     static List<Plan> candidates(Store store, String db, String table, Expr where) {
-        List<Expr> terms = where instanceof Expr.And a ? a.terms() : where == null ? List.of() : List.of(where);
+        List<Expr> terms = terms(where);
         List<Plan> plans = new ArrayList<>();
         for (Expr t : terms) {
-            Plan p = plan(t);
+            Plan p = t instanceof Expr.Or o ? union(store, db, table, o) : plan(t);
             if (p != null) {
                 plans.add(p);
             }
@@ -450,24 +512,97 @@ public final class Executor {
         return c == null ? null : c.plan();
     }
 
-    /** A read {@link #cheapest} chose, and its estimate: exact, but the table's rows for an _id range or prefix. */
+    /**
+     * A read {@link #cheapest} chose, and its estimate ({@link #estimate}): exact, but the table's rows for an _id
+     * range or prefix, and for a union the sum of its reads'.
+     */
     record Choice(Plan plan, long rows) {}
 
     /** As {@link #cheapest}, with the estimate of the read it chose; null when there is none. */
     static Choice cheapestChoice(Store store, String db, String table, List<Plan> plans, java.util.Collection<Plan> skip) {
+        return cheapestChoice(store, db, table, plans, skip, Long.MAX_VALUE);
+    }
+
+    /** As above, of the reads of at most {@code atMost} rows. */
+    private static Choice cheapestChoice(Store store, String db, String table, List<Plan> plans,
+            java.util.Collection<Plan> skip, long atMost) {
         Plan best = null;
-        long bestCount = Long.MAX_VALUE;
+        long bestCount = atMost;
         for (Plan p : plans) {
             if (skip.contains(p)) {
                 continue;
             }
-            long n = store.indexEstimate(db, table, p.column(), p.lookup(), bestCount);
-            if (n >= 0 && (best == null || n < bestCount || (n == bestCount && p.named() > best.named()))) {
+            long n = estimate(store, db, table, p, bestCount);
+            if (n >= 0 && n <= bestCount && (best == null || n < bestCount || p.named() > best.named())) {
                 best = p;
                 bestCount = n;
             }
         }
         return best == null ? null : new Choice(best, bestCount);
+    }
+
+    /**
+     * How many rows {@code p} visits at most, as {@link Store#indexEstimate}; for a union the sum of its reads'
+     * (rows two of them find are counted twice), or -1 if one of them has no index. Once the count passes
+     * {@code atMost} it may stop there. A union's reads are counted as {@link #union} counted them, up to
+     * 1/{@link #UNION_SHARE} of the table's rows, which their sum does not pass: an _id range or prefix among
+     * them is then counted, not taken as the table's rows.
+     */
+    static long estimate(Store store, String db, String table, Plan p, long atMost) {
+        if (!p.isUnion()) {
+            return store.indexEstimate(db, table, p.column(), p.lookup(), atMost);
+        }
+        long cap = Math.min(atMost, store.visibleRows(db, table) / UNION_SHARE);
+        long n = 0;
+        for (Plan r : p.union()) {
+            long m = store.indexEstimate(db, table, r.column(), r.lookup(), cap - n);
+            if (m < 0) {
+                return -1;
+            }
+            n += m;
+            if (n > cap) {
+                // Only past atMost: union() made the plan with a sum within the share, in this same read.
+                return Math.max(n, atMost == Long.MAX_VALUE ? atMost : atMost + 1);
+            }
+        }
+        return n;
+    }
+
+    /**
+     * The read of {@code or} as the union of its branches' reads, or null if it has none. Each branch (one term,
+     * or an AND of terms) is planned as a whole WHERE is: its cheapest read ({@link #candidates}, {@link
+     * #cheapest}), which may be the union of an OR among its terms, whose reads it then takes. A branch that no
+     * index answers leaves the OR to a scan, and so do reads that would visit more than 1/{@link #UNION_SHARE} of
+     * the table's rows in all (their estimates' sum), more than {@link #MAX_UNION_READS} reads, and more than
+     * {@link #MAX_UNION_VALUES} values. The rows the union visits are a superset of those the OR matches; callers
+     * check the whole condition on each.
+     */
+    private static Plan union(Store store, String db, String table, Expr.Or or) {
+        if (or.terms().size() > MAX_UNION_READS) {
+            return null;
+        }
+        long share = store.visibleRows(db, table) / UNION_SHARE;
+        long rows = 0;
+        List<Plan> reads = new ArrayList<>();
+        long values = 0;
+        for (Expr branch : or.terms()) {
+            // Each estimate stops once the sum would pass the share, so a large branch costs little to rule out;
+            // an _id range or prefix is counted up to it (Store#indexEstimate).
+            Choice c = cheapestChoice(store, db, table, candidates(store, db, table, branch), List.of(), share - rows);
+            if (c == null) {
+                return null;
+            }
+            rows += c.rows();
+            Plan p = c.plan();
+            for (Plan r : p.isUnion() ? p.union() : List.of(p)) {
+                reads.add(r);
+                values += r.values();
+            }
+            if (reads.size() > MAX_UNION_READS || values > MAX_UNION_VALUES) {
+                return null;
+            }
+        }
+        return Plan.union(reads);
     }
 
     /**
@@ -714,7 +849,8 @@ public final class Executor {
         long rows = store.visibleRows(q.db(), q.table());
         if (unordered != null) {
             long n = unordered.rows();
-            if (unordered.plan().column().equals(ID)) {
+            // A union's estimate already counts its _id ranges (estimate); column is null for it.
+            if (ID.equals(unordered.plan().column())) {
                 n = store.indexEstimate(q.db(), q.table(), ID, unordered.plan().lookup(),
                         Math.min(rows, keep * ORDERED_SHARE * ID_RANGE_COUNT));
             }

@@ -1354,9 +1354,9 @@ class Checker:
                     for v in pick + [5, 5.5, "m", "zzz", True]:
                         for op in ("=", "<", "<=", ">", ">="):
                             idx = self.q(i, f"SELECT COUNT(*) FROM {t} WHERE {col} {op} {lit(v)}")["rows"][0][0]
-                            # OR is never answered through an index (docs/QUERY.md), so this scans.
-                            scan = self.q(i, f"SELECT COUNT(*) FROM {t} WHERE {col} {op} {lit(v)} OR {col} {op} "
-                                             f"{lit(v)}")["rows"][0][0]
+                            # NOT is never answered through an index (docs/QUERY.md), so this scans.
+                            scan = self.q(i, f"SELECT COUNT(*) FROM {t} WHERE NOT (NOT ({col} {op} "
+                                             f"{lit(v)}))")["rows"][0][0]
                             model = sum(1 for r in rows.values() if model_match(r.get(col), op, v))
                             nq += 2
                             if not (idx == scan == model):

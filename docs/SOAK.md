@@ -88,8 +88,9 @@ reads every table from every node (`SELECT *` in pages of 10,000, ordered by `_i
 5. no node exited except those the nemesis killed; no client and no node log saw a 5xx other than 503;
    `/ready` is 200 on every node at the end;
 6. for every index on every node, `COUNT(*)` with `=`, `<`, `<=`, `>` and `>=` against values of every
-   type returns the same count through the index, as a scan (the same comparison written twice with `OR`,
-   which is never answered through an index) and from the rows the node returned; for `=`, the same ids;
+   type returns the same count through the index, as a scan (the same comparison written as `NOT (NOT
+   (...))`, which is never answered through an index) and from the rows the node returned; for `=`, the same
+   ids;
 7. every row and every value held comes from a write that was sent and not refused (a 503 before the
    write was logged, a 400, or an `UPDATE` or `DELETE` that changed nothing), and an insert of several
    rows is there entirely or not at all;

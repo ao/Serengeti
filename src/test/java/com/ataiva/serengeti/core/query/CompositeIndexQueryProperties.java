@@ -32,7 +32,7 @@ import net.jqwik.api.statistics.Statistics;
  * Indexes on several columns change no answer: random rows (nulls, missing values, every type), random
  * indexes on one to three of their columns, and random conditions, mostly ANDs that fix a prefix of an index;
  * SELECT, COUNT(*), a page in _id order, GROUP BY, UPDATE and DELETE give through the indexes what a table
- * without them gives, and so does (w) OR (w), which uses no index.
+ * without them gives, and so does (w) OR (w), a union of two equal reads where it finds few rows.
  */
 class CompositeIndexQueryProperties {
     private static Path dir;

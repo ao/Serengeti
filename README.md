@@ -269,7 +269,7 @@ kept-alive connection, and 2.1 sets it itself.
 - The data does not fit in memory on every node: each node keeps all of it in memory, and refuses writes
   that add data (503) once it is estimated to fill `memory_limit_percent` of the heap.
 - You need joins or transactions across statements. A `WHERE` without a term an index answers scans its
-  table (OR between terms included).
+  table, and so does an OR unless an index answers every branch and they find at most 1/16 of the rows.
 - You need every write serialised, such as a balance that must never go below zero across nodes.
 - You need more than 7 nodes, or nodes that hold only part of the data.
 - You need permissions per table, or another role in each database: an account has one role, for every

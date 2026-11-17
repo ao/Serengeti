@@ -101,6 +101,6 @@ def verify(host, logdir, label):
     check("and no row appeared that no statement wrote", not extra, repr(extra[:5]))
     expect("COUNT(*) equals the rows read", len(got), c.count(TABLE))
     for v in (0, 1):
-        expect(f"index lookup v = {v} equals a scan", c.count(TABLE, f"v = {v} OR v = {v}"), c.count(TABLE, f"v = {v}"))
+        expect(f"index lookup v = {v} equals a scan", c.count(TABLE, f"NOT (NOT (v = {v}))"), c.count(TABLE, f"v = {v}"))
     expect("the index is still there", [["v"]], c.rows(f"SHOW INDEXES IN {TABLE}"))
     c.close()

@@ -2,12 +2,15 @@
 
 Every answer must be 200 or a 400 with a message (never 500, never no answer), a parse error's position must
 lie inside the text, a valid statement must never get a parse error, and the node must keep answering.
-Valid SELECTs are also run as "WHERE (e) OR (e)", which no index lookup answers, and with "HAVING (h) OR (h)",
-and must give the same rows; a valid SELECT DISTINCT must give the rows of its GROUP BY form, and a SELECT with
-ORDER BY those of "ORDER BY zz, ...", which sorts (no row and no index has zz) where the first may read an index
-in order. Indexes on one and on several columns are created and dropped as the run goes, a share of the
-conditions is an AND that fixes the first columns of one (a = x AND b > y ...), so those are compared with the
-same scan, and a share of the SELECTs orders by the next columns of one.
+Valid SELECTs are also run as "WHERE NOT (NOT (e))", which no index read answers, as "WHERE (e) OR (e)", which
+may be read as the union of two equal reads, and with "HAVING (h) OR (h)", and must give the same rows; a valid
+SELECT DISTINCT must give the rows of its GROUP BY form, and a SELECT with ORDER BY those of "ORDER BY zz, ...",
+which sorts (no row and no index has zz) where the first may read an index in order. Indexes on one and on
+several columns are created and dropped as the run goes, a share of the conditions is an AND that fixes the
+first columns of one (a = x AND b > y ...), and a share is an OR whose branches indexes answer (a = x OR v IN
+(...) OR (a = y AND b > z) ...), mostly on f.w, whose 2,000 rows draw most values from a few hundred so that such
+an OR finds few enough rows to be read through the indexes; so those are compared with the same scan, and a
+share of the SELECTs orders by the next columns of one.
 
     FUZZ_SEED=123 FUZZ_N=5000 python3 edge.py fuzz HOST       (the seed is printed so a failure can be replayed)
 """
@@ -29,12 +32,16 @@ COLS = ["a", "b", "v", "_id", "on", "index", "conflicts", "x" * 63, "distinct", 
 # checks below can find the clause keywords DISTINCT and HAVING, which are always written in capitals here.
 LOWER = ("distinct", "having")
 # f.k holds few distinct values, so that conditions on two or three of its columns match rows.
-TABLES = [("f", "t"), ("f", "u"), ("f", "on"), ("f", "k"), ("f2", "x"), ("f", "nosuch"), ("nodb", "t")]
+# f.w holds 2,000 rows whose values come mostly from WIDE, so that an OR of a few terms can find at most 1/16 of
+# them, which an OR must to be read through indexes (docs/QUERY.md).
+TABLES = [("f", "t"), ("f", "u"), ("f", "on"), ("f", "k"), ("f2", "x"), ("f", "w"), ("f", "nosuch"), ("nodb", "t")]
 # Values a statement may compare or store. Strings include quotes, comment markers and non-ASCII text.
 VALUES = ["NULL", "TRUE", "FALSE", "0", "-0", "1", "-1", "2", "1.0", "-0.0", "0.5", "1e300", "-2.5E-7",
           "9223372036854775807", "-9223372036854775808", "9223372036854775808", "9007199254740993", "''", "'a'",
           "'A'", "'1'", "'b'", "'It''s'", "'--'", "'; DROP DATABASE f'", "'" + chr(0xE9) + "'",
           "'" + chr(0x1F600) + "'", "'" + "z" * 200 + "'", "'\\'", "'x y'", "'" + chr(0) + "'"]
+# Most values of f.w: 300 numbers and 100 strings.
+WIDE = [str(i) for i in range(300)] + [f"'w{i}'" for i in range(100)]
 # The numbers of VALUES, and the columns, for SET c = column + number (any column but _id).
 NUMBERS = [v for v in VALUES if v[0] in "-0123456789"]
 SOURCES = [c for c in COLS if c != "_id"]
@@ -62,7 +69,7 @@ class Gen:
         self.r = rng
 
     def table(self):
-        db, t = self.r.choice(TABLES[:5]) if self.r.random() < 0.9 else self.r.choice(TABLES)
+        db, t = self.r.choice(TABLES[:6]) if self.r.random() < 0.9 else self.r.choice(TABLES)
         return [db, ".", t]
 
     def case(self, n):
@@ -232,11 +239,78 @@ class Gen:
             toks += ["LIMIT", str(r.choice([0, 1, 2, 5, 10, 100]))]
         return toks
 
+    def wide(self):
+        """A value of f.w's pool, most often, or any of VALUES."""
+        return self.r.choice(WIDE) if self.r.random() < 0.7 else self.value()
+
+    def or_branch(self, depth):
+        """A branch of an OR that an index of f.w (v, a, (a, b)) or _id answers, mostly: =, IN, LIKE with a
+        prefix, a range near the ends of WIDE, an AND on a and b (now and then with an OR or another term in
+        it); sometimes one that no index answers, which leaves the OR to a scan."""
+        r = self.r
+        k = r.random()
+        c = self.case(r.choice(["a", "v", "v", "b"]))
+        if k < 0.32:
+            return [c, "=", self.wide()]
+        if k < 0.46:
+            vals = [self.wide() for _ in range(r.randint(1, 3))]
+            return [c, "IN", "("] + sum(([v, ","] for v in vals), [])[:-1] + [")"]
+        if k < 0.54:
+            if r.random() < 0.6:
+                return ["_id", "=", f"'w{r.randrange(2100):04d}'"]
+            return ["_id", "IN", "(", f"'w{r.randrange(2100):04d}'", ",", f"'s{r.randrange(300):03d}'", ")"]
+        if k < 0.60:
+            return [c, "LIKE", r.choice(["'w1%'", "'w9_'", "'w42'", "'a%'", "'w%'"])]
+        if k < 0.66:
+            return [c] + r.choice([["<", "0"], ["<=", "1"], [">", "297"], [">=", "'w98'"], ["<", "'w0'"], [">", "1e300"]])
+        if k < 0.90:
+            terms = [["a", "=", self.wide()], ["b", r.choice(["=", "<", ">="]), self.wide()]]
+            if depth < 2 and r.random() < 0.25:
+                terms.append(["("] + self.or_where(depth + 1) + [")"])
+            elif r.random() < 0.3:
+                # At most 7 parentheses enclose it (or_condition's, and two levels of nested ORs).
+                terms.append(["("] + self.expr(8) + [")"])
+            r.shuffle(terms)
+            return ["("] + terms[0] + sum((["AND"] + t for t in terms[1:]), []) + [")"]
+        return [c, "IS", "NULL"] if r.random() < 0.5 else [c, "!=", self.wide()]
+
+    def or_where(self, depth=0):
+        """An OR of 2 to 4 branches (see or_branch)."""
+        out = []
+        for i in range(self.r.randint(2, 4)):
+            out += (["OR"] if i else []) + self.or_branch(depth)
+        return out
+
+    def or_condition(self):
+        """An OR alone, or one term of an AND."""
+        r = self.r
+        k = r.random()
+        if k < 0.5:
+            return self.or_where()
+        if k < 0.8:
+            return [self.case(r.choice(["a", "v", "b"])), r.choice(["=", "!=", ">"]), self.wide(), "AND", "("] + \
+                self.or_where() + [")"]
+        return ["("] + self.or_where() + [")", "AND", "("] + self.or_where() + [")"]
+
+    def or_select(self):
+        """A SELECT on f.w (now and then another table) whose WHERE is an OR that indexes answer, or has one."""
+        r = self.r
+        t = r.choice(["w", "w", "w", "w", "t", "k", "on"])
+        what = r.choice([["*"], ["_id"], ["_id", ",", "a", ",", "v"], ["COUNT", "(", "*", ")"]])
+        toks = ["SELECT"] + what + ["FROM", "f", ".", t, "WHERE"] + self.or_condition()
+        if what[0] != "COUNT":
+            if r.random() < 0.3:
+                toks += ["ORDER", "BY"] + r.choice([["_id"], ["_id", "DESC"], ["v"], ["a", ",", "b", "DESC"]])
+            if r.random() < 0.6:
+                toks += ["LIMIT", str(r.choice([0, 1, 3, 10, 100]))]
+        return toks
+
     def where(self):
         if self.r.random() < 0.25:
             return []
         k = self.r.random()
-        return ["WHERE"] + (self.deep() if k < 0.05 else self.prefix_terms() if k < 0.35 else self.expr())
+        return ["WHERE"] + (self.deep() if k < 0.05 else self.prefix_terms() if k < 0.30
+                            else self.or_condition() if k < 0.42 else self.expr())
 
     def sets(self):
         """The assignments of UPDATE's SET or ON CONFLICT DO UPDATE SET: 1 to 3 columns, each a literal or a column
@@ -258,6 +332,8 @@ class Gen:
         r = self.r
         if r.random() < 0.12:
             return self.ordered(), "ordered"
+        if r.random() < 0.10:
+            return self.or_select(), "or"
         k = r.random()
         if k < 0.30:
             items, grouping = self.select_list()
@@ -421,22 +497,38 @@ def doubled(toks, clause):
     return toks[:w + 1] + ["("] + cond + [")", "OR", "("] + cond + [")"] + toks[end:]
 
 
+def negated(toks, clause):
+    """`toks` with the condition of `clause` written as NOT (NOT (c)), or None if there is none (or it is too deep)."""
+    if clause not in toks:
+        return None
+    w = toks.index(clause)
+    end = next((k for k in range(w + 1, len(toks)) if toks[k] in CLAUSES), len(toks))
+    cond = toks[w + 1:end]
+    if cond.count("(") + cond.count("NOT") >= 60:
+        return None
+    return toks[:w + 1] + ["NOT", "(", "NOT", "("] + cond + [")", ")"] + toks[end:]
+
+
 def metamorphic(toks, kind):
     """Statements that must give exactly the rows and columns of the valid SELECT `toks`."""
     out = []
-    # The same rows (or groups and aggregates) found without an index lookup: (e) OR (e) is answered by
-    # none. And (h) OR (h) in HAVING keeps the same groups.
+    # The same rows (or groups and aggregates) found without an index read: no index read looks inside NOT,
+    # and NOT (NOT (e)) is e. (e) OR (e) is the same condition too, read as the union of two equal reads where
+    # e has one that finds few rows. And (h) OR (h) in HAVING keeps the same groups.
+    again = negated(toks, "WHERE")
+    if again:
+        out.append(again)
     for clause in ("WHERE", "HAVING"):
         again = doubled(toks, clause)
         if again:
             out.append(again)
     # The same rows sorted, never read in an index's order: a first ORDER BY key on a column no row has
-    # decides nothing, and no index has it. With (e) OR (e) as well, no index at all.
-    if kind in ("select", "ordered") and "ORDER" in toks and "GROUP" not in toks:
+    # decides nothing, and no index has it. With NOT (NOT (e)) as well, no index at all.
+    if kind in ("select", "ordered", "or") and "ORDER" in toks and "GROUP" not in toks:
         o = toks.index("ORDER")
         sort = toks[:o + 2] + ["zz", ","] + toks[o + 2:]
         out.append(sort)
-        again = doubled(sort, "WHERE")
+        again = negated(sort, "WHERE")
         if again:
             out.append(again)
     # SELECT DISTINCT a, b is SELECT a, b ... GROUP BY a, b.
@@ -450,19 +542,23 @@ def metamorphic(toks, kind):
 # The values of f.k: a few of VALUES, so that prefixes repeat.
 FEW = ["NULL", "TRUE", "0", "1", "1.0", "2", "'a'", "'b'", "''"]
 # Indexes on several columns, per table (f.u has none: it is scanned).
-COMPOSITE = {"t": [("a", "b")], "on": [("a", "b", "v")], "k": [("a", "b"), ("b", "a", "v")]}
+COMPOSITE = {"t": [("a", "b")], "on": [("a", "b", "v")], "k": [("a", "b"), ("b", "a", "v")], "w": [("a", "b")]}
 # The indexes of setup() that ORDER BY can read in order, per table; f.u has none, so its forms are sorted.
 ORDERED = {"t": [("v",), ("a", "b")], "on": [("a",), ("a", "b", "v")], "k": [("v",), ("a", "b"), ("b", "a", "v")],
-           "u": [("v",), ("a", "b")]}
+           "u": [("v",), ("a", "b")], "w": [("v",), ("a", "b")]}
+# The tables of setup().
+FTABLES = ("t", "u", "on", "k", "w")
 
 
 def setup(c):
     c.ok("CREATE DATABASE IF NOT EXISTS f")
-    for t in ("t", "u", "on", "k"):
+    for t in FTABLES:
         c.ok(f"CREATE TABLE IF NOT EXISTS f.{t}")
     c.ok("CREATE INDEX IF NOT EXISTS ON f.t (v)")
     c.ok("CREATE INDEX IF NOT EXISTS ON f.on (a)")
     c.ok("CREATE INDEX IF NOT EXISTS ON f.k (v)")
+    c.ok("CREATE INDEX IF NOT EXISTS ON f.w (v)")
+    c.ok("CREATE INDEX IF NOT EXISTS ON f.w (a)")
     for t, defs in COMPOSITE.items():
         for d in defs:
             c.ok(f"CREATE INDEX IF NOT EXISTS ON f.{t} ({', '.join(d)})")
@@ -480,6 +576,34 @@ def setup(c):
         few += [f"('m{i:03d}', {rng.choice(FEW)})" for i in range(20)]
         c.ok("INSERT INTO f.k (_id, a, b, v) VALUES " + ", ".join(few[:300]))
         c.ok("INSERT INTO f.k (_id, a) VALUES " + ", ".join(few[300:]))
+    if c.count("f.w") == 0:
+        wr = random.Random(2)
+
+        def pick():
+            return wr.choice(WIDE) if wr.random() < 0.7 else wr.choice(VALUES)
+
+        # 2,000 rows, one in 20 without v.
+        rows = [(f"w{i:04d}", pick(), pick(), None if i % 20 == 7 else pick()) for i in range(2000)]
+        for k in range(0, len(rows), 400):
+            part = rows[k:k + 400]
+            full = [f"('{i}', {a}, {b}, {v})" for i, a, b, v in part if v is not None]
+            c.ok("INSERT INTO f.w (_id, a, b, v) VALUES " + ", ".join(full))
+            c.ok("INSERT INTO f.w (_id, a, b) VALUES " + ", ".join(f"('{i}', {a}, {b})" for i, a, b, v in part
+                                                                   if v is None))
+
+
+def or_conditions():
+    """ORs whose branches the indexes of setup() answer (on f.w, where most find few enough rows to be read
+    through them), on values of f.w and of the other tables: two or three terms, an AND on (a, b) as a branch,
+    _id, a LIKE prefix, the OR as a term of an AND, and an OR inside an AND branch."""
+    vals = ["1", "'a'", "TRUE", "0", "NULL", "-0.0", "9007199254740993", "7", "'w7'", "123", "'w55'", "299"]
+    out = []
+    for i, x in enumerate(vals):
+        y = vals[(i + 3) % len(vals)]
+        out += [f"v = {x} OR a = {y}", f"a = {x} OR a = {y} OR v IN ({x}, {y})", f"(a = {x} AND b >= {y}) OR v = {y}",
+                f"_id = 'w{i:04d}' OR v = {x} OR _id IN ('s{i:03d}', 'k{i:03d}')", f"v LIKE 'w{i}%' OR a = {x}",
+                f"b = {x} AND (a = {y} OR v = {x})", f"(v = {x} OR (a = {y} AND (b = {x} OR v = {y}))) OR a = {y}"]
+    return out
 
 
 def composite_conditions(d):
@@ -536,7 +660,7 @@ def run(host, n=None, seed=None):
         if not valid and s == 200 and toks[:1] == ["DROP"] and (j or {}).get("affected"):
             dropped.append((i, query))
             setup(c)
-        if valid and s == 200 and kind in ("select", "distinct", "ordered"):
+        if valid and s == 200 and kind in ("select", "distinct", "ordered", "or"):
             for again in metamorphic(toks, kind):
                 s2, j2, d2 = c.q(" ".join(again))
                 counts["metamorphic"] += 1
@@ -562,7 +686,8 @@ def run(host, n=None, seed=None):
           f"{len(problems)} bad answers, first: {problems[0][3] if problems else ''}")
     for i, query, p in meta_problems[:5]:
         print(f"  #{i} {query!r:.300}: {p}", flush=True)
-    check(f"(e) OR (e) in WHERE and HAVING, DISTINCT as GROUP BY, and ORDER BY sorted, give the same rows, {counts['metamorphic']} "
+    check(f"NOT (NOT (e)) and (e) OR (e) in WHERE, (h) OR (h) in HAVING, DISTINCT as GROUP BY, and ORDER BY sorted, give "
+          f"the same rows, {counts['metamorphic']} "
           f"statements (seed {seed})", not meta_problems, f"{len(meta_problems)} differ")
     check("valid statements were mostly accepted", counts["valid-200"] > counts["valid-400"], repr(counts))
     expect("the node answers afterwards", 200, once(host, "GET", "/health", auth=False).status)
@@ -573,7 +698,7 @@ def run(host, n=None, seed=None):
     for stage in ("as the run left them", "after DROP and CREATE INDEX"):
         mism = []
         omism = []
-        for t in ("t", "u", "on", "k"):
+        for t in FTABLES:
             if stage != "as the run left them":
                 for col in ("a", "v"):
                     c.ok(f"DROP INDEX IF EXISTS ON f.{t} ({col})")
@@ -581,12 +706,13 @@ def run(host, n=None, seed=None):
                 for d in COMPOSITE.get(t, []) + [("v", "a")]:
                     c.ok(f"DROP INDEX IF EXISTS ON f.{t} ({', '.join(d)})")
                     c.ok(f"CREATE INDEX ON f.{t} ({', '.join(d)})")
-            # Through indexes on several columns (those of setup(), any the run made, and (v, a) in the second
-            # stage), and on f.u, which has none, by scan.
+            # Against the same conditions scanned (no index read looks inside NOT). Through indexes on several
+            # columns (those of setup(), any the run made, and (v, a) in the second stage), and on f.u, which has
+            # none, by scan.
             for d in [("a", "b"), ("b", "a", "v"), ("v", "a")]:
                 for cond in composite_conditions(d):
                     a = c.count(f"f.{t}", cond)
-                    b = c.count(f"f.{t}", f"({cond}) OR ({cond})")
+                    b = c.count(f"f.{t}", f"NOT (NOT ({cond}))")
                     if a != b:
                         mism.append((t, cond, a, b))
             for col in ("a", "v"):
@@ -595,16 +721,24 @@ def run(host, n=None, seed=None):
                         if v == "NULL":
                             continue
                         a = c.count(f"f.{t}", f"{col} {op} {v}")
-                        b = c.count(f"f.{t}", f"{col} {op} {v} OR {col} {op} {v}")
+                        b = c.count(f"f.{t}", f"NOT (NOT ({col} {op} {v}))")
                         if a != b:
                             mism.append((t, col, op, v, a, b))
                 for cond in [f"{col} IN ({', '.join(VALUES[i:i + 4])})" for i in range(0, len(VALUES), 4)] + \
                         [f"{col} LIKE {p}" for p in ("'a%'", "'%'", "''", "'z%'", "'1'", "'" + chr(0xE9) + "%'",
                                                      "'" + chr(0x1F600) + "'", "'\\\\%'", "'x y'", "'It''%'")]:
                     a = c.count(f"f.{t}", cond)
-                    b = c.count(f"f.{t}", f"{cond} OR {cond}")
+                    b = c.count(f"f.{t}", f"NOT (NOT ({cond}))")
                     if a != b:
                         mism.append((t, cond, a, b))
+            # ORs through the union of their branches' reads, where they find few enough rows: the rows in
+            # _id order, and a page of them.
+            for cond in or_conditions():
+                for q in (f"SELECT _id FROM f.{t} WHERE {{}}", f"SELECT * FROM f.{t} WHERE {{}} LIMIT 3"):
+                    a = c.rows(q.format(cond))
+                    b = c.rows(q.format(f"NOT (NOT ({cond}))"))
+                    if a != b:
+                        mism.append((t, q.format(cond), len(a), len(b)))
             # ORDER BY through the indexes (those of setup(), any the run made, and in the second stage those
             # made above) against the same statements sorted.
             for d in [("a",), ("v",), ("a", "b"), ("b", "a", "v"), ("v", "a")]:

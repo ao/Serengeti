@@ -344,7 +344,7 @@ def arithmetic(c):
     expect("the values are 2 to 21", [[20, 2, 21, 230]], c.rows("SELECT COUNT(*), MIN(k), MAX(k), SUM(k) FROM q.ark"))
     expect("the index finds the new value", [["k20"]], c.rows("SELECT _id FROM q.ark WHERE k = 21"))
     expect("and not the old one", [], c.rows("SELECT _id FROM q.ark WHERE k = 1"))
-    expect("the index and a scan agree", c.rows("SELECT _id FROM q.ark WHERE k >= 10 OR k >= 10"),
+    expect("the index and a scan agree", c.rows("SELECT _id FROM q.ark WHERE NOT (NOT (k >= 10))"),
            c.rows("SELECT _id FROM q.ark WHERE k >= 10"))
 
 
@@ -403,7 +403,7 @@ def upsert(c):
     expect("an index on the column SET changes finds the new value", [["ctr"]], c.rows("SELECT _id FROM q.up WHERE n = 103"))
     expect("and the inserted row", [["i1"]], c.rows("SELECT _id FROM q.up WHERE n = 50"))
     expect("and not the counter at its old value, 3", [["c"]], c.rows("SELECT _id FROM q.up WHERE n = 3"))
-    expect("the index and a scan agree", c.rows("SELECT _id FROM q.up WHERE n >= 1 OR n >= 1"),
+    expect("the index and a scan agree", c.rows("SELECT _id FROM q.up WHERE NOT (NOT (n >= 1))"),
            c.rows("SELECT _id FROM q.up WHERE n >= 1"))
     # ON, CONFLICT, DO and NOTHING are not reserved.
     steps = ["CREATE DATABASE do", "CREATE TABLE do.conflict",
@@ -1168,7 +1168,7 @@ def index_model(c, rng):
                     continue
                 want = sorted(r for r, v in model.items() if compare(v, op, L) is True)
                 via = c.ids(f"SELECT _id FROM q.ix WHERE v {op} {lit(L)} LIMIT 10000")
-                scan = c.ids(f"SELECT _id FROM q.ix WHERE v {op} {lit(L)} OR v {op} {lit(L)} LIMIT 10000")
+                scan = c.ids(f"SELECT _id FROM q.ix WHERE NOT (NOT (v {op} {lit(L)})) LIMIT 10000")
                 if via != want or scan != want:
                     mism.append((op, L, len(want), len(via), len(scan)))
         check(f"index lookups equal scans and the model ({stage})", not mism, repr(mism[:4]))

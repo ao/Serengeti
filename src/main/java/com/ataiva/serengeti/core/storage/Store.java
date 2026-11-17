@@ -287,8 +287,12 @@ public final class Store {
         /** The matching keys' id sets, without copying them. */
         abstract java.util.Collection<java.util.TreeSet<String>> sets(Lookup l);
 
-        /** The ids in id order, without copying where that can be avoided; null when the caller should scan. */
-        abstract Iterable<String> ids(Lookup l);
+        /**
+         * The ids in id order, without copying where that can be avoided; a range that must be copied to be in
+         * that order ({@link #gathered}) only when it holds at most {@code limit} ids, else null: the caller
+         * reads another way.
+         */
+        abstract Iterable<String> ids(Lookup l, long limit);
 
         long estimate(Lookup l) {
             return estimate(l, Long.MAX_VALUE);
@@ -462,7 +466,7 @@ public final class Store {
          * read; a range gathered if small enough, else null.
          */
         @Override
-        Iterable<String> ids(Lookup l) {
+        Iterable<String> ids(Lookup l, long limit) {
             java.util.Collection<java.util.TreeSet<String>> sets = sets(l);
             if (sets.size() <= 1) {
                 return sets.isEmpty() ? List.of() : sets.iterator().next();
@@ -470,7 +474,7 @@ public final class Store {
             if (l instanceof Lookup.AnyOf) {
                 return merged(sets);
             }
-            return gathered(sets);
+            return gathered(sets, limit);
         }
 
         /**
@@ -634,21 +638,24 @@ public final class Store {
         };
     }
 
-    /** The union of {@code sets} copied in id order, or null when they hold more than {@link #MATERIALIZE_LIMIT} ids. */
-    static java.util.SortedSet<String> gathered(java.util.Collection<java.util.TreeSet<String>> sets) {
+    /** The union of {@code sets} copied in id order, or null when they hold more than {@code limit} ids. */
+    static Gathered gathered(java.util.Collection<java.util.TreeSet<String>> sets, long limit) {
         long size = 0;
         for (java.util.TreeSet<String> s : sets) {
             size += s.size();
         }
-        if (size > MATERIALIZE_LIMIT) {
+        if (size > limit) {
             return null;
         }
-        java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        Gathered out = new Gathered();
         for (java.util.TreeSet<String> s : sets) {
             out.addAll(s);
         }
         return out;
     }
+
+    /** Ids copied out of an index to put a range in id order ({@link #gathered}), so a union can count them. */
+    static final class Gathered extends java.util.TreeSet<String> {}
 
     /**
      * An index on 2 to 4 columns: the rows by their values of the columns, in the ORDER BY order of each
@@ -915,7 +922,7 @@ public final class Store {
          * are read (an IN list); any other range gathered if small enough, else null.
          */
         @Override
-        Iterable<String> ids(Lookup l) {
+        Iterable<String> ids(Lookup l, long limit) {
             java.util.Collection<java.util.TreeSet<String>> sets = sets(l);
             if (sets.size() <= 1) {
                 return sets.isEmpty() ? List.of() : sets.iterator().next();
@@ -924,7 +931,7 @@ public final class Store {
             if (c.equal().size() == columns.length) {
                 return merged(sets);
             }
-            return gathered(sets);
+            return gathered(sets, limit);
         }
     }
 
@@ -1055,14 +1062,17 @@ public final class Store {
         return i < 0 ? null : p.substring(0, i) + (char) (p.charAt(i) + 1);
     }
 
-    /** The union of sorted sets, in order and without repeats, read as it is iterated (nothing is copied). */
-    static Iterable<String> merged(java.util.Collection<? extends java.util.SortedSet<String>> sets) {
+    /**
+     * The union of id streams that are each in id order (sorted sets, or such unions), in order and without
+     * repeats, read as it is iterated (nothing is copied).
+     */
+    static Iterable<String> merged(java.util.Collection<? extends Iterable<String>> sets) {
         return () -> new java.util.Iterator<>() {
             private final java.util.PriorityQueue<Head> heads = new java.util.PriorityQueue<>();
             private String last;
 
             {
-                for (java.util.SortedSet<String> s : sets) {
+                for (Iterable<String> s : sets) {
                     java.util.Iterator<String> it = s.iterator();
                     if (it.hasNext()) {
                         heads.add(new Head(it.next(), it));
@@ -2038,7 +2048,10 @@ public final class Store {
         return (end == null ? t.rows.tailMap(p, true) : t.rows.subMap(p, true, end, false)).keySet();
     }
 
-    /** A range lookup on a column index that would match more ids than this is not used: the caller scans. */
+    /**
+     * A range lookup on an index that would gather more ids than this (for a union, its ranges together) is not
+     * used: the caller reads another way.
+     */
     public static final int MATERIALIZE_LIMIT = 100_000;
 
     /**
@@ -2305,7 +2318,58 @@ public final class Store {
             return l instanceof Lookup.Composite ? null : idKeys(t, l);
         }
         IndexState ix = answering(t, column, l);
-        return ix == null ? null : ix.ids(l);
+        return ix == null ? null : ix.ids(l, MATERIALIZE_LIMIT);
+    }
+
+    /** One read of a union ({@link #forEachUnionWhile}): what {@code lookup} finds in the index {@code column}, or in _id. */
+    public record IndexRead(String column, Lookup lookup) {
+        public IndexRead {
+            java.util.Objects.requireNonNull(column, "column");
+            java.util.Objects.requireNonNull(lookup, "lookup");
+        }
+    }
+
+    /**
+     * Visits, in id order and each once, the live rows that any of {@code reads} finds, until {@code visitor}
+     * returns false: the reads' ids are merged as they are read, each read as {@link #forEachIndexed} reads it.
+     * The ranges that must be copied to be in id order hold at most {@link #MATERIALIZE_LIMIT} ids in all, as
+     * those of one read do. Returns false, having visited nothing, when a read has no index or the ranges are
+     * larger: read another way.
+     */
+    public boolean forEachUnionWhile(String db, String table, List<IndexRead> reads,
+            java.util.function.BiPredicate<String, Map<String, Object>> visitor) {
+        if (!tableExists(db, table)) {
+            return false;
+        }
+        TableState t = dbs.get(db).tables.get(table);
+        List<Iterable<String>> parts = new ArrayList<>(reads.size());
+        long left = MATERIALIZE_LIMIT;
+        for (IndexRead read : reads) {
+            Iterable<String> ids;
+            if (read.column().equals("_id")) {
+                if (read.lookup() instanceof Lookup.Composite) {
+                    return false;
+                }
+                ids = idKeys(t, read.lookup());
+            } else {
+                IndexState ix = answering(t, read.column(), read.lookup());
+                ids = ix == null ? null : ix.ids(read.lookup(), left);
+                if (ids instanceof Gathered g) {
+                    left -= g.size();
+                }
+            }
+            if (ids == null) {
+                return false;
+            }
+            parts.add(ids);
+        }
+        for (String id : parts.size() == 1 ? parts.get(0) : merged(parts)) {
+            RowState r = t.rows.get(id);
+            if (r != null && r.value() != null && !visitor.test(id, r.value())) {
+                break;
+            }
+        }
+        return true;
     }
 
     /** Number of rows, over every table, that hold more than one version; for metrics. */

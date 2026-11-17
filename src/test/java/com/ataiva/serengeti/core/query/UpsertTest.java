@@ -233,7 +233,8 @@ class UpsertTest {
                 + " ON CONFLICT DO NOTHING").upsert());
         assertEquals(List.of("a", "b", "c"), ids("qty >= 4"));
         for (String w : List.of("qty = 4", "qty > 4", "qty <= 7", "kind = 1 AND qty >= 4", "kind = 2 AND qty = 4")) {
-            assertEquals(ids("(" + w + ") OR (" + w + ")"), ids(w), w);
+            // No index read looks inside NOT, so this scans.
+            assertEquals(ids("NOT (NOT (" + w + "))"), ids(w), w);
         }
     }
 

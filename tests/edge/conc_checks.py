@@ -49,7 +49,7 @@ def index_matches_scan(c, table, column, literals):
     for L in literals:
         for op in ["=", "<", "<=", ">", ">="]:
             a = c.count(table, f"{column} {op} {lit(L)}")
-            b = c.count(table, f"{column} {op} {lit(L)} OR {column} {op} {lit(L)}")
+            b = c.count(table, f"NOT (NOT ({column} {op} {lit(L)}))")
             if a != b:
                 mism.append((op, L, a, b))
     return mism

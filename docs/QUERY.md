@@ -166,7 +166,8 @@ is for values of different types. A quote in the pattern is written `''`, as in 
 `CREATE INDEX ON shop.items (qty)` keeps, for each value of `qty`, the rows that hold it. SELECT (with or
 without aggregates), UPDATE and DELETE then find rows through the index when the WHERE clause is one
 term on an indexed column, or an AND of terms of which one is; with several, the term that matches the
-fewest rows is used (and see below for indexes on several columns). The terms an index answers are:
+fewest rows is used (and see below for indexes on several columns and for OR). The terms an index answers
+are:
 
 - a comparison with a value (`=`, `<`, `<=`, `>`, `>=`);
 - an IN list: the rows of each value;
@@ -174,8 +175,8 @@ fewest rows is used (and see below for indexes on several columns). The terms an
   is not escaped): the strings that start with it. A pattern without wildcards is an `=` lookup.
 
 The rest of the condition is checked on those rows, so an index changes how fast a query runs, never
-its result. `!=`, OR, NOT, NOT IN, NOT LIKE, IS NULL and a LIKE that starts with a wildcard scan the
-table.
+its result. `!=`, NOT, NOT IN, NOT LIKE, IS NULL and a LIKE that starts with a wildcard scan the table,
+and so does an OR unless each of its branches has a term an index answers (see "OR through indexes").
 
 An index holds the booleans, numbers and strings of its column, compared as above (`qty = 10` also
 finds 10.0). No lookup finds a row where the column is missing, null, an object or an array, which is
@@ -228,6 +229,55 @@ replicates and that `indexes.jsonl` keeps, the columns are joined by commas in t
 name cannot hold a comma, so a 2.1 node holds such an index as an index on a column no row has: it lists
 it as `customer,placed`, answers those queries by scan, and keeps the definition, so a node rolled back to
 2.1 and upgraded again has the index back. 2.0 nodes are not sent index definitions.
+
+### OR through indexes
+
+An OR whose every branch an index or `_id` answers is read as the union of the branches' reads: the ids
+each read finds, merged in `_id` order, each row once. The whole WHERE is then checked on each row, as for
+any index read.
+
+```
+CREATE INDEX ON shop.tickets (status);
+CREATE INDEX ON shop.tickets (assignee);
+SELECT * FROM shop.tickets WHERE status = 'open' OR assignee = 'me';
+SELECT * FROM shop.tickets WHERE kind = 1 AND (status = 'open' OR assignee = 'me');
+
+CREATE INDEX ON shop.orders (customer, placed);
+SELECT * FROM shop.orders WHERE (customer = 'c1' AND placed > '2026-06') OR customer = 'c2' OR _id = 'o17';
+```
+
+- Each branch is one term or an AND of terms, and is read as a WHERE of its own would be: through the term
+  or the index on several columns that finds the fewest rows. A branch that no index answers (a term on a
+  column without an index, `!=`, IS NULL, NOT and the others above) makes the OR a scan.
+- The OR can be the whole WHERE or one term of a top-level AND. In an AND it is one more read to choose
+  from, counted as the sum of the rows its branches' reads find (a row two of them find counts twice): `kind
+  = 1 AND (status = 'open' OR assignee = 'me')` reads the index on `kind` if that finds fewer rows. Of a
+  union and a read of one index that find as many, the read of one index is used.
+- An OR among the terms of an AND branch, or written as a branch in parentheses, gives its reads to the one
+  union: `(kind = 1 AND (a = 1 OR b = 2)) OR c = 3` is read through `a`, `b` and `c` when `kind` finds more
+  rows than `a = 1 OR b = 2`.
+- The union is used only when its reads find at most 1/16 of the table's rows, counted that way. A row read
+  through an index costs about ten times one read by a scan, so a larger union would be slower than the scan.
+  A range or LIKE prefix of `_id` is counted for this up to that share.
+- An OR is read through at most 32 reads (those of the ORs inside it included) that look up at most 4,000
+  values in all (an IN list counts its values, a read of an index on several columns its combinations of
+  values); with more it scans.
+- A range (`<`, `>`, a LIKE prefix) is gathered into `_id` order before its first row is read, as above;
+  the ranges of one union gather at most 100,000 rows in all, and if they would gather more, the next read
+  or the scan is used instead.
+
+The rows come in `_id` order, so LIMIT and a keyset page (`WHERE (status = 'open' OR assignee = 'me') AND _id
+> 'k' ORDER BY _id LIMIT 50`) stop after their rows. COUNT(*), GROUP BY, UPDATE and DELETE read through the
+union as SELECT does.
+
+On 200,000 rows, an OR of two indexed columns that each match 0.1% of them (`a = 7 OR b = 13`, 419 rows)
+takes 0.84 ms instead of 28 by the scan, its COUNT(*) 0.62 ms, and `kind = 3 AND (a = 7 OR b = 13)` 0.64 ms
+instead of 25 (in-process medians on a c7g.2xlarge container limited to 4 CPUs, JDK 17, against the same
+statements written as `NOT (NOT (...))`, which scan). The largest union the 1/16 rule lets through, two
+ranges that find 6% of the rows, takes 13 ms instead of 28. With LIMIT 10 it takes 5 ms where the scan finds
+its 10 rows in 0.08, because the ranges are gathered first, as a range on one index is (`a < 62 LIMIT 10`, 6%
+of the rows, takes 6 ms). Without the rule, an OR of two ranges that find 45% of the rows each took 3.7 times
+as long as the scan, and one of two IN lists of 1,000 values 10 times.
 
 ### ORDER BY through an index
 
@@ -427,6 +477,9 @@ An INSERT with ON CONFLICT also says how many tuples it inserted, updated and sk
   first key that decides anything is `_id` ascending, which is the order rows are read in (see below),
   and when an index gives the rows in its order (see "ORDER BY through an index"). `ORDER BY _id DESC`
   sorts. A statement whose WHERE has no term an index answers (see Indexes) scans the table.
+- An OR is read through indexes only when every branch has a term an index answers, its reads find at most
+  1/16 of the table's rows, and they are at most 32 reads of at most 4,000 values in all (see "OR through
+  indexes"); otherwise it scans.
 
 ## Reading a large table
 

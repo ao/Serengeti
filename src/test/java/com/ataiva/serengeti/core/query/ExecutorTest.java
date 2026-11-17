@@ -619,6 +619,9 @@ class ExecutorTest {
             String w = queries.get(i);
             assertEquals(before.get(i), List.of(rows("SELECT _id, v FROM shop.items WHERE " + w).rows(),
                     rows("SELECT COUNT(*) FROM shop.items WHERE " + w).rows()), w);
+            assertEquals(rows("SELECT _id FROM shop.items WHERE NOT (NOT (" + w + "))").rows(),
+                    rows("SELECT _id FROM shop.items WHERE " + w).rows(), w);
+            // The same read twice, as a union where the rows it finds are few enough.
             assertEquals(rows("SELECT _id FROM shop.items WHERE (" + w + ") OR (" + w + ")").rows(),
                     rows("SELECT _id FROM shop.items WHERE " + w).rows(), w);
         }

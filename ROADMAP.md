@@ -38,7 +38,8 @@ here has a date.
 
 - every node keeps every database in memory;
 - an index on several columns is read only for its first columns that a condition fixes (=, IN, then one
-  range); a WHERE without a term an index answers scans its table;
+  range); a WHERE without a term an index answers scans its table, and so does an OR unless an index
+  answers each branch and they find at most 1/16 of the rows;
 - ORDER BY sorts the matching rows in memory unless its keys are an index's columns after those the WHERE
   fixes, all in one direction ([docs/QUERY.md](docs/QUERY.md), "ORDER BY through an index");
 - no joins and no transactions across statements; nothing is linearizable;

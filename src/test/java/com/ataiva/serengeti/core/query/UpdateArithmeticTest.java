@@ -311,9 +311,9 @@ class UpdateArithmeticTest {
         assertEquals(1, affected("UPDATE d.t SET qty = qty + 0.5 WHERE kind = 1 AND qty = 6"));
         assertEquals(List.of("c"), ids("qty = 6.5"));
         assertEquals(List.of("a", "b", "c"), ids("qty >= 4"));
-        // The index and a scan agree.
+        // The index and a scan (no index read looks inside NOT) agree.
         for (String w : List.of("qty = 4", "qty > 4", "qty <= 6.5", "kind = 1 AND qty >= 4")) {
-            assertEquals(ids("(" + w + ") OR (" + w + ")"), ids(w), w);
+            assertEquals(ids("NOT (NOT (" + w + "))"), ids(w), w);
         }
     }
 
