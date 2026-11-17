@@ -385,10 +385,10 @@ def setup(c):
     rng = random.Random(1)
     for i in range(300):
         rows.append(f"('s{i:03d}', {rng.choice(VALUES)}, {rng.choice(VALUES)}, {rng.choice(VALUES)})")
-    if c.count("f.t") == 0:
-        c.ok("INSERT INTO f.t (_id, a, b, v) VALUES " + ", ".join(rows))
-        c.ok("INSERT INTO f.u (_id, a, b, v) VALUES " + ", ".join(rows[:100]))
-        c.ok("INSERT INTO f.on (_id, a, b, v) VALUES " + ", ".join(rows[100:200]))
+    # Each table on its own count: the run's deletes can empty one and not another (seed 106561184 did).
+    for t, part in (("t", rows), ("u", rows[:100]), ("on", rows[100:200])):
+        if c.count(f"f.{t}") == 0:
+            c.ok(f"INSERT INTO f.{t} (_id, a, b, v) VALUES " + ", ".join(part))
     if c.count("f.k") == 0:
         few = [f"('k{i:03d}', {rng.choice(FEW)}, {rng.choice(FEW)}, {rng.choice(FEW)})" for i in range(300)]
         # Some rows lack a column, which reads as null and sorts first in an index.

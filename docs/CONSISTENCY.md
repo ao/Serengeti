@@ -187,4 +187,8 @@ rolls a node that has an index back to 2.0.0: every row must still be there. 44 
 machine. For 2.2 it also makes a write account and a read account before the rollback: on 2.0.0 the admin
 and the write account sign in from `users.json`, the read account cannot, and it is back once the node is
 upgraded again. 54 of 54 for 2.2 (8970539), with 144 inserts acknowledged during the upgrade; 61 of 61 at
-bde4274, from 2.0.0 and from a 2.1 image built from engine/2.1-fixes (a limited account added).
+bde4274, from 2.0.0 and from a 2.1 image built from engine/2.1-fixes (a limited account added). It also
+makes an index on two columns before the rollback and one while the old nodes remain: a 2.1 node lists it as
+one index on a column named `n,k` and answers by scan, and once upgraded every node finds through it the
+rows the old nodes wrote. 76 of 76 at 14431c2 on a c7g.4xlarge, from 2.0.0 and from a 2.1 image built from
+engine/2.1-fixes b983d15.
