@@ -1103,7 +1103,7 @@ public final class Store {
         long n = 0;
         for (DbState d : dbs.values()) {
             for (TableState t : d.tables.values()) {
-                n += t.weight;
+                n += t.weight + t.dead.size() * Weight.DEAD_ENTRY;
                 for (IndexState ix : t.indexes.values()) {
                     n += ix.entries * Weight.INDEX_ENTRY + ix.keys * Weight.INDEX_KEY;
                 }

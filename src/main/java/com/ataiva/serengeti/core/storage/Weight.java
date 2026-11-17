@@ -98,6 +98,12 @@ public final class Weight {
      */
     static final long INDEX_KEY = 104;
 
+    /**
+     * One row whose versions are all deletes, in its table's index of them by stamp (what tombstone collection and
+     * the expiry walk): the tree entry and the record holding the stamp and the id (the id is the row's own).
+     */
+    static final long DEAD_ENTRY = 72;
+
     private static long align(long n) {
         return (n + 7) & ~7L;
     }
