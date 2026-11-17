@@ -402,7 +402,7 @@ def upsert(c):
     c.ok("INSERT INTO q.up (_id, n) VALUES ('ctr', 1), ('i1', 50) ON CONFLICT DO UPDATE SET n = n + 100")
     expect("an index on the column SET changes finds the new value", [["ctr"]], c.rows("SELECT _id FROM q.up WHERE n = 103"))
     expect("and the inserted row", [["i1"]], c.rows("SELECT _id FROM q.up WHERE n = 50"))
-    expect("and not the old value", [], c.rows("SELECT _id FROM q.up WHERE n = 3"))
+    expect("and not the counter at its old value, 3", [["c"]], c.rows("SELECT _id FROM q.up WHERE n = 3"))
     expect("the index and a scan agree", c.rows("SELECT _id FROM q.up WHERE n >= 1 OR n >= 1"),
            c.rows("SELECT _id FROM q.up WHERE n >= 1"))
     # ON, CONFLICT, DO and NOTHING are not reserved.

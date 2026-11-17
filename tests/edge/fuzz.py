@@ -506,6 +506,7 @@ def run(host, n=None, seed=None):
     problems = []
     meta_problems = []
     refusals = {}
+    kinds = {}  # kind of valid statement: [answered 200, answered 400]
     dropped = []
     t0 = time.time()
     for i in range(n):
@@ -525,6 +526,8 @@ def run(host, n=None, seed=None):
                 break
         else:
             counts[("valid" if valid else "mutated") + ("-200" if s == 200 else "-400")] += 1
+            if valid:
+                kinds.setdefault(kind, [0, 0])[s != 200] += 1
             if valid and s == 400:
                 reason = re.sub(r"'[^']*'|\d+", "_", (j or {}).get("error", ""))[:60]
                 refusals[reason] = refusals.get(reason, 0) + 1
@@ -548,6 +551,8 @@ def run(host, n=None, seed=None):
     ok(f"sent {n} statements in {took:.0f} s: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
     top = sorted(refusals.items(), key=lambda kv: -kv[1])[:4]
     print("  valid statements refused, most often: " + "; ".join(f"{v}x {k!r}" for k, v in top), flush=True)
+    print("  valid statements by kind, 200/400: " + ", ".join(f"{k} {a}/{b}" for k, (a, b) in sorted(kinds.items())),
+          flush=True)
     for i, query in dropped[:5]:
         print(f"  #{i} a changed statement dropped something, so the tables were set up again: {query!r:.120}",
               flush=True)
