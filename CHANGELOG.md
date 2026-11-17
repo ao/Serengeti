@@ -179,6 +179,14 @@ GitHub release notes and tags.
   `_id` order for a share of that size, then goes on through the gathered read after the last `_id` it got:
   `WHERE a < 31 OR b < 31 LIMIT 10` takes 0.03 ms instead of 3.9, and `WHERE a < 62 LIMIT 10` 0.015 instead
   of 4.6 (200,000 rows, in-process, c7g.4xlarge). See docs/QUERY.md, "OR through indexes".
+- `LIMIT n OFFSET m`, and `OFFSET m` alone: the rows a SELECT gives without them, in its order, less the
+  first m, then at most n. Every form takes them: rows in `_id` order, sorted or read through an index in
+  order, SELECT DISTINCT, GROUP BY with HAVING, and aggregates without GROUP BY, which now take LIMIT too
+  and whose one row `OFFSET 1` or `LIMIT 0` leaves out. Without LIMIT the 10,000-row cap applies after the
+  OFFSET, and `truncated` says whether more rows follow the page. OFFSET plus LIMIT (or the cap) may be at
+  most 100,000; past that the statement is refused (400) with a message that points to keyset pages, which
+  stay the way to read a large table: an OFFSET page reads every row before it. OFFSET is not reserved.
+  See docs/QUERY.md, "LIMIT and OFFSET".
 
 ### Fixed
 - An index key kept the value of the row that first had it alive after that row changed or was deleted
@@ -277,6 +285,9 @@ GitHub release notes and tags.
 - A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past
   the LIMIT or the cap) instead of visiting the rest of the table, and `ORDER BY _id` ascending no longer
   sorts, since rows are read in that order. A keyset page reads only its own rows.
+- A SELECT whose ORDER BY sorts holds only the first OFFSET + LIMIT + 1 matching rows in memory as it
+  reads (OFFSET + 10,001 without LIMIT), in a heap, and sorts those, instead of holding and sorting every
+  matching row. It still reads every matching row.
 - The image sets `MALLOC_ARENA_MAX=2`. glibc otherwise keeps a malloc arena per thread: filling a node in a
   512 MiB container, that memory reached about 150 MB the JVM does not count (measured with Native Memory
   Tracking against the container's anonymous memory), and the kernel killed the node before its memory

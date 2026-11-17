@@ -82,6 +82,9 @@ public final class Printer {
             if (q.limit() != null) {
                 b.append(" LIMIT ").append(q.limit());
             }
+            if (q.offset() != null) {
+                b.append(" OFFSET ").append(q.offset());
+            }
             return b.toString();
         }
         if (s instanceof Statement.Update u) {

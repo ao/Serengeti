@@ -31,7 +31,7 @@ conflict    = "ON" "CONFLICT" "DO" ( "NOTHING" | "UPDATE" "SET" assignment { ","
 
 select      = "SELECT" [ "DISTINCT" ] ( "*" | item { "," item } )
               "FROM" table [ "WHERE" expr ] [ "GROUP" "BY" name { "," name } ] [ "HAVING" expr ]
-              [ "ORDER" "BY" key { "," key } ] [ "LIMIT" integer ] ;
+              [ "ORDER" "BY" key { "," key } ] [ "LIMIT" integer ] [ "OFFSET" integer ] ;
 item        = name | aggregate ;
 key         = item [ "ASC" | "DESC" ] ;
 aggregate   = "COUNT" "(" ( "*" | [ "DISTINCT" ] name ) ")"
@@ -62,14 +62,15 @@ integer     = digits ;
 The keywords are: AND, ASC, BY, COUNT, CREATE, DATABASE, DATABASES, DELETE, DESC, DROP, EXISTS,
 FALSE, FROM, IF, IN, INSERT, INTO, IS, LIMIT, NOT, NULL, OR, ORDER, SELECT, SET, SHOW, TABLE, TABLES,
 TRUE, UPDATE, VALUES, WHERE. They cannot be used as names. AVG, CONFLICT, CONFLICTS, DISTINCT, DO, GROUP,
-HAVING, INDEX, INDEXES, LIKE, MAX, MIN, NOTHING, ON and SUM are not reserved: they have their meaning only
-where the grammar puts them, so `SELECT sum, group FROM shop.items WHERE like = 1` reads three columns,
-`sum(sum)` adds up a column called `sum`, and ON CONFLICT is read only after the last tuple of an INSERT,
-where nothing else may come. DISTINCT is the keyword right after SELECT unless a comma or
+HAVING, INDEX, INDEXES, LIKE, MAX, MIN, NOTHING, OFFSET, ON and SUM are not reserved: they have their
+meaning only where the grammar puts them, so `SELECT sum, group FROM shop.items WHERE like = 1` reads
+three columns, `sum(sum)` adds up a column called `sum`, and ON CONFLICT is read only after the last tuple
+of an INSERT, where nothing else may come. DISTINCT is the keyword right after SELECT unless a comma or
 FROM follows, and right after `COUNT(` unless `)` follows: `SELECT distinct FROM t` reads a column called
 distinct, `SELECT DISTINCT distinct FROM t` its distinct values, `COUNT(distinct)` counts its values and
 `COUNT(DISTINCT distinct)` its distinct values. HAVING is the keyword only after the table, the WHERE
-condition or the GROUP BY list.
+condition or the GROUP BY list, and OFFSET only at the end of a SELECT, after its LIMIT or where the LIMIT
+would be: `SELECT offset FROM t ORDER BY offset OFFSET 5` reads and sorts a column called offset.
 
 A condition compares a column with a literal value, a list of them (IN) or a pattern (LIKE); the left
 side is always a column, and in HAVING may also be an aggregate. `NOT` binds tighter than `AND`, which
@@ -88,8 +89,8 @@ Further parse rules:
 - An IN list has 1 to 1,000 values.
 - In a LIKE pattern, `\` comes only before `%`, `_` or `\`.
 - Only COUNT takes `*` or DISTINCT.
-- Without GROUP BY, a select list with an aggregate has only aggregates, and cannot have ORDER BY or
-  LIMIT: it returns one row (or none, after HAVING).
+- Without GROUP BY, a select list with an aggregate has only aggregates, and cannot have ORDER BY: it
+  returns one row (or none, after HAVING), which LIMIT 0 or an OFFSET of 1 or more leaves out.
 - With GROUP BY, each column of the select list is a GROUP BY column, and each ORDER BY key names a
   GROUP BY column or an aggregate of the select list written the same way (`ORDER BY count(*) DESC`;
   keywords and names are not case-sensitive there either). A GROUP BY lists each column once. `SELECT *`
@@ -101,7 +102,8 @@ Further parse rules:
 - ORDER BY an aggregate needs GROUP BY.
 - An ORDER BY has 1 to 32 keys, none listed twice (`a` and `A`, or `count(*)` and `COUNT(*)`, are the
   same key, whatever their directions).
-- The LIMIT is a non-negative whole number.
+- LIMIT and OFFSET each take a non-negative whole number, and LIMIT comes first: `LIMIT 10 OFFSET 20`,
+  `LIMIT 10`, `OFFSET 20`.
 
 ## Errors
 
@@ -266,29 +268,30 @@ SELECT * FROM shop.orders WHERE (customer = 'c1' AND placed > '2026-06') OR cust
   read; the ranges of one union gather at most 100,000 rows in all, and if they would gather more, the next
   read or the scan is used instead.
 
-The rows come in `_id` order, so LIMIT and a keyset page (`WHERE (status = 'open' OR assignee = 'me') AND _id
-> 'k' ORDER BY _id LIMIT 50`) stop after their rows. Gathering costs the whole union even when the page
-fills after a few rows, so a page whose read would gather (a union, or a range) first reads in `_id` order
-through a read that does not gather (an `_id` range, an `=` or IN term on an indexed column) or the table, for
-a share of what the gathered read would gather: half of it through the table or `_id`, 1/16 through an
-index. If the page is not full by then, the gathered read goes on after the last `_id` read, so no row is
-read twice. COUNT(*), GROUP BY, UPDATE and DELETE read through the union as SELECT does.
+The rows come in `_id` order, so LIMIT (after its OFFSET) and a keyset page (`WHERE (status = 'open' OR
+assignee = 'me') AND _id > 'k' ORDER BY _id LIMIT 50`) stop after their rows. Gathering costs the whole
+union even when the page fills after a few rows, so a page whose read would gather (a union, or a range)
+first reads in `_id` order through a read that does not gather (an `_id` range, an `=` or IN term on an
+indexed column) or the table, for a share of what the gathered read would gather: half of it through the
+table or `_id`, 1/16 through an index. If the page is not full by then, the gathered read goes on after the
+last `_id` read, so no row is read twice. COUNT(*), GROUP BY, UPDATE and DELETE read through the union as
+SELECT does.
 
 On 200,000 rows, an OR of two indexed columns that each match 0.1% of them (`a = 7 OR b = 13`, 419 rows)
 takes 0.84 ms instead of 28 by the scan, its COUNT(*) 0.62 ms, and `kind = 3 AND (a = 7 OR b = 13)` 0.64 ms
 instead of 25 (in-process medians on a c7g.2xlarge container limited to 4 CPUs, JDK 17, against the same
 statements written as `NOT (NOT (...))`, which scan). The largest union the 1/16 rule lets through, two
-ranges that find 6% of the rows, takes 13 ms instead of 28. With LIMIT 10 it takes 5 ms where the scan finds
-its 10 rows in 0.08, because the ranges are gathered first, as a range on one index is (`a < 62 LIMIT 10`, 6%
-of the rows, takes 6 ms). Without the rule, an OR of two ranges that find 45% of the rows each took 3.7 times
-as long as the scan, and one of two IN lists of 1,000 values 10 times.
+ranges that find 6% of the rows, takes 13 ms instead of 28. With LIMIT 10, read in `_id` order first as
+above, it takes 0.03 ms against 0.02 for the scan (in-process medians of 31 on a c7g.4xlarge, JDK 17).
+Without the rule, an OR of two ranges that find 45% of the rows each took 3.7 times as long as the scan, and
+one of two IN lists of 1,000 values 10 times.
 
 ### ORDER BY through an index
 
 A SELECT with ORDER BY (and no GROUP BY, DISTINCT or aggregates) can read its rows from an index in the
-order it returns them, and stop once it has them: its LIMIT, or the 10,000 cap, and one more row to know
-whether `truncated` is true. It does when its ORDER BY keys are, in order, the columns of an index that
-come after those the WHERE fixes:
+order it returns them, and stop once it has them: its OFFSET, then its LIMIT or the 10,000 cap, and one
+more row to know whether `truncated` is true. It does when its ORDER BY keys are, in order, the columns of
+an index that come after those the WHERE fixes:
 
 ```
 CREATE INDEX ON shop.events (at);
@@ -321,16 +324,17 @@ large table").
 When every term of the WHERE is one the read answers (the terms that fix columns, and comparisons on the
 first ordered column) and the keys reach the index's last column, each row it reads belongs to the answer,
 and the read is always used. Otherwise it may read rows the other terms leave out, possibly the whole index
-before the page is full, so it gets a share of what the query would read without it, and if the page is
-not full by then, the query reads and sorts as it would without the index. The share is 1/96 of the
-table's rows when that read is the scan, or of an `_id` range's rows (counted up to 16,384), and 1/5 of the
-rows an index read would find when it is one (less when the read merges many IN values: 1/50 for 1,000), since
-a row read through an index costs 8 to 10 times one read by a scan, and those rows are sorted after. When
-the share is smaller than the page, the ordered read is not tried. The share bounds the worst case, a
-condition that no row meets: on 200,000 rows of 10 columns, `WHERE c = 'none' ORDER BY at DESC LIMIT 10` takes 32 ms against 28
-for the same statement answered by the sort (in-process medians of 31, the two statements in turn, on a
-c7g.4xlarge, JDK 17). With 10% of the rows matching it takes 0.23 ms instead of 40, and `ORDER BY at DESC
-LIMIT 10` 0.07 ms instead of 330 (medians on a c7g.4xlarge container limited to 4 CPUs).
+before the page is full, so it gets a share of what the query would read without it, and if the page is not
+full by then, the query reads and sorts as it would without the index. The share is 1/96 of the table's rows
+when that read is the scan, or of an `_id` range's rows (counted up to 16,384), and 1/5 of the rows an index
+read would find when it is one (less when the read merges many IN values: 1/50 for 1,000), since a row read
+through an index costs 8 to 10 times one read by a scan, and those rows are sorted after. When the share is
+smaller than the rows it must find (OFFSET included), the ordered read is not tried. The share bounds the
+worst case, a condition that no row meets: on 200,000 rows of 10 columns, `WHERE c = 'none' ORDER BY at DESC
+LIMIT 10` takes 32 ms against 28 for the same statement answered by the sort (in-process medians of 31, the
+two statements in turn, on a c7g.4xlarge, JDK 17). With 10% of the rows matching it takes 0.23 ms instead of
+40, and `ORDER BY at DESC LIMIT 10` 0.07 ms instead of 330 (medians on a c7g.4xlarge container limited to 4
+CPUs).
 
 ## Ordering
 
@@ -410,9 +414,39 @@ Without GROUP BY, the select list has only aggregates and the whole input is one
 matches: `SELECT COUNT(*) FROM t WHERE x = 1 HAVING COUNT(*) = 0` returns one row, 0, when nothing
 matches, and no row otherwise.
 
-HAVING drops groups before ORDER BY and LIMIT. Every aggregate, of the select list and of HAVING, is
-computed for every group first, so one that cannot be given (a SUM beyond 64 bits) fails the statement
-even in a group that HAVING drops.
+HAVING drops groups before ORDER BY, OFFSET and LIMIT. Every aggregate, of the select list and of HAVING,
+is computed for every group first, so one that cannot be given (a SUM beyond 64 bits) fails the statement
+even in a group that HAVING drops, or that OFFSET or LIMIT leaves out.
+
+## LIMIT and OFFSET
+
+```
+SELECT * FROM shop.items ORDER BY price DESC LIMIT 20 OFFSET 40;
+SELECT kind, COUNT(*) FROM shop.items GROUP BY kind ORDER BY count(*) DESC LIMIT 10 OFFSET 10;
+SELECT _id FROM shop.items WHERE kind = 2 OFFSET 100;
+```
+
+With OFFSET m, a SELECT returns the rows it would return without OFFSET and LIMIT, in the same order,
+less the first m; LIMIT n then keeps at most n of them. That holds for every SELECT: rows in `_id` order,
+sorted or read through an index in order, the rows of SELECT DISTINCT, groups after HAVING, and the one
+row of aggregates without GROUP BY, which `OFFSET 1` or `LIMIT 0` leaves out. An OFFSET past the last row
+returns no rows, and `OFFSET 0` changes nothing.
+
+Without LIMIT, a page has at most 10,000 rows (the cap, see Limits), and `truncated` is true when more
+rows follow it; the rows OFFSET leaves out do not count. With LIMIT, `truncated` is false, as without
+OFFSET.
+
+OFFSET plus LIMIT, or OFFSET plus the cap without LIMIT, may be at most 100,000
+(`Executor.MAX_OFFSET_ROWS`). Past that the statement fails (400 over HTTP) with a message that points to
+keyset pages.
+
+An OFFSET page reads every row before it. A read in `_id` order or through an index in order stops once
+it has found m + n + 1 rows that match (the last one to know whether more follow); a sort reads every row
+that matches and holds the first m + n + 1 by the ORDER BY; GROUP BY and DISTINCT make every group first,
+as without OFFSET. So the 50th page of 1,000 rows in `_id` order reads 50,001 rows, where a keyset page
+reads 1,001. Keyset pages stay the way to read a large table (see "Reading a large table"), also because a
+row inserted or deleted before an OFFSET page, between two of them, moves the rows after it by one, so the
+next page repeats a row or misses one. A keyset page starts after the last `_id` read, wherever that is now.
 
 ## Results
 
@@ -461,8 +495,10 @@ An INSERT with ON CONFLICT also says how many tuples it inserted, updated and sk
 
 - A SELECT returns at most 10,000 rows (`Executor.DEFAULT_MAX_ROWS`; the cap is a constructor
   argument), and with GROUP BY or DISTINCT at most 10,000 groups. A LIMIT above the cap is an error.
-  Without LIMIT, if more rows or groups match (after HAVING), the first 10,000 are returned and
-  `truncated` is true. COUNT(*) is not capped.
+  Without LIMIT, if more rows or groups match (after HAVING and OFFSET), the first 10,000 are returned
+  and `truncated` is true. COUNT(*) is not capped.
+- OFFSET plus LIMIT, or OFFSET plus the cap without LIMIT, is at most 100,000 (`Executor.MAX_OFFSET_ROWS`;
+  see "LIMIT and OFFSET").
 - A GROUP BY holds at most 100,000 groups while it reads the rows (`Executor.DEFAULT_MAX_GROUPS`, also
   a constructor argument). A statement that would make more fails with `GROUP BY would make more than
   100,000 groups` as soon as it gets there, LIMIT or not, and HAVING does not change that: the groups are
@@ -478,10 +514,11 @@ An INSERT with ON CONFLICT also says how many tuples it inserted, updated and sk
 - Parentheses and NOT may nest at most 64 levels deep in one condition (`Parser.MAX_DEPTH`). Long
   chains of AND or OR do not count towards this.
 - Names are at most 63 characters.
-- SELECT with ORDER BY sorts all matching rows in memory before applying the limit, except when its
-  first key that decides anything is `_id` ascending, which is the order rows are read in (see below),
-  and when an index gives the rows in its order (see "ORDER BY through an index"). `ORDER BY _id DESC`
-  sorts. A statement whose WHERE has no term an index answers (see Indexes) scans the table.
+- SELECT with ORDER BY reads every matching row, holds the first OFFSET + LIMIT + 1 by its keys in
+  memory (OFFSET + 10,001 without LIMIT), and sorts those, except when its first key that decides
+  anything is `_id` ascending, which is the order rows are read in (see below), and when an index gives
+  the rows in its order (see "ORDER BY through an index"). `ORDER BY _id DESC` sorts. A statement whose
+  WHERE has no term an index answers (see Indexes) scans the table.
 - An OR is read through indexes only when every branch has a term an index answers, its reads find at most
   1/16 of the table's rows, and they are at most 32 reads of at most 4,000 values in all (see "OR through
   indexes"); otherwise it scans.
@@ -500,6 +537,10 @@ not sort, does not read the rows before it, and stops after its 1,000 rows (and 
 whether `truncated` is true without LIMIT). The same holds without ORDER BY. A page may have up to
 10,000 rows, the cap. Other conditions can be added with AND, `WHERE _id > 'x' AND kind = 2 ORDER BY
 _id LIMIT 1000`; the page then reads rows until it has 1,000 that match.
+
+`LIMIT 1000 OFFSET 49000` gives the same page as the 50th keyset page while the table does not change,
+but it reads the 49,000 rows before it first, and it may not reach past 100,000 rows (see "LIMIT and
+OFFSET").
 
 Each page sees the table as it is when it runs. A row inserted between pages is read if its `_id`
 comes after the last one already read, and missed otherwise; a row deleted before its page runs is not

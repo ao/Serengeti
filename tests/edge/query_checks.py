@@ -45,6 +45,7 @@ def run(host):
     upsert(c)
     statements(c)
     limits(c)
+    offsets(c)
     ordering(c)
     nesting(c)
     comparisons(c)
@@ -150,6 +151,17 @@ def words(c):
     expect("ORDER BY distinct DESC, having", [["c"], ["a"], ["b"]],
            c.rows("SELECT _id FROM distinct.having ORDER BY distinct DESC, having"))
     c.ok("DROP DATABASE distinct")
+    # Nor is OFFSET: it is the keyword only at the end of a SELECT.
+    steps = ["CREATE DATABASE offset", "CREATE TABLE offset.offset", "CREATE INDEX ON offset.offset (offset)",
+             "INSERT INTO offset.offset (_id, offset) VALUES ('a', 3), ('b', 1), ('c', 2)",
+             "UPDATE offset.offset SET offset = 4 WHERE offset = 3"]
+    for s in steps:
+        accepted(f"OFFSET as a name: {s}", c, s)
+    expect("SELECT offset ... ORDER BY offset OFFSET 1", [[2], [4]],
+           c.rows("SELECT offset FROM offset.offset ORDER BY offset OFFSET 1"))
+    expect("WHERE offset ... GROUP BY offset LIMIT 1 OFFSET 1", [[4, 1]],
+           c.rows("SELECT offset, COUNT(*) FROM offset.offset WHERE offset > 1 GROUP BY offset LIMIT 1 OFFSET 1"))
+    c.ok("DROP DATABASE offset")
 
     section("keywords, blanks and comments")
     c.ok("CREATE TABLE IF NOT EXISTS q.t")
@@ -461,7 +473,8 @@ def statements(c):
             ("an aggregate of two columns", "SELECT SUM(a, b) FROM q.t", 400, None),
             ("an aggregate of an expression", "SELECT SUM(a + 1) FROM q.t", 400, None),
             ("aggregates without GROUP BY and ORDER BY", "SELECT SUM(a) FROM q.t ORDER BY a", 400, "ORDER BY"),
-            ("aggregates without GROUP BY and LIMIT", "SELECT MIN(a), MAX(a) FROM q.t LIMIT 1", 400, "LIMIT"),
+            ("aggregates without GROUP BY, ORDER BY and LIMIT", "SELECT MIN(a), MAX(a) FROM q.t ORDER BY a LIMIT 1", 400,
+             "ORDER BY"),
             ("GROUP BY with *", "SELECT * FROM q.t GROUP BY a", 400, "GROUP BY"),
             ("a column that is not grouped", "SELECT a, b FROM q.t GROUP BY a", 400, "not in GROUP BY"),
             ("GROUP BY a column twice", "SELECT a FROM q.t GROUP BY a, A", 400, "twice"),
@@ -490,7 +503,7 @@ def statements(c):
             ("HAVING with a literal on the left", "SELECT a FROM q.t GROUP BY a HAVING 1 < COUNT(*)", 400, None),
             ("HAVING with an aggregate on the right", "SELECT a FROM q.t GROUP BY a HAVING COUNT(*) > SUM(a)", 400, None),
             ("COUNT(*) with ORDER BY", "SELECT COUNT(*) FROM q.t ORDER BY a", 400, "ORDER BY"),
-            ("COUNT(*) with LIMIT", "SELECT COUNT(*) FROM q.t LIMIT 1", 400, "LIMIT"),
+            ("COUNT(*) with ORDER BY and OFFSET", "SELECT COUNT(*) FROM q.t ORDER BY a OFFSET 1", 400, "ORDER BY"),
             ("ORDER BY a column twice", "SELECT * FROM q.t ORDER BY a, b, A DESC", 400, "twice"),
             ("ORDER BY 33 keys", "SELECT * FROM q.t ORDER BY " + ", ".join(f"c{i}" for i in range(33)), 400,
              "at most 32 keys"),
@@ -498,6 +511,14 @@ def statements(c):
             ("ORDER BY without a column", "SELECT * FROM q.t ORDER BY", 400, None),
             ("LIMIT before ORDER BY", "SELECT * FROM q.t LIMIT 1 ORDER BY a", 400, None),
             ("two LIMITs", "SELECT * FROM q.t LIMIT 1 LIMIT 2", 400, None),
+            ("OFFSET before LIMIT", "SELECT * FROM q.t OFFSET 1 LIMIT 2", 400, "LIMIT comes before OFFSET"),
+            ("two OFFSETs", "SELECT * FROM q.t LIMIT 1 OFFSET 1 OFFSET 2", 400, None),
+            ("OFFSET before ORDER BY", "SELECT * FROM q.t OFFSET 1 ORDER BY a", 400, None),
+            ("OFFSET before WHERE", "SELECT * FROM q.t OFFSET 1 WHERE a = 1", 400, None),
+            ("LIMIT without its number before OFFSET", "SELECT * FROM q.t LIMIT OFFSET 1", 400,
+             "non-negative whole number"),
+            ("OFFSET in UPDATE", "UPDATE q.t SET a = 1 OFFSET 1", 400, None),
+            ("OFFSET in DELETE", "DELETE FROM q.t OFFSET 1", 400, None),
             ("a literal on the left", "SELECT * FROM q.t WHERE 1 = a", 400, None),
             ("two columns compared", "SELECT * FROM q.t WHERE a = b", 400, None),
             ("IS a value", "SELECT * FROM q.t WHERE a IS 1", 400, None),
@@ -603,6 +624,63 @@ def limits(c):
            (j["count"], j["truncated"], j["rows"][0], j["rows"][-1]))
     j = c.ok("SELECT n FROM q.big WHERE _id >= 'r05000' ORDER BY n LIMIT 2")
     expect("an _id range with ORDER BY and LIMIT", [[5000], [5001]], j["rows"])
+
+
+def offsets(c):
+    section("LIMIT ... OFFSET")
+    expect("q.big has 10,001 rows", 10001, c.count("q.big"))
+    j = c.ok("SELECT _id FROM q.big OFFSET 1")
+    expect("OFFSET 1 without LIMIT: the 10,000 rows after the first, and none follows them",
+           (10000, False, "r00001", "r10000"), (j["count"], j["truncated"], j["rows"][0][0], j["rows"][-1][0]))
+    j = c.ok("SELECT _id FROM q.big OFFSET 0")
+    expect("OFFSET 0: the first 10,000, truncated", (10000, True, "r09999"), (j["count"], j["truncated"], j["rows"][-1][0]))
+    expect("LIMIT 5 OFFSET 9998: the last 3", [["r09998"], ["r09999"], ["r10000"]],
+           c.rows("SELECT _id FROM q.big LIMIT 5 OFFSET 9998"))
+    j = c.ok("SELECT _id FROM q.big LIMIT 5 OFFSET 3")
+    expect("LIMIT 5 OFFSET 3: rows 3 to 7, not truncated", ([[f"r{i:05d}"] for i in range(3, 8)], False),
+           (j["rows"], j["truncated"]))
+    j = c.ok("SELECT _id FROM q.big OFFSET 10001")
+    expect("OFFSET past the end: no rows, not truncated", (0, False), (j["count"], j["truncated"]))
+    expect("OFFSET with LIMIT 0", [], c.rows("SELECT _id FROM q.big LIMIT 0 OFFSET 5"))
+    expect("ORDER BY n DESC LIMIT 3 OFFSET 2", [[9998], [9997], [9996]],
+           c.rows("SELECT n FROM q.big ORDER BY n DESC LIMIT 3 OFFSET 2"))
+    j = c.ok("SELECT n FROM q.big ORDER BY n DESC OFFSET 5000")
+    expect("ORDER BY n DESC OFFSET 5000: 5,001 rows, 5000 down to 0", (5001, False, [5000], [0]),
+           (j["count"], j["truncated"], j["rows"][0], j["rows"][-1]))
+    expect("an _id range with ORDER BY, LIMIT and OFFSET", [[5003], [5004]],
+           c.rows("SELECT n FROM q.big WHERE _id >= 'r05000' ORDER BY n LIMIT 2 OFFSET 3"))
+    j = c.ok("SELECT n, COUNT(*) FROM q.big GROUP BY n OFFSET 9999")
+    expect("GROUP BY with OFFSET: the groups after the first 9,999", ([[9999, 1], [10000, 1]], False),
+           (j["rows"], j["truncated"]))
+    j = c.ok("SELECT n, COUNT(*) FROM q.big GROUP BY n OFFSET 0")
+    expect("GROUP BY with OFFSET 0: 10,000 groups, truncated", (10000, True), (j["count"], j["truncated"]))
+    expect("SELECT DISTINCT with ORDER BY, LIMIT and OFFSET", [[1], [0]],
+           c.rows("SELECT DISTINCT n FROM q.big ORDER BY n DESC LIMIT 5 OFFSET 9999"))
+    expect("COUNT(*) with LIMIT 1", [[10001]], c.rows("SELECT COUNT(*) FROM q.big LIMIT 1"))
+    j = c.ok("SELECT COUNT(*) FROM q.big OFFSET 1")
+    expect("COUNT(*) with OFFSET 1: its column, no row", (["count"], []), (j["columns"], j["rows"]))
+    expect("MIN and MAX with LIMIT 1 OFFSET 0", [[0, 10000]], c.rows("SELECT MIN(n), MAX(n) FROM q.big LIMIT 1 OFFSET 0"))
+    expect("SUM with LIMIT 0", [], c.rows("SELECT SUM(n) FROM q.big WHERE n > 5 LIMIT 0"))
+    expect("a column called offset, sorted and paged", [[None]], c.rows("SELECT offset FROM q.big ORDER BY offset OFFSET 10000"))
+    expect("lower case", [["r00002"]], c.rows("select _id from q.big limit 1 offset 2"))
+    # OFFSET pages of an unchanged table are its keyset pages.
+    last, same = "", True
+    for k in range(11):
+        keyset = c.rows(f"SELECT _id, n FROM q.big WHERE _id > '{last}' ORDER BY _id LIMIT 1000")
+        same = same and keyset == c.rows(f"SELECT _id, n FROM q.big ORDER BY _id LIMIT 1000 OFFSET {k * 1000}")
+        last = keyset[-1][0] if keyset else last
+    expect("11 OFFSET pages of 1,000 equal the keyset pages", True, same)
+    expect("OFFSET plus LIMIT at 100,000", [], c.rows("SELECT _id FROM q.big LIMIT 10 OFFSET 99990"))
+    expect("OFFSET plus the cap at 100,000", [], c.rows("SELECT _id FROM q.big OFFSET 90000"))
+    refused("OFFSET plus LIMIT over 100,000", c, "SELECT _id FROM q.big LIMIT 10 OFFSET 99991", "keyset pages")
+    refused("OFFSET plus the cap over 100,000", c, "SELECT _id FROM q.big OFFSET 90001", "keyset pages")
+    refused("over 100,000 with nothing to return", c, "SELECT _id FROM q.big WHERE n = -5 OFFSET 90001", "keyset pages")
+    refused("OFFSET of the largest long", c, "SELECT _id FROM q.big OFFSET 9223372036854775807", "over the maximum")
+    refused("OFFSET with GROUP BY over 100,000", c, "SELECT n FROM q.big GROUP BY n OFFSET 95000", "keyset pages")
+    refused("OFFSET with COUNT(*) over 100,000", c, "SELECT COUNT(*) FROM q.big LIMIT 1 OFFSET 100000", "keyset pages")
+    for label, text in [("-1", "-1"), ("1.5", "1.5"), ("1e2", "1e2"), ("'5'", "'5'"), ("NULL", "NULL"),
+                        ("past a long", "9223372036854775808"), ("nothing", ""), ("ALL", "ALL")]:
+        refused(f"OFFSET {label}", c, f"SELECT _id FROM q.big OFFSET {text}")
 
 
 def ordering(c):

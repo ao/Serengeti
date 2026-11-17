@@ -223,8 +223,7 @@ class ParserTest {
         fails("SELECT * FROM d.t LIMIT -1");
         fails("SELECT * FROM d.t LIMIT 1.5");
         fails("SELECT * FROM d.t ORDER a");
-        assertTrue(fails("SELECT COUNT(*) FROM d.t LIMIT 1").getMessage().contains("COUNT(*)"));
-        fails("SELECT COUNT(*) FROM d.t ORDER BY a");
+        assertTrue(fails("SELECT COUNT(*) FROM d.t ORDER BY a").getMessage().contains("COUNT(*)"));
         fails("SELECT * FROM d.t WHERE a");
         fails("SELECT * FROM d.t WHERE a = b");
         fails("SELECT * FROM d.t extra");
@@ -495,8 +494,7 @@ class ParserTest {
         assertEquals("SUM(*) is not an aggregate: only COUNT takes * at position 11", fails("SELECT SUM(*) FROM d.t").getMessage());
         assertTrue(fails("SELECT SUM(a) FROM d.t ORDER BY a").getMessage()
                 .startsWith("aggregates without GROUP BY cannot have ORDER BY"));
-        assertTrue(fails("SELECT MIN(a), MAX(a) FROM d.t LIMIT 1").getMessage()
-                .startsWith("aggregates without GROUP BY cannot have LIMIT"));
+        assertTrue(fails("SELECT MIN(a), MAX(a) FROM d.t LIMIT 1 ORDER BY a").getMessage().startsWith("expected end"));
         assertTrue(fails("SELECT COUNT(*) FROM d.t ORDER BY a").getMessage().startsWith("COUNT(*) cannot have ORDER BY"));
         e = fails("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY b");
         assertEquals("ORDER BY 'b' must name a GROUP BY column or an aggregate of the select list at position 48",
@@ -660,8 +658,8 @@ class ParserTest {
         assertEquals("column 'a' is listed with an aggregate, so it must be in a GROUP BY",
                 failsAt("SELECT a, COUNT(*) FROM d.t HAVING COUNT(*) > 1", "a"));
         assertEquals("COUNT(*) cannot have ORDER BY", failsAt("SELECT COUNT(*) FROM d.t HAVING COUNT(*) > 1 ORDER BY a", "ORDER"));
-        assertEquals("aggregates without GROUP BY cannot have LIMIT",
-                failsAt("SELECT SUM(a) FROM d.t HAVING SUM(a) > 1 LIMIT 1", "LIMIT"));
+        assertEquals("aggregates without GROUP BY cannot have ORDER BY",
+                failsAt("SELECT SUM(a) FROM d.t HAVING SUM(a) > 1 ORDER BY a LIMIT 1", "ORDER"));
         assertTrue(fails("SELECT a FROM d.t GROUP BY a HAVING 1 = COUNT(*)").getMessage().startsWith("expected a name"));
         fails("SELECT a FROM d.t GROUP BY a HAVING");
         fails("SELECT a FROM d.t GROUP BY a HAVING COUNT(*)");
@@ -673,6 +671,54 @@ class ParserTest {
         fails("SELECT a FROM d.t GROUP BY a HAVING a = 1 HAVING a = 2");
         assertTrue(fails("SELECT a FROM d.t GROUP BY a HAVING " + "(".repeat(Parser.MAX_DEPTH + 1) + "a = 1"
                 + ")".repeat(Parser.MAX_DEPTH + 1)).getMessage().contains("nested"));
+    }
+
+    @Test
+    void limitAndOffset() {
+        Statement.Select s = select("SELECT * FROM d.t ORDER BY a LIMIT 10 OFFSET 20");
+        assertEquals(10L, s.limit());
+        assertEquals(20L, s.offset());
+        assertEquals(new Statement.Select("d", "t", new Projection.All(), false, null, List.of(), null,
+                List.of(new Statement.OrderBy("a", false)), 10L, 20L), s);
+        s = select("select a from d.t offset 3");
+        assertEquals(null, s.limit());
+        assertEquals(3L, s.offset());
+        assertEquals(null, select("SELECT * FROM d.t LIMIT 5").offset());
+        assertEquals(0L, select("SELECT * FROM d.t OFFSET 0").offset());
+        assertFalse(select("SELECT * FROM d.t OFFSET 0").equals(select("SELECT * FROM d.t")), "OFFSET 0 is written");
+        // Every form takes them: plain, ordered, grouped with HAVING, DISTINCT, and aggregates without GROUP BY.
+        for (String q : List.of("SELECT * FROM d.t LIMIT 0 OFFSET 0", "SELECT a, b FROM d.t WHERE a > 1 OFFSET 7",
+                "SELECT * FROM d.t ORDER BY a DESC, _id LIMIT 3 OFFSET 2", "SELECT _id FROM d.t ORDER BY _id OFFSET 9",
+                "SELECT a, COUNT(*) FROM d.t GROUP BY a HAVING COUNT(*) > 1 ORDER BY COUNT(*) DESC LIMIT 2 OFFSET 1",
+                "SELECT DISTINCT a FROM d.t ORDER BY a LIMIT 1 OFFSET 1", "SELECT COUNT(*) FROM d.t OFFSET 1",
+                "SELECT COUNT(*) FROM d.t WHERE a = 1 LIMIT 0", "SELECT MIN(a), SUM(b) FROM d.t HAVING MIN(a) > 0 LIMIT 1 OFFSET 0",
+                "SELECT * FROM d.t WHERE (a IN (1, 2) OR b = 3) LIMIT 9223372036854775807 OFFSET 9223372036854775807")) {
+            roundTrips(q);
+            assertEquals(q, Printer.print(parse(q)));
+        }
+        // OFFSET is not reserved: a column, a table or a database may be called offset.
+        assertEquals(new Projection.Columns(List.of("offset")), select("SELECT offset FROM d.t").projection());
+        s = select("SELECT offset FROM offset.offset WHERE offset = 1 GROUP BY offset ORDER BY offset LIMIT 1 OFFSET 2");
+        assertEquals(List.of("offset"), s.groupBy());
+        assertEquals(2L, s.offset());
+        roundTrips("SELECT offset FROM offset.offset WHERE offset = 1 ORDER BY offset DESC OFFSET 2");
+        assertEquals(new Statement.Insert("d", "offset", List.of("offset"), List.of(List.of(1L))),
+                parse("INSERT INTO d.offset (offset) VALUES (1)"));
+        // A non-negative whole number, once, after LIMIT.
+        for (String n : List.of("-1", "1.5", "1e2", "'5'", "NULL", "9223372036854775808", "a")) {
+            assertEquals("expected a non-negative whole number",
+                    failsAt("SELECT * FROM d.t OFFSET " + n, n).replaceFirst(" but found .*", ""), n);
+        }
+        assertEquals("expected a non-negative whole number but found end of input",
+                failsAtEnd("SELECT * FROM d.t LIMIT 1 OFFSET"));
+        assertEquals("LIMIT comes before OFFSET", failsAt("SELECT * FROM d.t OFFSET 1 LIMIT 2", "LIMIT"));
+        assertTrue(failsAt("SELECT * FROM d.t LIMIT 1 OFFSET 2 OFFSET 3", "OFFSET 3").startsWith("expected end of input"));
+        assertTrue(failsAt("SELECT * FROM d.t OFFSET 2 ORDER BY a", "ORDER").startsWith("expected end of input"));
+        assertTrue(failsAt("SELECT * FROM d.t OFFSET 2 WHERE a = 1", "WHERE").startsWith("expected end of input"));
+        assertTrue(failsAt("SELECT COUNT(*) FROM d.t OFFSET 1 ORDER BY a", "ORDER").startsWith("expected end of input"));
+        fails("UPDATE d.t SET a = 1 OFFSET 1");
+        fails("DELETE FROM d.t OFFSET 1");
+        fails("SELECT * FROM d.t LIMIT OFFSET 1");
     }
 
     @Test

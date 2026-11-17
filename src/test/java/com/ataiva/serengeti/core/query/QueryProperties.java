@@ -98,7 +98,7 @@ class QueryProperties {
                 "AND", "OR", "NOT", "(", ")", ",", ";", "'", "''", "'x'", "1", "-1", "1.5e3", "1e999", "1.",
                 "99999999999999999999", "NULL", "IS", "TRUE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
                 "DELETE", "CREATE", "DROP", "DATABASE", "TABLE", "IF", "EXISTS", "SHOW", "TABLES", "IN",
-                "ORDER", "BY", "DESC", "LIMIT", "COUNT", "--", "\n", " ", ".", "!", "x".repeat(70), "é",
+                "ORDER", "BY", "DESC", "LIMIT", "OFFSET", "LIMIT 2 OFFSET 1", "COUNT", "--", "\n", " ", ".", "!", "x".repeat(70), "é",
                 "LIKE", "GROUP", "SUM", "MIN", "MAX", "AVG", "'%'", "'a\\'", "'\\%_'", "%", "_", "\\", "IN (1, 2)",
                 "DISTINCT", "HAVING", "COUNT(*)", "COUNT(DISTINCT a)", "ASC", "+", "-", "a + 1", "a - -1", "a-1",
                 "ON", "CONFLICT", "DO", "NOTHING", "ON CONFLICT DO NOTHING", "ON CONFLICT DO UPDATE SET a = a + 1");
@@ -179,7 +179,17 @@ class QueryProperties {
                 .as((db, t, p, w, o, l) -> p instanceof Statement.Projection.Count
                         ? new Statement.Select(db, t, p, w, null, null)
                         : new Statement.Select(db, t, p, w, o, l));
-        return Arbitraries.oneOf(plain, grouped(), newForms());
+        // Any of them with OFFSET, now and then; aggregates without GROUP BY take LIMIT too.
+        Arbitrary<Long> offset = Arbitraries.oneOf(Arbitraries.longs().between(0, 20),
+                Arbitraries.longs().between(0, Long.MAX_VALUE)).injectNull(0.6);
+        Arbitrary<Long> single = Arbitraries.longs().between(0, 3).injectNull(0.6);
+        return Combinators.combine(Arbitraries.oneOf(plain, grouped(), newForms()), offset, single).as((s, o, l) -> {
+            Statement.Select q = (Statement.Select) s;
+            Long n = q.limit() == null && q.groups().isEmpty() && Statement.Projection.aggregates(q.projection())
+                    ? l : q.limit();
+            return new Statement.Select(q.db(), q.table(), q.projection(), q.distinct(), q.where(), q.groupBy(), q.having(),
+                    q.orderBy(), n, o);
+        });
     }
 
     /**

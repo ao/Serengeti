@@ -342,7 +342,7 @@ public final class Parser {
             having = expr();
             havingGroups = null;
         }
-        // Aggregates without GROUP BY make one row, which has nothing to sort or cut: as COUNT(*) in 2.1.
+        // Aggregates without GROUP BY make one row, which has nothing to sort (LIMIT and OFFSET may still drop it).
         String single = aggregates && groupBy.isEmpty()
                 ? projection instanceof Statement.Projection.Count ? "COUNT(*)" : "aggregates without GROUP BY"
                 : null;
@@ -391,18 +391,27 @@ public final class Parser {
                 orderBy.add(new Statement.OrderBy(key, desc));
             } while (acceptSymbol(","));
         }
-        if (isKeyword("limit")) {
-            if (single != null) {
-                throw new ParseException(single + " cannot have LIMIT", tok.start());
-            }
-            advance();
-            if (tok.kind() != Token.Kind.NUMBER || !(tok.value() instanceof Long n) || n < 0) {
-                throw expected("a non-negative whole number");
-            }
-            limit = n;
-            advance();
+        if (acceptKeyword("limit")) {
+            limit = wholeNumber();
         }
-        return new Statement.Select(q[0], q[1], projection, distinct, where, groupBy, having, orderBy, limit);
+        // OFFSET is not reserved either: it is the keyword only here, after the LIMIT or where LIMIT would be.
+        Long offset = null;
+        if (acceptWord("offset")) {
+            offset = wholeNumber();
+            if (isKeyword("limit")) {
+                throw new ParseException("LIMIT comes before OFFSET", tok.start());
+            }
+        }
+        return new Statement.Select(q[0], q[1], projection, distinct, where, groupBy, having, orderBy, limit, offset);
+    }
+
+    /** The number of a LIMIT or an OFFSET. */
+    private long wholeNumber() {
+        if (tok.kind() != Token.Kind.NUMBER || !(tok.value() instanceof Long n) || n < 0) {
+            throw expected("a non-negative whole number");
+        }
+        advance();
+        return n;
     }
 
     private static String print(Statement.Item i) {

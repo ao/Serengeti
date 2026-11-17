@@ -10,7 +10,9 @@ several columns are created and dropped as the run goes, a share of the conditio
 first columns of one (a = x AND b > y ...), and a share is an OR whose branches indexes answer (a = x OR v IN
 (...) OR (a = y AND b > z) ...), mostly on f.w, whose 2,000 rows draw most values from a few hundred so that such
 an OR finds few enough rows to be read through the indexes; so those are compared with the same scan, and a
-share of the SELECTs orders by the next columns of one.
+share of the SELECTs orders by the next columns of one. A valid SELECT with LIMIT n OFFSET m (or either
+alone) must give rows m to m + n of the same SELECT without them, and truncated only when the cap ended a page
+without LIMIT before the last row.
 
     FUZZ_SEED=123 FUZZ_N=5000 python3 edge.py fuzz HOST       (the seed is printed so a failure can be replayed)
 """
@@ -122,6 +124,17 @@ class Gen:
         for i, k in enumerate(chosen):
             out += ([","] if i else []) + k + ([self.r.choice(["ASC", "DESC"])] if self.r.random() < 0.6 else [])
         return out
+
+    def offset(self):
+        """OFFSET and its number, now and then: mostly small, sometimes past most tables' rows, rarely near
+        100,000, where OFFSET plus LIMIT (or the cap) is refused."""
+        r = self.r
+        if r.random() < 0.7:
+            return []
+        k = r.random()
+        n = r.choice([0, 1, 2, 3, 7, 50]) if k < 0.7 else r.choice([250, 299, 1999, 2500]) if k < 0.95 \
+            else r.choice([89999, 90001, 99990, 100000])
+        return ["OFFSET", str(n)]
 
     def pattern(self):
         """A LIKE pattern that follows the rules, as a string literal."""
@@ -237,7 +250,7 @@ class Gen:
         toks += ["ORDER", "BY"] + keys[0] + sum(([","] + x for x in keys[1:]), [])
         if r.random() < 0.85:
             toks += ["LIMIT", str(r.choice([0, 1, 2, 5, 10, 100]))]
-        return toks
+        return toks + self.offset()
 
     def wide(self):
         """A value of f.w's pool, most often, or any of VALUES."""
@@ -298,12 +311,11 @@ class Gen:
         t = r.choice(["w", "w", "w", "w", "t", "k", "on"])
         what = r.choice([["*"], ["_id"], ["_id", ",", "a", ",", "v"], ["COUNT", "(", "*", ")"]])
         toks = ["SELECT"] + what + ["FROM", "f", ".", t, "WHERE"] + self.or_condition()
-        if what[0] != "COUNT":
-            if r.random() < 0.3:
-                toks += ["ORDER", "BY"] + r.choice([["_id"], ["_id", "DESC"], ["v"], ["a", ",", "b", "DESC"]])
-            if r.random() < 0.6:
-                toks += ["LIMIT", str(r.choice([0, 1, 3, 10, 100]))]
-        return toks
+        if what[0] != "COUNT" and r.random() < 0.3:
+            toks += ["ORDER", "BY"] + r.choice([["_id"], ["_id", "DESC"], ["v"], ["a", ",", "b", "DESC"]])
+        if r.random() < (0.6 if what[0] != "COUNT" else 0.2):
+            toks += ["LIMIT", str(r.choice([0, 1, 3, 10, 100]))]
+        return toks + self.offset()
 
     def where(self):
         if self.r.random() < 0.25:
@@ -340,11 +352,14 @@ class Gen:
             toks = ["SELECT"] + items + ["FROM"] + self.table() + self.where()
             kind = "select"
             if grouping == [] or (grouping is None and items[:1] == ["COUNT"]):
-                # Aggregates without GROUP BY: one row (or none after HAVING), no ORDER BY or LIMIT.
+                # Aggregates without GROUP BY: one row (or none after HAVING), no ORDER BY; LIMIT and OFFSET may
+                # leave the row out.
                 if r.random() < 0.3:
                     aggs = [["COUNT", "(", "*", ")"]] if grouping is None else self.items_of(items)
                     toks += ["HAVING"] + self.having([], aggs)
-                return toks, kind
+                if r.random() < 0.2:
+                    toks += ["LIMIT", str(r.choice([0, 1, 2]))]
+                return toks + self.offset(), kind
             keys = [[self.case(c)] for c in r.sample(COLS, 3)]
             if grouping is not None and grouping[0] == "distinct":
                 kind = "distinct"
@@ -359,7 +374,7 @@ class Gen:
                 toks += ["ORDER", "BY"] + self.order(keys)
             if r.random() < 0.4:
                 toks += ["LIMIT", str(r.choice([0, 1, 2, 5, 100, 10000]))]
-            return toks, kind
+            return toks + self.offset(), kind
         if k < 0.45:
             cols = r.sample(["a", "b", "v", "on", "_id"], r.randint(1, 3))
             n = r.randint(1, 4)
@@ -482,7 +497,7 @@ def answer_problem(query, s, j, data, valid):
     return None
 
 
-CLAUSES = ("GROUP", "HAVING", "ORDER", "LIMIT")
+CLAUSES = ("GROUP", "HAVING", "ORDER", "LIMIT", "OFFSET")
 
 
 def doubled(toks, clause):
@@ -534,9 +549,30 @@ def metamorphic(toks, kind):
     # SELECT DISTINCT a, b is SELECT a, b ... GROUP BY a, b.
     if kind == "distinct":
         f = toks.index("FROM")
-        end = next((k for k in range(f + 1, len(toks)) if toks[k] in ("ORDER", "LIMIT")), len(toks))
+        end = next((k for k in range(f + 1, len(toks)) if toks[k] in ("ORDER", "LIMIT", "OFFSET")), len(toks))
         out.append(toks[:1] + toks[2:end] + ["GROUP", "BY"] + toks[2:f] + toks[end:])
     return out
+
+
+def paged(toks):
+    """(the tokens of a SELECT without its LIMIT and OFFSET, m, n), or None if it has neither: m is the OFFSET
+    (0 without one), n the LIMIT (None without one). Both are always the last tokens here."""
+    t, m, n = list(toks), 0, None
+    if len(t) > 2 and t[-2] == "OFFSET":
+        m, t = int(t[-1]), t[:-2]
+    if len(t) > 2 and t[-2] == "LIMIT":
+        n, t = int(t[-1]), t[:-2]
+    return None if t == list(toks) else (t, m, n)
+
+
+def as_maps(j):
+    """The rows of a result as maps of their non-null values: a SELECT * lists only the columns its rows have,
+    so a page may list fewer than the whole answer."""
+    return [{c: v for c, v in zip(j["columns"], row) if v is not None} for row in j["rows"]]
+
+
+# The cap on the rows of a SELECT (docs/QUERY.md, "Limits").
+CAP = 10000
 
 
 # The values of f.k: a few of VALUES, so that prefixes repeat.
@@ -626,7 +662,7 @@ def run(host, n=None, seed=None):
     g = Gen(rng)
     c = Client(host)
     setup(c)
-    counts = {"valid-200": 0, "valid-400": 0, "mutated-200": 0, "mutated-400": 0, "metamorphic": 0}
+    counts = {"valid-200": 0, "valid-400": 0, "mutated-200": 0, "mutated-400": 0, "metamorphic": 0, "offset": 0}
     problems = []
     meta_problems = []
     refusals = {}
@@ -666,6 +702,22 @@ def run(host, n=None, seed=None):
                 counts["metamorphic"] += 1
                 if s2 != 200 or j2.get("rows") != j.get("rows") or j2.get("columns") != j.get("columns"):
                     meta_problems.append((i, query, f"{' '.join(again)!r:.200}: {s2} {short(d2)} vs {short(data)}"))
+            # LIMIT n OFFSET m is rows m to m + n of the same statement without them (none of these tables
+            # reaches the cap, so that answer is whole).
+            page = paged(toks)
+            if page:
+                whole, skip, limit = page
+                end = skip + (CAP if limit is None else limit)
+                s2, j2, d2 = c.q(" ".join(whole))
+                counts["offset"] += 1
+                want = None if s2 != 200 else j2["rows"][skip:end]
+                if s2 != 200 or j2["truncated"]:
+                    meta_problems.append((i, query, f"without LIMIT and OFFSET: {s2} {short(d2)}"))
+                elif (as_maps(j) != as_maps({"columns": j2["columns"], "rows": want}) if toks[1] == "*"
+                      else (j["columns"], j["rows"]) != (j2["columns"], want)) \
+                        or j["truncated"] != (limit is None and len(j2["rows"]) > end):
+                    meta_problems.append((i, query, f"rows {skip} to {end} of {len(j2['rows'])}: {short(data)} vs "
+                                                    f"{short(d2)}"))
         if i % 250 == 249:
             st = once(host, "GET", "/health", auth=False).status
             if st != 200:
@@ -687,8 +739,8 @@ def run(host, n=None, seed=None):
     for i, query, p in meta_problems[:5]:
         print(f"  #{i} {query!r:.300}: {p}", flush=True)
     check(f"NOT (NOT (e)) and (e) OR (e) in WHERE, (h) OR (h) in HAVING, DISTINCT as GROUP BY, and ORDER BY sorted, give "
-          f"the same rows, {counts['metamorphic']} "
-          f"statements (seed {seed})", not meta_problems, f"{len(meta_problems)} differ")
+          f"the same rows, {counts['metamorphic']} statements, and LIMIT n OFFSET m rows m to m + n of the statement "
+          f"without them, {counts['offset']} (seed {seed})", not meta_problems, f"{len(meta_problems)} differ")
     check("valid statements were mostly accepted", counts["valid-200"] > counts["valid-400"], repr(counts))
     expect("the node answers afterwards", 200, once(host, "GET", "/health", auth=False).status)
     # The writes left every table in a state where index lookups and scans agree, before and after the

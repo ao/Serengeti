@@ -43,7 +43,7 @@ class OrderedReadProperties {
     private static Query query;
     private static final AtomicInteger RUN = new AtomicInteger();
     static final int CAP = 5;
-    private static final Object MISSING = new Object() {
+    static final Object MISSING = new Object() {
         @Override
         public String toString() {
             return "MISSING";

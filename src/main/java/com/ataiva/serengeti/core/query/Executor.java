@@ -71,7 +71,8 @@ public final class Executor {
      * Runs one statement.
      *
      * @throws QueryException if the statement cannot run (a missing database or table, a duplicate
-     *     {@code _id}, a LIMIT over the cap); nothing has been written in that case
+     *     {@code _id}, a LIMIT over the cap, an OFFSET that reaches past {@link #MAX_OFFSET_ROWS}); nothing has
+     *     been written in that case
      * @throws IOException if the write-ahead log could not be written
      */
     public Result execute(Statement s) throws IOException {
@@ -1000,7 +1001,7 @@ public final class Executor {
         return null;
     }
 
-    private record Match(String id, Map<String, Object> row) {}
+    record Match(String id, Map<String, Object> row) {}
 
     /**
      * True when a SELECT without aggregates or groups answers in _id order, so it reads rows in that order and
@@ -1012,85 +1013,64 @@ public final class Executor {
         return deciding(q).isEmpty() && !idDescending(q);
     }
 
+    /**
+     * The most rows OFFSET and LIMIT may reach: OFFSET plus LIMIT, or plus the cap without LIMIT. An OFFSET
+     * page reads every row before it, so past this a statement is refused and pointed to keyset pages.
+     */
+    public static final int MAX_OFFSET_ROWS = 100_000;
+
+    /** The rows a SELECT may return: its LIMIT, or the cap. */
+    private long cap(Statement.Select q) {
+        return q.limit() != null ? q.limit() : maxRows;
+    }
+
+    /** The rows a SELECT leaves out before those it returns: its OFFSET, or 0. */
+    private static long skip(Statement.Select q) {
+        return q.offset() != null ? q.offset() : 0;
+    }
+
+    /**
+     * The rows of {@code all} (an answer in its order, or its first rows) that OFFSET {@code skip} and at most
+     * {@code cap} rows leave.
+     */
+    private static <T> List<T> page(List<T> all, long skip, long cap) {
+        int from = (int) Math.min(skip, all.size());
+        return all.subList(from, (int) Math.min(all.size(), from + cap));
+    }
+
     private Result select(Store store, Statement.Select q) {
         requireTable(store, q.db(), q.table());
-        if (q.projection() instanceof Statement.Projection.Count && q.groupBy().isEmpty() && q.having() == null) {
-            if (q.where() == null) {
-                // Kept with every change, so counting a table does not visit its rows.
-                return new Result.Rows(List.of("count"), List.of(List.<Object>of(store.visibleRows(q.db(), q.table()))),
-                        false);
-            }
-            long[] n = {0};
-            scan(store, q.db(), q.table(), q.where(), (id, row) -> {
-                if (matches(q.where(), id, row)) {
-                    n[0]++;
-                }
-            });
-            return new Result.Rows(List.of("count"), List.of(List.<Object>of(n[0])), false);
-        }
         if (q.limit() != null && q.limit() > maxRows) {
             throw new QueryException("LIMIT " + q.limit() + " is over the maximum of " + maxRows);
+        }
+        long skip = skip(q);
+        long cap = cap(q);
+        if (q.offset() != null && skip > MAX_OFFSET_ROWS - cap) {
+            throw new QueryException("OFFSET " + skip + " plus " + (q.limit() != null ? "LIMIT " + q.limit()
+                    : "the cap of " + maxRows) + " is over the maximum of " + MAX_OFFSET_ROWS + " rows: an OFFSET page"
+                    + " reads every row before it, so read a large table in keyset pages, WHERE _id > (the last _id of"
+                    + " the page before) ORDER BY _id LIMIT n (docs/QUERY.md, \"Reading a large table\")");
+        }
+        if (q.projection() instanceof Statement.Projection.Count && q.groupBy().isEmpty() && q.having() == null) {
+            long[] n = {0};
+            if (q.where() == null) {
+                // Kept with every change, so counting a table does not visit its rows.
+                n[0] = store.visibleRows(q.db(), q.table());
+            } else {
+                scan(store, q.db(), q.table(), q.where(), (id, row) -> {
+                    if (matches(q.where(), id, row)) {
+                        n[0]++;
+                    }
+                });
+            }
+            return new Result.Rows(List.of("count"), page(List.of(List.<Object>of(n[0])), skip, cap), false);
         }
         if (Statement.Projection.aggregates(q.projection()) || !q.groups().isEmpty()) {
             return grouped(store, q);
         }
-        long cap = q.limit() != null ? q.limit() : maxRows;
-        List<Match> found = new ArrayList<>();
-        // Rows read in the answer's order: the first matches are the answer, and one past the cap is enough to
-        // know about truncation, so the read stops there (a keyset page reads only its rows).
-        long keep = cap + 1;
-        java.util.function.BiPredicate<String, Map<String, Object>> collect = (id, row) -> {
-            if (matches(q.where(), id, row)) {
-                found.add(new Match(id, row));
-            }
-            return found.size() < keep;
-        };
-        boolean inOrder = readsInIdOrder(q);
-        if (inOrder) {
-            scanWhile(store, q.db(), q.table(), q.where(), collect);
-        } else {
-            OrderedPlan op = orderedPlan(store, q.db(), q.table(), q);
-            List<Plan> plans = null;
-            Choice unordered = null;
-            if (op != null && !op.exact()) {
-                plans = candidates(store, q.db(), q.table(), q.where());
-                unordered = cheapestChoice(store, q.db(), q.table(), plans, List.of());
-            }
-            long budget = op == null ? -1 : orderedBudget(store, q, op, keep, unordered);
-            if (budget >= 0) {
-                inOrder = store.forEachInOrder(q.db(), q.table(), op.index(), op.where(), op.keys(), op.idDescending(),
-                        budget, collect) == Store.Ordered.DONE;
-                if (!inOrder) {
-                    found.clear();
-                }
-            }
-            if (!inOrder) {
-                java.util.function.BiConsumer<String, Map<String, Object>> all = (id, row) -> {
-                    if (matches(q.where(), id, row)) {
-                        found.add(new Match(id, row));
-                    }
-                };
-                if (plans != null) {
-                    scan(store, q.db(), q.table(), plans, unordered == null ? null : unordered.plan(), all);
-                } else {
-                    scan(store, q.db(), q.table(), q.where(), all);
-                }
-            }
-        }
-        if (!inOrder) {
-            Comparator<Match> byKeys = null;
-            for (Statement.OrderBy o : q.orderBy()) {
-                String col = o.column();
-                Comparator<Match> byValue = (a, b) -> Values.sortOrder(get(a.id, a.row, col), get(b.id, b.row, col));
-                if (o.descending()) {
-                    byValue = byValue.reversed();
-                }
-                byKeys = byKeys == null ? byValue : byKeys.thenComparing(byValue);
-            }
-            found.sort(byKeys.thenComparing(Match::id));
-        }
-        boolean truncated = q.limit() == null && found.size() > cap;
-        List<Match> page = found.size() > cap ? found.subList(0, (int) cap) : found;
+        List<Match> found = read(store, q).rows();
+        boolean truncated = q.limit() == null && found.size() > skip + cap;
+        List<Match> page = page(found, skip, cap);
 
         List<String> columns;
         if (q.projection() instanceof Statement.Projection.Columns c) {
@@ -1112,6 +1092,120 @@ public final class Executor {
             rows.add(r);
         }
         return new Result.Rows(columns, rows, truncated);
+    }
+
+    /** What {@link #read} found: rows of the answer in its order, and how many rows it visited to find them. */
+    record Read(List<Match> rows, long visited) {}
+
+    /**
+     * The rows of {@code q}'s answer up to one past its page (OFFSET, then LIMIT or the cap), which is enough to
+     * know whether more follow; see {@link #read(Store, Statement.Select, long)}.
+     */
+    Read read(Store store, Statement.Select q) {
+        return read(store, q, skip(q) + cap(q) + 1);
+    }
+
+    /**
+     * The first {@code keep} rows of the answer of {@code q} (a SELECT without groups or aggregates), in its
+     * order, or all of them if it has fewer. A read in the answer's order (by _id, or through an index in order)
+     * stops once it has {@code keep}. Otherwise every match is read and the first {@code keep} by the ORDER BY
+     * are kept as it goes ({@link Top}), then sorted.
+     */
+    static Read read(Store store, Statement.Select q, long keep) {
+        List<Match> found = new ArrayList<>();
+        long[] visited = {0};
+        java.util.function.BiPredicate<String, Map<String, Object>> collect = (id, row) -> {
+            visited[0]++;
+            if (matches(q.where(), id, row)) {
+                found.add(new Match(id, row));
+            }
+            return found.size() < keep;
+        };
+        if (readsInIdOrder(q)) {
+            scanWhile(store, q.db(), q.table(), q.where(), collect);
+            return new Read(found, visited[0]);
+        }
+        OrderedPlan op = orderedPlan(store, q.db(), q.table(), q);
+        List<Plan> plans = null;
+        Choice unordered = null;
+        if (op != null && !op.exact()) {
+            plans = candidates(store, q.db(), q.table(), q.where());
+            unordered = cheapestChoice(store, q.db(), q.table(), plans, List.of());
+        }
+        long budget = op == null ? -1 : orderedBudget(store, q, op, keep, unordered);
+        if (budget >= 0 && store.forEachInOrder(q.db(), q.table(), op.index(), op.where(), op.keys(), op.idDescending(),
+                budget, collect) == Store.Ordered.DONE) {
+            return new Read(found, visited[0]);
+        }
+        Top top = new Top(order(q), keep);
+        java.util.function.BiConsumer<String, Map<String, Object>> all = (id, row) -> {
+            visited[0]++;
+            if (matches(q.where(), id, row)) {
+                top.add(new Match(id, row));
+            }
+        };
+        if (plans != null) {
+            scan(store, q.db(), q.table(), plans, unordered == null ? null : unordered.plan(), all);
+        } else {
+            scan(store, q.db(), q.table(), q.where(), all);
+        }
+        return new Read(top.sorted(), visited[0]);
+    }
+
+    /** The order of {@code q}'s ORDER BY (which has a key), rows equal on every key by _id. */
+    private static Comparator<Match> order(Statement.Select q) {
+        Comparator<Match> byKeys = null;
+        for (Statement.OrderBy o : q.orderBy()) {
+            String col = o.column();
+            Comparator<Match> byValue = (a, b) -> Values.sortOrder(get(a.id, a.row, col), get(b.id, b.row, col));
+            if (o.descending()) {
+                byValue = byValue.reversed();
+            }
+            byKeys = byKeys == null ? byValue : byKeys.thenComparing(byValue);
+        }
+        return byKeys.thenComparing(Match::id);
+    }
+
+    /**
+     * The first {@code keep} rows by {@code order} of those added, which come in any order: a list until it
+     * holds that many, then a heap whose head is the last of them. So a sort holds at most {@code keep} rows,
+     * not every match, and gives the first {@code keep} that sorting them all would: {@code order} ends with
+     * _id, so no two rows tie.
+     */
+    static final class Top {
+        private final Comparator<Match> order;
+        private final long keep;
+        private List<Match> list = new ArrayList<>();
+        private java.util.PriorityQueue<Match> heap;
+
+        Top(Comparator<Match> order, long keep) {
+            if (keep < 1) {
+                throw new IllegalArgumentException("keep " + keep);
+            }
+            this.order = order;
+            this.keep = keep;
+        }
+
+        void add(Match m) {
+            if (heap == null) {
+                list.add(m);
+                if (list.size() == keep) {
+                    heap = new java.util.PriorityQueue<>(list.size(), order.reversed());
+                    heap.addAll(list);
+                    list = null;
+                }
+            } else if (order.compare(m, heap.peek()) < 0) {
+                heap.poll();
+                heap.add(m);
+            }
+        }
+
+        /** The rows kept, in {@code order}. */
+        List<Match> sorted() {
+            List<Match> out = heap == null ? list : new ArrayList<>(heap);
+            out.sort(order);
+            return out;
+        }
     }
 
     /** The rows of one group: its key and first-seen values for each GROUP BY column, and its aggregates. */
@@ -1158,7 +1252,7 @@ public final class Executor {
      * (null and missing are one value), or a single row without GROUP BY even over no rows. Groups are kept
      * while the matching rows are read, and the statement fails once there would be more than {@code maxGroups}.
      * Every aggregate, of the list and of HAVING, is computed for every group; then HAVING drops groups, and
-     * ORDER BY and LIMIT apply to the rest.
+     * ORDER BY, OFFSET and LIMIT apply to the rest.
      */
     private Result grouped(Store store, Statement.Select q) {
         List<Statement.Item> items = Statement.Projection.itemsOf(q.projection());
@@ -1264,9 +1358,10 @@ public final class Executor {
             // The sort is stable: groups equal on every key stay in GROUP BY order, in both directions.
             list.sort(byKeys);
         }
-        long cap = q.limit() != null ? q.limit() : maxRows;
-        boolean truncated = q.limit() == null && list.size() > cap;
-        List<Group> page = list.size() > cap ? list.subList(0, (int) cap) : list;
+        long skip = skip(q);
+        long cap = cap(q);
+        boolean truncated = q.limit() == null && list.size() > skip + cap;
+        List<Group> page = page(list, skip, cap);
         List<String> columns = new ArrayList<>(items.size());
         for (Statement.Item i : items) {
             columns.add(i.label());

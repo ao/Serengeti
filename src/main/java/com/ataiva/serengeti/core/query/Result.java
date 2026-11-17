@@ -12,7 +12,8 @@ public sealed interface Result {
 
     /**
      * Rows from SELECT or SHOW. Each row has one value per column; a column a row does not have is
-     * null. {@code truncated} is true when a SELECT without LIMIT matched more rows than the cap.
+     * null. {@code truncated} is true when the cap ended a SELECT without LIMIT: more rows or groups follow
+     * those returned (rows that OFFSET left out before them do not count).
      */
     record Rows(List<String> columns, List<List<Object>> rows, boolean truncated) implements Result {
         public Rows {

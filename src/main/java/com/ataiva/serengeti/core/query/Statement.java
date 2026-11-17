@@ -371,16 +371,17 @@ public sealed interface Statement {
     }
 
     /**
-     * {@code where}, {@code having} and {@code limit} may be null; {@code groupBy} is empty without GROUP BY and
-     * {@code orderBy} without ORDER BY. The rules are those of docs/QUERY.md: with an aggregate and no GROUP BY,
-     * the list has only aggregates and there is no ORDER BY or LIMIT; with GROUP BY, each column of the list is
-     * a GROUP BY column, and each ORDER BY key names one, or an aggregate of the list. {@code distinct} is
-     * SELECT DISTINCT: a list of distinct columns that act as the GROUP BY ({@link #groups}), with no GROUP BY
-     * or HAVING of its own. In {@code having}, each column of a term is the {@link Item#label} of a GROUP BY
-     * column or an aggregate, which need not be in the list.
+     * {@code where}, {@code having}, {@code limit} and {@code offset} may be null; {@code groupBy} is empty
+     * without GROUP BY and {@code orderBy} without ORDER BY. The rules are those of docs/QUERY.md: with an
+     * aggregate and no GROUP BY, the list has only aggregates and there is no ORDER BY; with GROUP BY, each
+     * column of the list is a GROUP BY column, and each ORDER BY key names one, or an aggregate of the list.
+     * {@code distinct} is SELECT DISTINCT: a list of distinct columns that act as the GROUP BY ({@link #groups}),
+     * with no GROUP BY or HAVING of its own. In {@code having}, each column of a term is the {@link Item#label}
+     * of a GROUP BY column or an aggregate, which need not be in the list. {@code offset} is OFFSET: how many
+     * of the rows the statement gives without OFFSET and LIMIT to leave out before LIMIT counts.
      */
     record Select(String db, String table, Projection projection, boolean distinct, Expr where, List<String> groupBy,
-            Expr having, List<OrderBy> orderBy, Long limit) implements Statement {
+            Expr having, List<OrderBy> orderBy, Long limit, Long offset) implements Statement {
         public Select {
             Objects.requireNonNull(db, "db");
             Objects.requireNonNull(table, "table");
@@ -389,6 +390,9 @@ public sealed interface Statement {
             orderBy = List.copyOf(orderBy);
             if (limit != null && limit < 0) {
                 throw new IllegalArgumentException("negative LIMIT");
+            }
+            if (offset != null && offset < 0) {
+                throw new IllegalArgumentException("negative OFFSET");
             }
             if (groupBy.stream().distinct().count() != groupBy.size()) {
                 throw new IllegalArgumentException("GROUP BY columns must be distinct");
@@ -415,8 +419,8 @@ public sealed interface Statement {
                     if (items.stream().anyMatch(i -> i instanceof Item.Column)) {
                         throw new IllegalArgumentException("a column with an aggregate needs GROUP BY");
                     }
-                    if (!orderBy.isEmpty() || limit != null) {
-                        throw new IllegalArgumentException("aggregates without GROUP BY take no ORDER BY or LIMIT");
+                    if (!orderBy.isEmpty()) {
+                        throw new IllegalArgumentException("aggregates without GROUP BY take no ORDER BY");
                     }
                 } else {
                     if (having != null) {
@@ -446,6 +450,12 @@ public sealed interface Statement {
                     throw new IllegalArgumentException("HAVING column " + c.name() + " is not in GROUP BY");
                 }
             }
+        }
+
+        /** As above, without OFFSET. */
+        public Select(String db, String table, Projection projection, boolean distinct, Expr where, List<String> groupBy,
+                Expr having, List<OrderBy> orderBy, Long limit) {
+            this(db, table, projection, distinct, where, groupBy, having, orderBy, limit, null);
         }
 
         public Select(String db, String table, Projection projection, Expr where, List<String> groupBy, OrderBy orderBy,
