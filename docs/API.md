@@ -231,7 +231,9 @@ The part of the cursor before the colon is the feed's epoch. The node keeps it i
 starts a new one only when it can no longer give the same answers: after `serengeti restore`, on a data
 directory that was emptied or has no `changes.jsonl` (also the first start on 2.2 after an older version),
 after a log that lost a record it had whole (a damaged disk; a record whose length field was damaged
-reads as a write cut off, and the records after it are dropped without a new epoch), after a crash in the
+reads as a write cut off, and the records after it are dropped without a new epoch: a cursor given out for
+them gets 410 until new writes reach its number, then their changes, not the ones it was given out for),
+after a crash in the
 milliseconds of a checkpoint between writing the snapshot and emptying the log, and after a run with
 `fsync` `off` that did not stop cleanly, whatever the next run's `fsync`. The node logs which at start.
 A cursor from another epoch, from another node, or older than
