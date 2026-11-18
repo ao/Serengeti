@@ -216,7 +216,7 @@ Serengeti is smaller than both, and young: 2.0 was its first usable release.
 
 GitHub Actions runs these on every change:
 
-- 609 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
+- 610 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
   syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
   the writes no other write had seen, one that restarts, crashes and checkpoints a node at random and
   checks that every change feed cursor it gave out gets the same changes again or 410, and others that

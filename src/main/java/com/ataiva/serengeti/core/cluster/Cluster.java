@@ -1156,25 +1156,37 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
      * treated as one without the protocol 3 routes.
      */
     private CompletableFuture<Differ> differingBuckets(Peer p, String db, String table, boolean full) {
+        return differingBuckets(p, db, table, full, null);
+    }
+
+    /**
+     * As above, with the peer's rows and bytes per bucket already known ({@code sizes}, from its full sums), or
+     * null. The live sums carry no sizes, and without them the buckets this node holds no row in were pulled
+     * whole with a first page of 16 sized blind: 12.8 MB in one answer when a sync met an expiry boundary, and
+     * every round between nodes with different tombstone_ttl_hours. So with the live sums, the sizes come from
+     * the full sums too (a test failed once on this under load).
+     */
+    private CompletableFuture<Differ> differingBuckets(Peer p, String db, String table, boolean full,
+            PeerClient.FullSums sizes) {
         CompletableFuture<PeerClient.FullSums> theirs = !full
                 ? client.buckets(p.address, db, table).thenApply(s -> new PeerClient.FullSums(s, null, null, null))
-                : client.fullBuckets(p.address, db, table).handle((sums, err) -> {
-                    if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
-                        throw new java.util.concurrent.CompletionException(unwrap(err));
-                    }
-                    return sums;
-                });
-        return theirs.thenCompose(their -> {
+                : fullSums(p, db, table);
+        CompletableFuture<PeerClient.FullSums> sized = full || sizes != null || !tryRowRoutes(p)
+                ? CompletableFuture.completedFuture(sizes)
+                : fullSums(p, db, table).exceptionally(err -> null); // sizes only: without them, as before
+        return theirs.thenCombine(sized, (their, known) -> new PeerClient.FullSums[] {their, known}).thenCompose(both -> {
+            PeerClient.FullSums their = both[0];
             if (their == null) {
                 noRowRoutes(p);
-                return differingBuckets(p, db, table, false);
+                return differingBuckets(p, db, table, false, null);
             }
+            PeerClient.FullSums withSizes = full ? their : both[1];
             long[] sums = their.sums();
             Object[] mine = engine.read(s -> new Object[] {full ? s.fullBucketSums(db, table) : s.bucketSums(db, table),
                 s.expiry()});
             if (full && !java.util.Objects.equals(their.expiry(), mine[1])) {
                 // One of the two crossed a boundary since the roots: compare the live sums this time.
-                return differingBuckets(p, db, table, false);
+                return differingBuckets(p, db, table, false, their);
             }
             long[] local = (long[]) mine[0];
             List<Integer> differ = new ArrayList<>();
@@ -1183,7 +1195,18 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                     differ.add(i);
                 }
             }
-            return CompletableFuture.completedFuture(new Differ(differ, their.rows(), their.bytes()));
+            return CompletableFuture.completedFuture(new Differ(differ, withSizes == null ? null : withSizes.rows(),
+                    withSizes == null ? null : withSizes.bytes()));
+        });
+    }
+
+    /** The peer's full sums, or null from a peer without the route (2.1). */
+    private CompletableFuture<PeerClient.FullSums> fullSums(Peer p, String db, String table) {
+        return client.fullBuckets(p.address, db, table).handle((sums, err) -> {
+            if (err != null && !(unwrap(err) instanceof PeerClient.NotSupported)) {
+                throw new java.util.concurrent.CompletionException(unwrap(err));
+            }
+            return sums;
         });
     }
 

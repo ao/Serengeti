@@ -80,8 +80,14 @@ class SyncPagesTest {
         env.put("SERENGETI_CLUSTER_KEY", KEY);
         env.put("SERENGETI_CLUSTER_PLAINTEXT", "allow");
         env.put("SERENGETI_ADMIN_PASSWORD", PW);
+        if (ttlHours.containsKey(i)) {
+            env.put("SERENGETI_TOMBSTONE_TTL_HOURS", ttlHours.get(i));
+        }
         nodes[i] = Node.start(Config.load(null, env), Node.QUERIES);
     }
+
+    /** tombstone_ttl_hours of the nodes that do not take the default. */
+    private final Map<Integer, String> ttlHours = new HashMap<>();
 
     private void startDirect(int i) throws IOException {
         List<String> peers = new ArrayList<>();
@@ -291,6 +297,22 @@ class SyncPagesTest {
      */
     @Test
     void aNodeWithNoRowsOfABigTablePullsItInBoundedPages() throws Exception {
+        bigTableIntoAnEmptyNode();
+    }
+
+    /**
+     * As above, when the nodes compare their live sums, as nodes with different tombstone_ttl_hours always do
+     * and any pair does for a round when a sync meets an expiry boundary. The live sums carry no sizes per
+     * bucket, and the buckets were pulled whole with a first page of 16 sized blind: 12.3 MiB in one answer
+     * (seen once in a run under load). The sizes now come from the full sums.
+     */
+    @Test
+    void comparingLiveSumsStillPullsInBoundedPages() throws Exception {
+        ttlHours.put(2, "24");
+        bigTableIntoAnEmptyNode();
+    }
+
+    private void bigTableIntoAnEmptyNode() throws Exception {
         for (int i = 0; i < 3; i++) {
             startDirect(i);
         }
