@@ -26,7 +26,7 @@ show        = "SHOW" "DATABASES"
 
 insert      = "INSERT" "INTO" table "(" name { "," name } ")"
               "VALUES" tuple { "," tuple } [ conflict ] ;
-tuple       = "(" value { "," value } ")" ;
+tuple       = "(" stored { "," stored } ")" ;
 conflict    = "ON" "CONFLICT" "DO" ( "NOTHING" | "UPDATE" "SET" assignment { "," assignment } ) ;
 
 select      = "SELECT" [ "DISTINCT" ] ( "*" | item { "," item } )
@@ -37,7 +37,7 @@ key         = item [ "ASC" | "DESC" ] ;
 aggregate   = "COUNT" "(" ( "*" | [ "DISTINCT" ] name ) ")"
             | ( "SUM" | "MIN" | "MAX" | "AVG" ) "(" name ")" ;
 update      = "UPDATE" table "SET" assignment { "," assignment } [ "WHERE" expr ] ;
-assignment  = name "=" ( value | name ( "+" | "-" ) number ) ;
+assignment  = name "=" ( stored | name ( "+" | "-" ) number ) ;
 delete      = "DELETE" "FROM" table [ "WHERE" expr ] ;
 
 expr        = and { "OR" and } ;
@@ -54,6 +54,9 @@ cmp         = "=" | "!=" | "<>" | "<" | "<=" | ">" | ">=" ;
 table       = name "." name ;
 name        = ( letter | "_" ) { letter | digit | "_" } ;   (ASCII, at most 63 characters, not a keyword)
 value       = string | number | "TRUE" | "FALSE" | "NULL" ;
+stored      = value | object | array ;                     (at most 64 objects and arrays deep)
+object      = "{" [ string ":" stored { "," string ":" stored } ] "}" ;
+array       = "[" [ stored { "," stored } ] "]" ;
 string      = "'" { any character, with ' written as '' } "'" ;
 number      = [ "-" ] digits [ "." digits ] [ ( "e" | "E" ) [ "+" | "-" ] digits ] ;
 integer     = digits ;
@@ -119,10 +122,22 @@ statement fails.
 
 ## Values
 
-A value is a string, a number, a boolean or null.
+A value is a string, a number, a boolean or null. A value an INSERT or a SET writes may also be an object
+or an array of values, as in JSON:
+
+```
+INSERT INTO shop.items (_id, tags, size) VALUES ('bolt', ['metal', 'm6'], {'d': 6, 'unit': 'mm', 'l': [20, 30]});
+UPDATE shop.items SET size = {'d': 8, 'unit': 'mm'} WHERE _id = 'bolt';
+```
 
 - Numbers without a fraction or exponent that fit in a signed 64-bit integer are integers. Other
   numbers are 64-bit doubles. A number too large for a double is a parse error.
+- An object's keys are strings, each listed once, and may be any text, the empty string included. Objects
+  and arrays nest at most 64 deep (`Parser.MAX_VALUE_DEPTH`), so a row read back from the log or sent to a
+  peer stays within the JSON reader's 128 levels. A condition compares a column with a literal value, not
+  with an object or array: `WHERE size = {'d': 6}` is a parse error. How stored objects and arrays sort,
+  group and count is in "Ordering" and "Aggregates and GROUP BY". 2.1 nodes answer object and array values
+  with a parse error; during a rolling upgrade, send them to 2.2 nodes.
 - Each row has a string key in the column `_id`. INSERT may set it (it must be a non-empty
   string); otherwise a random UUID is used. Inserting an `_id` that already exists in the table is
   an error unless the INSERT says what to do instead (ON CONFLICT), and so is setting `_id` in an UPDATE,

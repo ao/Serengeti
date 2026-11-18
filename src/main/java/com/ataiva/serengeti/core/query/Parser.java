@@ -22,6 +22,12 @@ public final class Parser {
     public static final int MAX_LIKE_PATTERN = 1000;
     /** Most keys in one ORDER BY. */
     public static final int MAX_ORDER_BY = 32;
+    /**
+     * How deeply objects and arrays may nest in a value an INSERT or SET writes. A row's value sits two levels
+     * down in a log line and up to five in a peer's sync answer, and the JSON reader takes 128 levels, so a
+     * value this deep is read back everywhere.
+     */
+    public static final int MAX_VALUE_DEPTH = 64;
 
     private final Lexer lexer;
     private Token tok;
@@ -44,6 +50,11 @@ public final class Parser {
             throw p.expected("end of input");
         }
         return s;
+    }
+
+    /** True if {@code s} is a name as the parser reads one: lowercase ASCII, at most 63 characters, not a keyword. */
+    public static boolean isName(String s) {
+        return Lexer.isValidName(s);
     }
 
     private Statement statement() {
@@ -214,7 +225,7 @@ public final class Parser {
             expectSymbol("(");
             List<Object> row = new ArrayList<>();
             do {
-                row.add(value());
+                row.add(stored());
             } while (acceptSymbol(","));
             expectSymbol(")");
             if (row.size() != columns.size()) {
@@ -507,7 +518,7 @@ public final class Parser {
                 throw new ParseException("column '" + c + "' is set twice", at);
             }
             expectSymbol("=");
-            sets.add(new Statement.Assignment(c, tok.kind() == Token.Kind.NAME ? arithmetic() : value()));
+            sets.add(new Statement.Assignment(c, tok.kind() == Token.Kind.NAME ? arithmetic() : stored()));
         } while (acceptSymbol(","));
         return sets;
     }
@@ -712,6 +723,52 @@ public final class Parser {
                 break;
         }
         throw expected("a value (string, number, TRUE, FALSE or NULL)");
+    }
+
+    /** A value to write: {@link #value}, or an object or array of values, in an INSERT tuple or on the right of SET. */
+    private Object stored() {
+        return stored(0);
+    }
+
+    private Object stored(int nesting) {
+        if (!isSymbol("{") && !isSymbol("[")) {
+            if (tok.kind() == Token.Kind.STRING || tok.kind() == Token.Kind.NUMBER || tok.kind() == Token.Kind.KEYWORD) {
+                return value();
+            }
+            throw expected("a value (string, number, TRUE, FALSE, NULL, an object or an array)");
+        }
+        if (nesting >= MAX_VALUE_DEPTH) {
+            throw new ParseException("objects and arrays nest at most " + MAX_VALUE_DEPTH + " deep", tok.start());
+        }
+        if (acceptSymbol("[")) {
+            List<Object> items = new ArrayList<>();
+            if (!acceptSymbol("]")) {
+                do {
+                    items.add(stored(nesting + 1));
+                } while (acceptSymbol(","));
+                expectSymbol("]");
+            }
+            return java.util.Collections.unmodifiableList(items);
+        }
+        advance();
+        java.util.Map<String, Object> fields = new java.util.LinkedHashMap<>();
+        if (!acceptSymbol("}")) {
+            do {
+                if (tok.kind() != Token.Kind.STRING) {
+                    throw expected("a key (a string)");
+                }
+                int at = tok.start();
+                String key = (String) tok.value();
+                advance();
+                if (fields.containsKey(key)) {
+                    throw new ParseException("key '" + Lexer.shorten(key) + "' is listed twice", at);
+                }
+                expectSymbol(":");
+                fields.put(key, stored(nesting + 1));
+            } while (acceptSymbol(","));
+            expectSymbol("}");
+        }
+        return java.util.Collections.unmodifiableMap(fields);
     }
 
     private String[] qualifiedName() {

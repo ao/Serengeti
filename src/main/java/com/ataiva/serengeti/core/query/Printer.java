@@ -110,6 +110,15 @@ public final class Printer {
         return a.column() + " = " + Values.format(a.value());
     }
 
+    /**
+     * A value as query text that reads back as the same value: {@code 'it''s'}, {@code -0.0}, {@code TRUE},
+     * {@code NULL}, {@code {'k': [1, 2.5]}}. Numbers are Long or finite Double, objects have string keys.
+     */
+    public static String value(Object v) {
+        Values.requireStored(v);
+        return Values.format(v);
+    }
+
     /** A WHERE condition. */
     public static String print(Expr e) {
         StringBuilder b = new StringBuilder();

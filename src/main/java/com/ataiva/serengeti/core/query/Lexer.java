@@ -174,7 +174,7 @@ final class Lexer {
         char n = charAt(start + 1);
         String text = switch (c) {
             // A '-' before a digit starts a number, and "--" a comment; only the rest of them get here.
-            case '(', ')', ',', '.', ';', '*', '=', '+', '-' -> String.valueOf(c);
+            case '(', ')', ',', '.', ';', '*', '=', '+', '-', '{', '}', '[', ']', ':' -> String.valueOf(c);
             case '<' -> n == '=' ? "<=" : n == '>' ? "<>" : "<";
             case '>' -> n == '=' ? ">=" : ">";
             case '!' -> {

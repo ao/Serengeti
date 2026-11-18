@@ -201,7 +201,7 @@ public sealed interface Statement {
                 if (row.size() != columns.size()) {
                     throw new IllegalArgumentException("INSERT row has the wrong number of values");
                 }
-                row.forEach(Values::requireLiteral);
+                row.forEach(Values::requireStored);
                 copy.add(Collections.unmodifiableList(new ArrayList<>(row)));
             }
             rows = Collections.unmodifiableList(copy);
@@ -487,12 +487,15 @@ public sealed interface Statement {
         }
     }
 
-    /** {@code column = value}: {@code value} is a literal, or an {@link Arithmetic} computed from the row. */
+    /**
+     * {@code column = value}: {@code value} is a literal, an object or array of them, or an {@link Arithmetic}
+     * computed from the row.
+     */
     record Assignment(String column, Object value) {
         public Assignment {
             Objects.requireNonNull(column, "column");
             if (!(value instanceof Arithmetic)) {
-                Values.requireLiteral(value);
+                Values.requireStored(value);
             }
         }
     }

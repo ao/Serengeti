@@ -20,6 +20,39 @@ final class Values {
     }
 
     /**
+     * A value an INSERT or a SET may write: a literal, or an object (string keys) or array of such values,
+     * nested at most {@link Parser#MAX_VALUE_DEPTH} deep.
+     */
+    static void requireStored(Object v) {
+        requireStored(v, 0);
+    }
+
+    private static void requireStored(Object v, int depth) {
+        if (v instanceof java.util.Map<?, ?> m) {
+            requireDepth(depth);
+            for (java.util.Map.Entry<?, ?> e : m.entrySet()) {
+                if (!(e.getKey() instanceof String)) {
+                    throw new IllegalArgumentException("an object's keys are strings");
+                }
+                requireStored(e.getValue(), depth + 1);
+            }
+        } else if (v instanceof java.util.List<?> l) {
+            requireDepth(depth);
+            for (Object o : l) {
+                requireStored(o, depth + 1);
+            }
+        } else {
+            requireLiteral(v);
+        }
+    }
+
+    private static void requireDepth(int depth) {
+        if (depth >= Parser.MAX_VALUE_DEPTH) {
+            throw new IllegalArgumentException("a value nested more than " + Parser.MAX_VALUE_DEPTH + " deep");
+        }
+    }
+
+    /**
      * {@code a op b} in three-valued logic: null means unknown. Unknown if either side is null; if
      * the two values are of types that cannot be compared, {@code !=} is true and every other
      * operator false.
@@ -202,6 +235,26 @@ final class Values {
         }
         if (v instanceof Long || v instanceof Double) {
             return v.toString();
+        }
+        if (v instanceof java.util.Map<?, ?> m) {
+            StringBuilder b = new StringBuilder("{");
+            for (java.util.Map.Entry<?, ?> e : m.entrySet()) {
+                if (b.length() > 1) {
+                    b.append(", ");
+                }
+                b.append(format(String.valueOf(e.getKey()))).append(": ").append(format(e.getValue()));
+            }
+            return b.append('}').toString();
+        }
+        if (v instanceof java.util.List<?> l) {
+            StringBuilder b = new StringBuilder("[");
+            for (Object o : l) {
+                if (b.length() > 1) {
+                    b.append(", ");
+                }
+                b.append(format(o));
+            }
+            return b.append(']').toString();
         }
         throw new IllegalArgumentException("not a literal: " + v.getClass().getName());
     }

@@ -516,6 +516,46 @@ class ParserTest {
         fails("SELECT a, COUNT(*) FROM d.t GROUP BY a ORDER BY count");
     }
 
+    @Test
+    void insertAndSetWriteObjectsAndArrays() {
+        Statement.Insert i = (Statement.Insert) parse(
+                "INSERT INTO d.t (_id, tags, doc) VALUES ('a', ['x', 2, -0.0, TRUE, NULL, []], {'k': {'it''s': [1]}, '': {}})");
+        java.util.Map<String, Object> doc = new java.util.LinkedHashMap<>();
+        doc.put("k", java.util.Map.of("it's", List.of(1L)));
+        doc.put("", java.util.Map.of());
+        assertEquals(List.of("a", Arrays.asList("x", 2L, -0.0, true, null, List.of()), doc), i.rows().get(0));
+        assertTrue(Double.doubleToRawLongBits((Double) ((List<?>) i.rows().get(0).get(1)).get(2)) < 0, "-0.0 keeps its sign");
+        roundTrips("INSERT INTO d.t (_id, tags, doc) VALUES ('a', ['x', 2, -0.0, TRUE, NULL, []], {'k': {'it''s': [1]}, '': {}})");
+        assertEquals("INSERT INTO d.t (_id, v) VALUES ('a', {'k': [1, 2.5, 'é😀'], 'n': NULL})",
+                Printer.print(parse("insert into d.t (_id, v) values ('a', { 'k' : [ 1 , 2.5, 'é😀' ] , 'n':null })")));
+        assertEquals(List.of(new Statement.Assignment("v", List.of(1L)), new Statement.Assignment("w", java.util.Map.of("a", true))),
+                ((Statement.Update) parse("UPDATE d.t SET v = [1], w = {'a': TRUE}")).assignments());
+        roundTrips("INSERT INTO d.t (_id, v) VALUES ('a', [1]) ON CONFLICT DO UPDATE SET v = {'b': [2, [3]]}");
+        // The values are the statement's own: nothing can change them after parsing.
+        List<?> tags = (List<?>) i.rows().get(0).get(1);
+        assertThrows(UnsupportedOperationException.class, () -> tags.clear());
+
+        assertEquals("key 'k' is listed twice", failsAt("INSERT INTO d.t (v) VALUES ({'k': 1, 'k': 2})", "'k': 2"));
+        assertTrue(failsAt("INSERT INTO d.t (v) VALUES ({k: 1})", "k:").startsWith("expected a key (a string)"));
+        assertTrue(failsAt("INSERT INTO d.t (v) VALUES ({'k' 1})", "1}").startsWith("expected ':'"));
+        assertTrue(failsAt("INSERT INTO d.t (v) VALUES ([1, ])", "])").startsWith("expected a value"));
+        assertTrue(failsAtEnd("INSERT INTO d.t (v) VALUES ([1, 2").startsWith("expected ']'"));
+        assertTrue(failsAt("INSERT INTO d.t (v) VALUES ([b])", "b])").startsWith("expected a value"));
+        // Only values written hold them: a condition compares with a literal.
+        assertTrue(failsAt("SELECT * FROM d.t WHERE v = [1]", "[").startsWith("expected a value"));
+        assertTrue(failsAt("SELECT * FROM d.t WHERE v IN ({'a': 1})", "{").startsWith("expected a value"));
+        assertTrue(failsAt("UPDATE d.t SET v = 1 WHERE w = {'a': 1}", "{").startsWith("expected a value"));
+
+        String deep = "[".repeat(Parser.MAX_VALUE_DEPTH) + "]".repeat(Parser.MAX_VALUE_DEPTH);
+        Statement.Insert d = (Statement.Insert) parse("INSERT INTO d.t (v) VALUES (" + deep + ")");
+        assertEquals(deep, Printer.value(d.rows().get(0).get(0)));
+        String tooDeep = "{'a': " + deep + "}";
+        assertEquals("objects and arrays nest at most 64 deep",
+                failsAt("INSERT INTO d.t (v) VALUES (" + tooDeep + ")", "[]"));
+        assertThrows(IllegalArgumentException.class, () -> new Statement.Assignment("v",
+                com.ataiva.serengeti.core.json.Json.parse("[".repeat(Parser.MAX_VALUE_DEPTH + 1) + "]".repeat(Parser.MAX_VALUE_DEPTH + 1))));
+    }
+
     private static Statement.Select select(String s) {
         return (Statement.Select) parse(s);
     }
