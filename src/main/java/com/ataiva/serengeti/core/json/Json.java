@@ -16,14 +16,28 @@ public final class Json {
     public static final int MAX_DEPTH = 128;
 
     private final String s;
+    private final boolean exact;
     private int pos;
 
-    private Json(String s) {
+    private Json(String s, boolean exact) {
         this.s = s;
+        this.exact = exact;
     }
 
     public static Object parse(String text) {
-        Json p = new Json(text);
+        return parse(text, false);
+    }
+
+    /**
+     * Parses as {@link #parse} does, but refuses an integer outside the range of a long instead of reading it
+     * as the nearest double, so every number read is the number written.
+     */
+    public static Object parseExact(String text) {
+        return parse(text, true);
+    }
+
+    private static Object parse(String text, boolean exact) {
+        Json p = new Json(text, exact);
         p.skipWs();
         Object v = p.value(0);
         p.skipWs();
@@ -249,6 +263,9 @@ public final class Json {
             try {
                 return Long.parseLong(t);
             } catch (NumberFormatException tooBig) {
+                if (exact) {
+                    throw new JsonException("integer outside the 64-bit range", start);
+                }
                 // falls through to double
             }
         }

@@ -394,7 +394,7 @@ final class Shell {
         }
     }
 
-    private static HttpURLConnection open(Target t, String path) throws IOException {
+    static HttpURLConnection open(Target t, String path) throws IOException {
         HttpURLConnection c = (HttpURLConnection) t.base().resolve(path).toURL().openConnection();
         if (c instanceof HttpsURLConnection https) {
             if (t.tls() != null) {

@@ -226,6 +226,47 @@ expect "health probe over TLS exits 0" 0 \
 node badtls -e SERENGETI_TLS_KEYSTORE=/nope.p12 -e SERENGETI_TLS_KEYSTORE_PASSWORD=x -e SERENGETI_ADMIN_PASSWORD="$PW"
 expect "a missing key store exits 2" 2 "$(exit_code badtls)"
 
+echo "# serengeti import and export, over TLS with --ca"
+io() { # serengeti ARGS in a new container of the image on the network, the TLS node's certificate at /certs
+  docker run --rm -i -m 256m --label "serengeti-it=$RUN" --network "$NET" -v "$certs:/certs:ro" \
+    -e SERENGETI_PASSWORD="$PW" --entrypoint serengeti "$IMAGE" "$@"
+}
+tls_io=(--url https://tls:1985 --ca /certs/node.pem)
+io_rows='{"_id":"a","n":9007199254740993,"z":-0.0,"s":"é 😀 \"q\", ok","o":{"k":[1,{"x":null}]},"t":true}
+{"_id":"b","n":2,"s":"line\nbreak"}'
+io_out=$(printf '%s\n' "$io_rows" | io import "${tls_io[@]}" --create io.t 2>&1) && rc=0 || rc=$?
+expect "import over TLS with --ca exits 0" 0 "$rc"
+contains "and says what it did" "read 2 rows: 2 inserted, 0 updated, 0 skipped" "$io_out"
+io_back=$(io export "${tls_io[@]}" io.t 2>/dev/null) && rc=0 || rc=$?
+expect "export over TLS exits 0" 0 "$rc"
+expect "export gives the rows back, values and types as imported" "$io_rows" "$io_back"
+printf '%s\n' "$io_back" | io import "${tls_io[@]}" --create io.copy >/dev/null 2>&1
+expect "export, import into an empty table, export: the same rows" "$io_back" \
+  "$(io export "${tls_io[@]}" io.copy 2>/dev/null)"
+expect "CSV export: the union of columns, strings quoted" \
+  "$(printf '_id,n,z,s,o,t\r\n"a",9007199254740993,-0.0,"é 😀 ""q"", ok","{""k"":[1,{""x"":null}]}",true\r\n"b",2,,"line\nbreak",,\r\n')" \
+  "$(io export "${tls_io[@]}" --csv io.t 2>/dev/null)"
+io export "${tls_io[@]}" --csv io.t 2>/dev/null | io import "${tls_io[@]}" --csv --csv-types --create io.csv >/dev/null 2>&1
+expect "a CSV import with --csv-types keeps numbers and booleans" \
+  '{"_id":"a","n":9007199254740993,"z":-0.0,"s":"é 😀 \"q\", ok","o":"{\"k\":[1,{\"x\":null}]}","t":true}' \
+  "$(io export "${tls_io[@]}" --where "_id = 'a'" io.csv 2>/dev/null)"
+io_out=$(io export --url https://tls:1985 io.t 2>&1) && rc=0 || rc=$?
+expect "export without the CA does not trust the node: exit 2" 2 "$rc"
+io_out=$(printf '{"_id":"c"}\nnot json\n{"_id":"d"}\n' | io import "${tls_io[@]}" io.t 2>&1) && rc=0 || rc=$?
+expect "a line that is not JSON: exit 1" 1 "$rc"
+contains "with its line" "line 2: not JSON" "$io_out"
+expect "and the lines before it written, none after" "c" \
+  "$(io export "${tls_io[@]}" --where "_id >= 'c'" io.t 2>/dev/null | sed 's/.*"_id":"\([^"]*\)".*/\1/' | tr -d '\n')"
+io_out=$(printf '{"_id":"a"}\n{"_id":"e"}\n' | io import "${tls_io[@]}" io.t 2>&1) && rc=0 || rc=$?
+expect "a row that is there: exit 1" 1 "$rc"
+contains "the node's message, with the line" "line 1: 400: a row with _id 'a' already exists" "$io_out"
+contains "a rerun with --on-conflict skip finishes it" "read 2 rows: 1 inserted, 0 updated, 1 skipped" \
+  "$(printf '{"_id":"a"}\n{"_id":"e"}\n' | io import "${tls_io[@]}" --on-conflict skip io.t 2>&1)"
+# In the node's own container nothing more is needed: its own URL, certificate and admin password.
+contains "import in the node's container" "read 1 row: 1 inserted" \
+  "$(echo '{"_id":"local","n":1}' | docker exec -i "$RUN-tls" serengeti import --create io.local 2>&1)"
+expect "export in the node's container" '{"_id":"local","n":1}' "$(docker exec "$RUN-tls" serengeti export io.local 2>/dev/null)"
+
 echo "# kill -9 during writes, $KILL_ROUNDS rounds"
 node crash -v "$(volume crash):/data" -e SERENGETI_ADMIN_PASSWORD="$PW"
 wait_up crash

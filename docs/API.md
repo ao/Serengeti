@@ -173,6 +173,9 @@ so a client that reads only `affected` and `ids` reads these too. A DO UPDATE wh
 {"type":"write","affected":2,"inserted":1,"updated":1,"skipped":0,"ids":["bolt","nut"]}
 ```
 
+`serengeti import` and `serengeti export` load and dump a table through this route: batched INSERTs of
+at most 1 MiB, and keyset pages of SELECT. See [IMPORT.md](IMPORT.md).
+
 ## Password
 
 ```

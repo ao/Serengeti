@@ -38,6 +38,25 @@ public final class Serengeti {
             }
             System.exit(status);
         }
+        if (args.length > 0 && args[0].equals("import")) {
+            java.io.PrintStream out = new java.io.PrintStream(
+                    new java.io.FileOutputStream(java.io.FileDescriptor.out), true, java.nio.charset.StandardCharsets.UTF_8);
+            System.exit(Import.run(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(), System.in, out,
+                    System.err, terminal()));
+        }
+        if (args.length > 0 && args[0].equals("export")) {
+            java.io.OutputStream out = new java.io.BufferedOutputStream(
+                    new java.io.FileOutputStream(java.io.FileDescriptor.out), 1 << 16);
+            int status = Export.run(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(), out,
+                    System.err, terminal());
+            try {
+                out.flush();
+            } catch (IOException e) {
+                System.err.println("serengeti export: " + e.getMessage());
+                status = 1;
+            }
+            System.exit(status);
+        }
         if (args.length > 0 && args[0].equals("restore")) {
             System.exit(restore(java.util.Arrays.copyOfRange(args, 1, args.length), System.getenv(),
                     System.out, System.err));
@@ -62,6 +81,8 @@ public final class Serengeti {
                             + "       serengeti restore [--config FILE] BACKUP_FILE\n"
                             + "       serengeti shell [--url URL] [--user NAME] [-c STATEMENT] ... (see shell --help)\n"
                             + "       serengeti backup [--url URL] [--user NAME] [-o FILE] ... (see backup --help)\n"
+                            + "       serengeti import [--url URL] [--csv] ... DB.TABLE [FILE] (see import --help)\n"
+                            + "       serengeti export [--url URL] [--csv] [-o FILE] ... DB.TABLE (see export --help)\n"
                             + "--health asks the running node's GET /health and exits 0 if it answers 200.\n"
                             + "restore loads a backup into an empty data directory; stop the node first.\n"
                             + "Settings come from FILE (or SERENGETI_CONFIG) and SERENGETI_* environment variables.\n"

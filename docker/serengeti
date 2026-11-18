@@ -7,9 +7,9 @@ if [ $# -eq 0 ]; then
   set -- --help
 fi
 case $1 in
-  shell|backup|--version|--help|-h|--health)
+  shell|backup|import|export|--version|--help|-h|--health)
     # The node's own JVM settings (JAVA_TOOL_OPTIONS) size a server; these need little memory (a backup is
-    # streamed).
+    # streamed, and import and export send and read bounded batches and pages).
     unset JAVA_TOOL_OPTIONS
     exec java -Xmx96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xshare:auto -jar /opt/serengeti/serengeti.jar "$@"
     ;;

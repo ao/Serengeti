@@ -2,6 +2,7 @@
 
 - [QUERY.md](QUERY.md): the query language.
 - [API.md](API.md): HTTP routes, authentication, errors, metrics and backup.
+- [IMPORT.md](IMPORT.md): `serengeti import` and `serengeti export`, NDJSON and CSV.
 - [CONFIGURATION.md](CONFIGURATION.md): settings, secrets, the data directory and restore.
 - [CONSISTENCY.md](CONSISTENCY.md): replication, conflicts and what a cluster promises.
 - [BENCHMARKS.md](BENCHMARKS.md): throughput and latency, with the machine and method.

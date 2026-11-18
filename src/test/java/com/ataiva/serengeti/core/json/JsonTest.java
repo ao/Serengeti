@@ -25,6 +25,19 @@ class JsonTest {
     }
 
     @Test
+    void parseExactRefusesAnIntegerALongCannotHold() {
+        assertEquals(9223372036854775807L, Json.parseExact("9223372036854775807"));
+        assertEquals(-9223372036854775808L, Json.parseExact("-9223372036854775808"));
+        assertEquals(9.223372036854775808E18, Json.parseExact("9.223372036854775808E18"), "a fraction or exponent is a double");
+        assertEquals(List.of(9007199254740993L, -0.0), Json.parseExact("[9007199254740993, -0.0]"));
+        JsonException e = assertThrows(JsonException.class, () -> Json.parseExact("{\"a\": [1, 9223372036854775808]}"));
+        assertEquals("integer outside the 64-bit range at position 10", e.getMessage());
+        assertThrows(JsonException.class, () -> Json.parseExact("-9223372036854775809"));
+        assertThrows(JsonException.class, () -> Json.parseExact("1e400"));
+        assertThrows(JsonException.class, () -> Json.parseExact("NaN"));
+    }
+
+    @Test
     void keepsKeyOrder() {
         Map<String, Object> m = Json.parseObject("{\"z\":1,\"a\":2,\"m\":3}");
         assertEquals(List.of("z", "a", "m"), new ArrayList<>(m.keySet()));

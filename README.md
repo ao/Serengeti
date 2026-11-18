@@ -80,6 +80,27 @@ Without Docker, build with `mvn package` (Java 17 or later) and run
 `java -jar target/Serengeti-2.2.0-SNAPSHOT-jar-with-dependencies.jar`. It listens on 127.0.0.1:1985 and
 keeps its data in `./data`.
 
+## Load and dump data
+
+`serengeti import` reads rows from NDJSON (one JSON object per line) or CSV and inserts them in batched
+INSERT statements; `serengeti export` writes a table out in `_id` order. They find the node and the
+account as the shell does, so in the node's container they need nothing more:
+
+```sh
+docker exec -i serengeti serengeti import --create shop.stock < stock.ndjson
+docker exec serengeti serengeti export shop.stock > stock.ndjson
+docker exec serengeti serengeti export --csv --where 'qty > 100' shop.stock > plenty.csv
+```
+
+Each row needs a string `_id`, or `--generate-ids`; `--on-conflict skip` or `update` says what a row that
+is already there does. When a line is refused, the message names it, every line before it is written,
+and a rerun with `--on-conflict skip` finishes the job; a busy node or a dropped connection is retried.
+Export reads keyset pages, so it works for a table of any size, but it is not a snapshot (`serengeti
+backup` is). Exported NDJSON imports back as the same rows, with their types, `-0.0`, integers past 2^53
+and nested objects and arrays; CSV keeps strings, numbers and booleans with `--csv-types`. On an AWS
+c7g.4xlarge, 100,000 rows of five columns import in 2.1 s and export in 0.55 s (the unit test, node in the
+same JVM). [docs/IMPORT.md](docs/IMPORT.md) has the rules.
+
 ## A cluster
 
 A cluster is the same image with `SERENGETI_PEERS`, a shared cluster key and TLS between the nodes.
@@ -298,6 +319,7 @@ kept-alive connection, and 2.1 sets it itself.
 
 - [docs/QUERY.md](docs/QUERY.md): the query language, comparison rules and limits.
 - [docs/API.md](docs/API.md): HTTP routes, authentication, metrics and errors.
+- [docs/IMPORT.md](docs/IMPORT.md): `serengeti import` and `export`, NDJSON and CSV.
 - [docs/CONSISTENCY.md](docs/CONSISTENCY.md): replication, write acknowledgement, conflicts and what was tested.
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md): settings, defaults and the data directory.
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md): measured throughput and latency.
