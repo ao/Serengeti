@@ -286,7 +286,7 @@ GitHub release notes and tags.
 - A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past
   the LIMIT or the cap) instead of visiting the rest of the table, and `ORDER BY _id` ascending no longer
   sorts, since rows are read in that order. A keyset page reads only its own rows.
-- A SELECT whose ORDER BY sorts keeps only the first OFFSET + LIMIT + 1 matching rows as it reads
+- A SELECT whose ORDER BY sorts keeps only the first OFFSET + LIMIT matching rows as it reads
   (OFFSET + 10,001 without LIMIT): it holds up to four times that many, sorts them and drops the rest
   each time it gets there, instead of holding and sorting every matching row. It still reads every
   matching row.

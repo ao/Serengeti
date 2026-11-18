@@ -343,7 +343,9 @@ class OffsetTest {
     }
 
     @Test
-    void readsInOrderStopAfterOffsetPlusLimitPlusOne() {
+    void readsInOrderStopAfterOffsetPlusLimit() {
+        // With LIMIT, `truncated` is false whatever follows, so a read stops at OFFSET + LIMIT rows (at least 1);
+        // without, one more tells whether more follow.
         // In _id order: a scan, an _id range, a range on an index (gathered into _id order), a union of index reads.
         for (String where : List.of("", " WHERE _id > 'r1000'", " WHERE p >= 2000", " WHERE a = 7 OR b = 9",
                 " WHERE a = 7 OR b = 9 ORDER BY _id", " WHERE a = 3 ORDER BY a, _id")) {
@@ -352,12 +354,13 @@ class OffsetTest {
             boolean gathers = where.contains("p >=") || where.contains(" OR ");
             for (int[] mn : new int[][] {{0, 0}, {0, 1}, {20, 10}, {7, 0}, {50, 3}}) {
                 Executor.Read r = read(10_000, "SELECT * FROM @T" + where + " LIMIT " + mn[1] + " OFFSET " + mn[0]);
+                int keep = Math.max(1, mn[0] + mn[1]);
                 if (gathers) {
-                    assertTrue(r.visited() >= mn[0] + mn[1] + 1, where + " " + Arrays.toString(mn));
+                    assertTrue(r.visited() >= keep, where + " " + Arrays.toString(mn));
                 } else {
-                    assertEquals(mn[0] + mn[1] + 1, r.visited(), where + " " + Arrays.toString(mn));
+                    assertEquals(keep, r.visited(), where + " " + Arrays.toString(mn));
                 }
-                assertEquals(mn[0] + mn[1] + 1, r.rows().size());
+                assertEquals(keep, r.rows().size());
             }
             Executor.Read r = read(5, "SELECT * FROM @T" + where + " OFFSET 20");
             if (gathers) {
@@ -373,31 +376,31 @@ class OffsetTest {
             assertTrue(engine.read(s -> Executor.orderedPlan(s, "d", "t", (Statement.Select) Parser.parse(
                     q.replace("@T", "d.t")))).exact(), q);
             Executor.Read r = read(10_000, q + " LIMIT 10 OFFSET 30");
-            assertEquals(41, r.visited(), q);
-            assertEquals(41, r.rows().size(), q);
+            assertEquals(40, r.visited(), q);
+            assertEquals(40, r.rows().size(), q);
             assertEquals(13, read(5, q + " OFFSET 7").visited(), q);
         }
-        // Rows the WHERE leaves out are read too (no index on c or q): the read stops at the 6th match.
+        // Rows the WHERE leaves out are read too (no index on c or q): the read stops at the 5th match.
         Executor.Read r = read(10_000, "SELECT * FROM @T WHERE c = 0 LIMIT 3 OFFSET 2");
-        assertEquals(6, r.rows().size());
-        assertEquals(16, r.visited(), "the 6th row with c = 0 is r0015");
+        assertEquals(5, r.rows().size());
+        assertEquals(13, r.visited(), "the 5th row with c = 0 is r0012");
         r = read(10_000, "SELECT * FROM @T WHERE q < 2 LIMIT 3 OFFSET 2");
-        assertEquals(6, r.rows().size());
-        assertEquals(802, r.visited(), "the 6th row with q < 2 is r0801");
+        assertEquals(5, r.rows().size());
+        assertEquals(801, r.visited(), "the 5th row with q < 2 is r0800");
     }
 
     @Test
     void theSortKeepsTheFirstRowsItNeedsAndReadsEveryMatch() {
-        // No index gives q's order: every row is read, and the first m + n + 1 by the ORDER BY are kept.
+        // No index gives q's order: every row is read, and the first m + n by the ORDER BY are kept.
         Executor.Read r = read(10_000, "SELECT * FROM @T ORDER BY q DESC, p LIMIT 10 OFFSET 20");
         assertEquals(N, r.visited());
-        assertEquals(31, r.rows().size());
+        assertEquals(30, r.rows().size());
         List<Object> ids = new ArrayList<>();
         r.rows().forEach(m -> ids.add(m.id()));
         // q = 399 for i = 399, 799, ..., 3999 (10 rows), then q = 398 (10 rows), and so on, each by p.
         List<Object> want = new ArrayList<>();
-        for (int q = 399; want.size() < 31; q--) {
-            for (int i = q; i < N && want.size() < 31; i += 400) {
+        for (int q = 399; want.size() < 30; q--) {
+            for (int i = q; i < N && want.size() < 30; i += 400) {
                 want.add(id(i));
             }
         }
@@ -407,11 +410,11 @@ class OffsetTest {
         assertEquals(N, read(5, "SELECT * FROM @T ORDER BY q OFFSET 3995").rows().size());
         assertEquals(N, read(5, "SELECT * FROM @T ORDER BY q OFFSET 3994").rows().size());
         assertEquals(3_999, read(5, "SELECT * FROM @T ORDER BY q OFFSET 3993").rows().size());
-        // An ordered read with a budget (the index does not answer c != 3) stops at OFFSET + LIMIT + 1 rows too.
+        // An ordered read with a budget (the index does not answer c != 3) stops at OFFSET + LIMIT rows too.
         r = read(10_000, "SELECT * FROM @T WHERE c != 3 ORDER BY p DESC LIMIT 2 OFFSET 1");
-        assertEquals(List.of(id(3999), id(3998), id(3997), id(3996)),
+        assertEquals(List.of(id(3999), id(3998), id(3997)),
                 r.rows().stream().map(Executor.Match::id).map(Object.class::cast).toList());
-        assertEquals(4, r.visited());
+        assertEquals(3, r.visited());
     }
 
     @Test

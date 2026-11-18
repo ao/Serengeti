@@ -50,6 +50,37 @@ class ChangeFeedDurabilityTest {
     }
 
     /**
+     * The start line's torn bytes are what the log's open cut off, not the log a new epoch's checkpoint folds
+     * into the snapshot (docs3: a clean stop with changes.jsonl deleted reported 587 torn bytes).
+     */
+    @Test
+    void aNewEpochsCheckpointIsNotCountedAsTornBytes() throws Exception {
+        Path dir = tmp.resolve("d");
+        try (StorageEngine e = open(dir)) {
+            schema(e);
+            write(e, put("a", 1, 10));
+            write(e, put("b", 2, 11));
+        }
+        Files.deleteIfExists(dir.resolve(StorageEngine.CHANGES_FILE));
+        try (StorageEngine e = open(dir)) {
+            assertTrue(e.openStats().changes().contains("new epoch"), e.openStats().changes());
+            assertEquals(0, e.openStats().walDiscardedBytes());
+            assertTrue(e.openStats().walBatches() > 0);
+        }
+        // A real tear: the bytes cut off, as the log counted them.
+        try (StorageEngine e = open(dir)) {
+            write(e, put("c", 3, 12));
+        }
+        Path wal = dir.resolve(StorageEngine.WAL_FILE);
+        long whole = Files.size(wal);
+        Files.write(wal, new byte[] {0, 0, 0, 40, 1, 2, 3}, StandardOpenOption.APPEND);
+        try (StorageEngine e = open(dir)) {
+            assertEquals(7, e.openStats().walDiscardedBytes());
+            assertEquals(whole, Files.size(wal), "cut back to the last whole record");
+        }
+    }
+
+    /**
      * A collect line torn by a crash is left out at the next start (that run dropped nothing). The next collect
      * must not be appended to the torn bytes, on the same line, or it would be left out too although its
      * tombstones were dropped, and the replay would list other changes.

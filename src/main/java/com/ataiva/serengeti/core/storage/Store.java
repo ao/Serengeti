@@ -2006,7 +2006,7 @@ public final class Store {
         }
         TableState t = dbs.get(db).tables.get(table);
         if (column.equals("_id")) {
-            if (l instanceof Lookup.Composite) {
+            if (!readsId(l)) {
                 return null;
             }
             java.util.TreeSet<String> out = new java.util.TreeSet<>();
@@ -2027,6 +2027,9 @@ public final class Store {
      * {@code _id}, in id order. {@code _id} is a string: other values never compare equal or ordered with it.
      */
     private static Iterable<String> idKeys(TableState t, Lookup l) {
+        if (l instanceof Lookup.Composite c) {
+            return idRange(t, c.range());
+        }
         if (l instanceof Lookup.Compare c) {
             if (!(c.value() instanceof String v)) {
                 return List.of();
@@ -2054,6 +2057,82 @@ public final class Store {
         String end = prefixEnd(p);
         return (end == null ? t.rows.tailMap(p, true) : t.rows.subMap(p, true, end, false)).keySet();
     }
+
+    /**
+     * The ids between the bounds that {@code ranges} (comparisons and LIKE prefixes on _id, all true) set
+     * together: one view of the rows from the highest lower bound to the lowest upper one (docs3: a range of
+     * both bounds was read from the one written first to the end of the table).
+     */
+    private static Iterable<String> idRange(TableState t, List<Lookup> ranges) {
+        String lo = null;
+        boolean loIn = true;
+        String hi = null;
+        boolean hiIn = true;
+        for (Lookup r : ranges) {
+            String from = null;
+            boolean fromIn = true;
+            String to = null;
+            boolean toIn = true;
+            if (r instanceof Lookup.Prefix p) {
+                from = p.prefix();
+                to = prefixEnd(p.prefix());
+                toIn = false;
+            } else if (r instanceof Lookup.Compare c) {
+                if (!(c.value() instanceof String v)) {
+                    return List.of();
+                }
+                switch (c.op()) {
+                    case "=" -> {
+                        from = v;
+                        to = v;
+                    }
+                    case ">" -> {
+                        from = v;
+                        fromIn = false;
+                    }
+                    case ">=" -> from = v;
+                    case "<" -> {
+                        to = v;
+                        toIn = false;
+                    }
+                    case "<=" -> to = v;
+                    default -> throw new IllegalArgumentException("no _id lookup for " + c.op());
+                }
+            } else {
+                throw new IllegalArgumentException("no _id range for " + r);
+            }
+            if (from != null && (lo == null || from.compareTo(lo) > 0 || from.equals(lo) && !fromIn)) {
+                lo = from;
+                loIn = fromIn;
+            }
+            if (to != null && (hi == null || to.compareTo(hi) < 0 || to.equals(hi) && !toIn)) {
+                hi = to;
+                hiIn = toIn;
+            }
+        }
+        if (lo != null && hi != null) {
+            int c = lo.compareTo(hi);
+            if (c > 0 || c == 0 && !(loIn && hiIn)) {
+                return List.of();
+            }
+            return t.rows.subMap(lo, loIn, hi, hiIn).keySet();
+        }
+        if (lo != null) {
+            return t.rows.tailMap(lo, loIn).keySet();
+        }
+        return hi != null ? t.rows.headMap(hi, hiIn).keySet() : t.rows.keySet();
+    }
+
+    /** True if {@code l} is a read of _id: not an index on several columns' (values for its first columns). */
+    private static boolean readsId(Lookup l) {
+        return !(l instanceof Lookup.Composite c) || c.equal().isEmpty() && !c.range().isEmpty();
+    }
+
+    /**
+     * The most ids of an _id range with several bounds that its estimate counts: past them it is the table's
+     * rows, as for one bound, so that no estimate costs more than a few tens of microseconds.
+     */
+    static final long ID_RANGE_COUNTED = 1_024;
 
     /**
      * A range lookup on an index that would gather more ids than this (for a union, its ranges together) is not
@@ -2084,8 +2163,19 @@ public final class Store {
         }
         TableState t = dbs.get(db).tables.get(table);
         if (column.equals("_id")) {
-            if (l instanceof Lookup.Composite) {
+            if (!readsId(l)) {
                 return -1;
+            }
+            if (l instanceof Lookup.Composite c) {
+                // Several bounds: counted, up to ID_RANGE_COUNTED ids, the same whatever the order of the terms.
+                long cap = Math.min(atMost, ID_RANGE_COUNTED);
+                long n = 0;
+                for (String ignored : idRange(t, c.range())) {
+                    if (++n > cap) {
+                        break;
+                    }
+                }
+                return n <= cap || atMost <= ID_RANGE_COUNTED ? n : t.rows.size();
             }
             if (l instanceof Lookup.Compare c && c.op().equals("=")) {
                 return 1;
@@ -2328,7 +2418,7 @@ public final class Store {
         }
         TableState t = dbs.get(db).tables.get(table);
         if (column.equals("_id")) {
-            return l instanceof Lookup.Composite ? null : idKeys(t, l);
+            return readsId(l) ? idKeys(t, l) : null;
         }
         IndexState ix = answering(t, column, l);
         return ix == null ? null : ix.ids(l, MATERIALIZE_LIMIT);
@@ -2366,7 +2456,7 @@ public final class Store {
         for (IndexRead read : reads) {
             Iterable<String> ids;
             if (read.column().equals("_id")) {
-                if (read.lookup() instanceof Lookup.Composite) {
+                if (!readsId(read.lookup())) {
                     return false;
                 }
                 ids = idKeys(t, read.lookup());

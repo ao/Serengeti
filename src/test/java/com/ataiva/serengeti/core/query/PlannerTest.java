@@ -237,6 +237,40 @@ class PlannerTest {
         }
     }
 
+    /**
+     * Range terms on _id are one read between their bounds, whichever is written first, and a narrow one is
+     * counted, so it wins over an indexed term that finds more rows (docs3: the read went from the bound written
+     * first to the end of the table).
+     */
+    @Test
+    void rangeTermsOnIdAreOneReadBetweenTheirBounds() throws Exception {
+        try (StorageEngine e = rows(tmp.resolve("d"), 5_000, i -> Map.of("kind", (long) (i % 10)))) {
+            Query q = new Query(e, new Hlc("n1"));
+            q.run("CREATE INDEX ON d.t (kind)");
+            for (String w : List.of("_id >= 'r001000' AND _id < 'r001050'", "_id < 'r001050' AND _id >= 'r001000'",
+                    "kind = 3 AND _id < 'r001050' AND _id >= 'r001000'", "_id LIKE 'r0010%' AND _id > 'r001005'")) {
+                Expr where = ((Statement.Select) Parser.parse("SELECT * FROM d.t WHERE " + w)).where();
+                Executor.Plan p = e.read(s -> Executor.cheapestIndexedTerm(s, "d", "t", where));
+                assertEquals("_id", p.column(), w);
+                assertTrue(p.lookup() instanceof Store.Lookup.Composite, w);
+                long n = e.read(s -> s.indexEstimate("d", "t", "_id", p.lookup()));
+                assertTrue(n <= 100, w + ": counted " + n);
+                assertEquals(((Result.Rows) q.run("SELECT _id FROM d.t WHERE NOT (NOT (" + w + "))")).rows(),
+                        ((Result.Rows) q.run("SELECT _id FROM d.t WHERE " + w)).rows(), w);
+            }
+            // Bounds that leave nothing, equal bounds, and a wide range past the count (the table's rows).
+            for (String w : List.of("_id > 'r002000' AND _id < 'r001000'", "_id >= 'r001000' AND _id <= 'r001000'",
+                    "_id > 'r001000' AND _id < 'r001000'", "_id > 'r000000' AND _id < 'r004999'", "_id > 'a' AND _id < 5")) {
+                assertEquals(((Result.Rows) q.run("SELECT COUNT(*) FROM d.t WHERE NOT (NOT (" + w + "))")).rows(),
+                        ((Result.Rows) q.run("SELECT COUNT(*) FROM d.t WHERE " + w)).rows(), w);
+            }
+            Expr wide = ((Statement.Select) Parser.parse("SELECT * FROM d.t WHERE _id > 'r000000' AND _id < 'r004999'"))
+                    .where();
+            Executor.Plan p = e.read(s -> Executor.cheapestIndexedTerm(s, "d", "t", wide));
+            assertEquals(5_000L, (long) e.read(s -> s.indexEstimate("d", "t", "_id", p.lookup())), "past 1,024: the table");
+        }
+    }
+
     @Test
     void whichReadsGather() {
         assertTrue(Executor.gathers(new Executor.Plan("a", new Store.Lookup.Compare(">", 1L))));

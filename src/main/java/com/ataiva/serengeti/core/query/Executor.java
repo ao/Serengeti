@@ -578,6 +578,20 @@ public final class Executor {
     static List<Plan> candidates(Store store, String db, String table, Expr where) {
         List<Expr> terms = terms(where);
         List<Plan> plans = new ArrayList<>();
+        // Several range terms on _id (`_id >= 'a' AND _id < 'b'`) are one read between their bounds, first, so
+        // that it wins a tie with a read of one bound to the end of the table (docs3).
+        List<Store.Lookup> idRanges = new ArrayList<>();
+        for (Expr t : terms) {
+            if (t instanceof Expr.Compare c && ID.equals(c.column()) && c.op() != Expr.Cmp.NE && c.op() != Expr.Cmp.EQ) {
+                idRanges.add(new Store.Lookup.Compare(c.op().symbol(), c.value()));
+            } else if (t instanceof Expr.Like l && ID.equals(l.column()) && !l.negated() && !l.pattern().exact()
+                    && !l.pattern().prefix().isEmpty()) {
+                idRanges.add(new Store.Lookup.Prefix(l.pattern().prefix()));
+            }
+        }
+        if (idRanges.size() > 1) {
+            plans.add(new Plan(ID, new Store.Lookup.Composite(List.of(), idRanges)));
+        }
         for (Expr t : terms) {
             Plan p = t instanceof Expr.Or o ? union(store, db, table, o) : plan(t);
             if (p != null) {
@@ -1110,11 +1124,14 @@ public final class Executor {
     record Read(List<Match> rows, long visited) {}
 
     /**
-     * The rows of {@code q}'s answer up to one past its page (OFFSET, then LIMIT or the cap), which is enough to
-     * know whether more follow; see {@link #read(Store, Statement.Select, long)}.
+     * The rows of {@code q}'s answer up to its page's end (OFFSET, then LIMIT or the cap), and without LIMIT one
+     * more, which is enough to know whether more follow; see {@link #read(Store, Statement.Select, long)}. With
+     * LIMIT, `truncated` is always false, so the read does not look for that row: when exactly LIMIT rows
+     * matched, a read in index order spent its whole share looking for it, then sorted (docs3: 30 ms against
+     * 0.55 on 200,000 rows).
      */
     Read read(Store store, Statement.Select q) {
-        return read(store, q, skip(q) + cap(q) + 1);
+        return read(store, q, Math.max(1, skip(q) + cap(q) + (q.limit() == null ? 1 : 0)));
     }
 
     /**

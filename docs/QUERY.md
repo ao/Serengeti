@@ -290,7 +290,7 @@ one of two IN lists of 1,000 values 10 times.
 ### ORDER BY through an index
 
 A SELECT with ORDER BY (and no GROUP BY, DISTINCT or aggregates) can read its rows from an index in the
-order it returns them, and stop once it has them: its OFFSET, then its LIMIT or the 10,000 cap, and one
+order it returns them, and stop once it has them: its OFFSET, then its LIMIT, or the 10,000 cap and one
 more row to know whether `truncated` is true. It does when its ORDER BY keys are, in order, the columns of
 an index that come after those the WHERE fixes:
 
@@ -444,8 +444,9 @@ OFFSET plus LIMIT, or OFFSET plus the cap without LIMIT, may be at most 100,000
 keyset pages.
 
 An OFFSET page reads every row before it. A read in `_id` order or through an index in order stops once
-it has found m + n + 1 rows that match (the last one to know whether more follow); a sort reads every row
-that matches and keeps the first m + n + 1 by the ORDER BY, holding at most four times that many at once;
+it has found m + n rows that match (m + n + 1 without LIMIT, the last one to know whether more follow); a
+sort reads every row that matches and keeps the first m + n (or m + n + 1) by the ORDER BY, holding at most
+four times that many at once;
 GROUP BY and DISTINCT make every group first,
 as without OFFSET. So the 50th page of 1,000 rows in `_id` order reads 50,001 rows, where a keyset page
 reads 1,001. Keyset pages stay the way to read a large table (see "Reading a large table"), also because a
@@ -521,8 +522,8 @@ answers:
 - Parentheses and NOT may nest at most 64 levels deep in one condition (`Parser.MAX_DEPTH`). Long
   chains of AND or OR do not count towards this.
 - Names are at most 63 characters.
-- SELECT with ORDER BY sorts: it reads every matching row and keeps the first OFFSET + LIMIT + 1 by its
-  keys (OFFSET + 10,001 without LIMIT), holding up to four times that many in memory before it sorts them
+- SELECT with ORDER BY sorts: it reads every matching row and keeps the first OFFSET + LIMIT by its keys
+  (OFFSET + 10,001 without LIMIT), holding up to four times that many in memory before it sorts them
   and drops the rest. It does not sort when its first key that decides anything is `_id` ascending,
   which is the order rows are read in (see below), or when an index gives the rows in its order (see
   "ORDER BY through an index"). `ORDER BY _id DESC` sorts. A statement whose
@@ -541,8 +542,8 @@ SELECT * FROM shop.items WHERE _id > 'the last _id of the page before' ORDER BY 
 ```
 
 and so on until a page has fewer than 1,000 rows. Rows are read in `_id` order, so such a page does
-not sort, does not read the rows before it, and stops after its 1,000 rows (and one more, to know
-whether more follow). The same holds without ORDER BY. A page may have up to
+not sort, does not read the rows before it, and stops after its 1,000 rows (without LIMIT, it reads one
+more, to know whether more follow). The same holds without ORDER BY. A page may have up to
 10,000 rows, the cap. Other conditions can be added with AND, `WHERE _id > 'x' AND kind = 2 ORDER BY
 _id LIMIT 1000`; the page then reads rows until it has 1,000 that match.
 

@@ -137,7 +137,9 @@ public final class StorageEngine implements AutoCloseable {
             wal.close(false);
             throw e;
         }
-        this.openStats = new OpenStats(snapOps, wal.recordsAtOpen(), before - wal.size(), note);
+        // What the log's open cut off, not before - wal.size(): a new epoch's checkpoint empties the log too, and
+        // its bytes were not torn (docs3).
+        this.openStats = new OpenStats(snapOps, wal.recordsAtOpen(), wal.recovered().discardedBytes(), note);
         if (policy == FsyncPolicy.INTERVAL) {
             flusher = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "wal-flush");
