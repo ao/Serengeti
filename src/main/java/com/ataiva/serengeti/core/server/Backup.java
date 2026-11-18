@@ -41,7 +41,7 @@ public final class Backup {
         Headers h = ex.getResponseHeaders();
         h.set("Content-Type", "application/octet-stream");
         h.set("Content-Disposition", "attachment; filename=\"" + name + "\"");
-        ex.sendResponseHeaders(200, Files.size(file));
+        ClientLimits.sendHeaders(ex, 200, Files.size(file));
         try (OutputStream out = ex.getResponseBody()) {
             Files.copy(file, out);
         }

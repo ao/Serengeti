@@ -65,6 +65,22 @@ class ConfigTest {
     }
 
     @Test
+    void httpConnectionsDefaultTo1024AndAreAtLeastHttpThreads() {
+        Config c = Config.load(null, Map.of());
+        assertEquals(64, c.httpThreads);
+        assertEquals(1024, c.httpConnections);
+        assertEquals(1024, Config.load(null, env("SERENGETI_HTTP_THREADS", "1024")).httpConnections);
+        assertEquals(300, Config.load(null, Map.of("SERENGETI_HTTP_THREADS", "200",
+                "SERENGETI_HTTP_CONNECTIONS", "300")).httpConnections);
+        ConfigException e = assertThrows(ConfigException.class, () -> Config.load(null, Map.of(
+                "SERENGETI_HTTP_THREADS", "200", "SERENGETI_HTTP_CONNECTIONS", "100")));
+        assertTrue(e.getMessage().contains("http_connections (100) must be at least http_threads (200)"),
+                e.getMessage());
+        assertThrows(ConfigException.class, () -> Config.load(null, env("SERENGETI_HTTP_CONNECTIONS", "20000")));
+        assertThrows(ConfigException.class, () -> Config.load(null, env("SERENGETI_HTTP_CONNECTIONS", "0")));
+    }
+
+    @Test
     void configPathComesFromTheEnvironmentWhenNoArgument() throws IOException {
         Path f = file("s.properties", "port=2001\n");
         assertEquals(2001, Config.load(null, env("SERENGETI_CONFIG", f.toString())).port);

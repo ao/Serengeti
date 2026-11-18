@@ -75,6 +75,11 @@ final class Metrics {
     }
 
     synchronized String render(NodeOps.Gauges g, boolean ready) {
+        return render(g, ready, new long[ClientLimits.CUT_REASONS.length]);
+    }
+
+    /** With {@code cuts}: connections cut by each limit on slow clients, as {@link ClientLimits#cuts()}. */
+    synchronized String render(NodeOps.Gauges g, boolean ready, long[] cuts) {
         StringBuilder b = new StringBuilder();
         family(b, "serengeti_build_info", "gauge", "The version of the running node.");
         b.append("serengeti_build_info{version=\"").append(escape(Version.current())).append("\"} 1\n");
@@ -125,6 +130,13 @@ final class Metrics {
         family(b, "serengeti_http_request_duration_seconds", "histogram",
                 "Time from receiving a request to finishing its response, by route.");
         durations.forEach((route, h) -> histogram(b, route, h));
+        family(b, "serengeti_http_cut_total", "counter",
+                "Connections closed by a limit on slow clients: a body sent too slowly, a write not taken in time,"
+                + " a thread taken for a new connection, or a stalled write over the budget for unsent answers.");
+        for (int i = 0; i < ClientLimits.CUT_REASONS.length; i++) {
+            b.append("serengeti_http_cut_total{reason=\"").append(ClientLimits.CUT_REASONS[i]).append("\"} ")
+                    .append(cuts[i]).append('\n');
+        }
         family(b, "serengeti_login_failures_total", "counter", "Requests with a wrong user name or password.");
         sample(b, "serengeti_login_failures_total", loginFailures);
         family(b, "serengeti_login_limited_total", "counter",

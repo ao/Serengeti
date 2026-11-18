@@ -329,6 +329,31 @@ public final class Json {
         return b.toString();
     }
 
+    /**
+     * About how many characters {@code v} takes as JSON, without writing it: each string's length and quotes,
+     * 24 for any other scalar, and the punctuation. Escaped characters make the real text longer.
+     */
+    public static long estimate(Object v) {
+        if (v instanceof String s) {
+            return s.length() + 2L;
+        }
+        if (v instanceof Map<?, ?> m) {
+            long n = 2;
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                n += String.valueOf(e.getKey()).length() + 4L + estimate(e.getValue());
+            }
+            return n;
+        }
+        if (v instanceof Collection<?> c) {
+            long n = 2;
+            for (Object o : c) {
+                n += 1 + estimate(o);
+            }
+            return n;
+        }
+        return 24;
+    }
+
     public static void write(Object v, StringBuilder b) {
         if (v == null) {
             b.append("null");

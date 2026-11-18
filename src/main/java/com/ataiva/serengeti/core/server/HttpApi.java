@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
@@ -77,29 +76,21 @@ public final class HttpApi implements AutoCloseable {
     }
 
     private final HttpServer server;
-    private final ExecutorService pool;
+    private final ClientLimits limits;
     private final Deps deps;
     private final LoginLimiter limiter;
     private final Metrics metrics = new Metrics();
     private final Static pages = new Static();
 
-    private HttpApi(HttpServer server, Deps deps, int threads) {
+    private HttpApi(HttpServer server, Deps deps, ClientLimits limits, int threads) {
         this.server = server;
         this.deps = deps;
         this.limiter = new LoginLimiter(deps.clock());
-        // The JDK server reads a request's headers and body on these threads, so a client that sends slowly
-        // holds one until it finishes or the node's request time limit (30 s, Serengeti.main) closes it.
-        // Threads are started as needed and stop after a minute idle.
+        // The JDK server reads a request's headers, and this class its body, on up to http_connections threads;
+        // http_threads of them at once run requests. See ClientLimits for how long a slow client may hold one.
         this.maxWaiting = Math.max(1, threads / 2);
-        java.util.concurrent.ThreadPoolExecutor p = new java.util.concurrent.ThreadPoolExecutor(threads, threads,
-                60, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
-                    Thread t = new Thread(r, "http");
-                    t.setDaemon(true);
-                    return t;
-                });
-        p.allowCoreThreadTimeOut(true);
-        this.pool = p;
-        server.setExecutor(pool);
+        this.limits = limits;
+        server.setExecutor(limits);
         server.createContext("/", this::handle);
     }
 
@@ -123,24 +114,43 @@ public final class HttpApi implements AutoCloseable {
         return start(bind, port, tls, deps, THREADS);
     }
 
-    /** As above, answering on {@code threads} request threads ({@code http_threads}). */
+    /** As above, running {@code threads} requests at once ({@code http_threads}). */
     public static HttpApi start(String bind, int port, javax.net.ssl.SSLContext tls, Deps deps, int threads)
             throws IOException {
+        return start(bind, port, tls, deps, threads, Math.max(CONNECTIONS, threads));
+    }
+
+    /**
+     * As above, reading and answering up to {@code connections} requests at once ({@code http_connections}), at
+     * least {@code threads}.
+     */
+    public static HttpApi start(String bind, int port, javax.net.ssl.SSLContext tls, Deps deps, int threads,
+            int connections) throws IOException {
+        return start(bind, port, tls, deps, threads, new ClientLimits(connections, threads));
+    }
+
+    static HttpApi start(String bind, int port, javax.net.ssl.SSLContext tls, Deps deps, int threads,
+            ClientLimits limits) throws IOException {
         HttpServer s;
         InetSocketAddress addr = new InetSocketAddress(bind, port);
-        if (tls == null) {
-            s = HttpServer.create(addr, 128);
-        } else {
-            com.sun.net.httpserver.HttpsServer https = com.sun.net.httpserver.HttpsServer.create(addr, 128);
-            https.setHttpsConfigurator(new com.sun.net.httpserver.HttpsConfigurator(tls) {
-                @Override
-                public void configure(com.sun.net.httpserver.HttpsParameters params) {
-                    params.setSSLParameters(Tls.parameters(tls));
-                }
-            });
-            s = https;
+        try {
+            if (tls == null) {
+                s = HttpServer.create(addr, 128);
+            } else {
+                com.sun.net.httpserver.HttpsServer https = com.sun.net.httpserver.HttpsServer.create(addr, 128);
+                https.setHttpsConfigurator(new com.sun.net.httpserver.HttpsConfigurator(tls) {
+                    @Override
+                    public void configure(com.sun.net.httpserver.HttpsParameters params) {
+                        params.setSSLParameters(Tls.parameters(tls));
+                    }
+                });
+                s = https;
+            }
+        } catch (IOException | RuntimeException e) {
+            limits.close();
+            throw e;
         }
-        HttpApi api = new HttpApi(s, deps, threads);
+        HttpApi api = new HttpApi(s, deps, limits, threads);
         s.start();
         return api;
     }
@@ -172,7 +182,7 @@ public final class HttpApi implements AutoCloseable {
             LOG.warning("the HTTP server did not stop within " + STOP_MILLIS / 1000 + " s (a connection's write is"
                     + " stuck); stopping the rest of the node anyway");
         }
-        pool.shutdownNow();
+        limits.close();
     }
 
     /** How long close() waits for the JDK server to stop. */
@@ -187,34 +197,49 @@ public final class HttpApi implements AutoCloseable {
         long started = System.nanoTime();
         String route = Metrics.route(ex.getRequestURI().getRawPath());
         Caller caller = new Caller();
-        try (ex) {
-            Headers h = ex.getResponseHeaders();
-            h.set("X-Content-Type-Options", "nosniff");
-            h.set("Cache-Control", "no-store");
-            h.set("X-Frame-Options", "DENY");
-            h.set("Referrer-Policy", "no-referrer");
+        ClientLimits.Slot slot = ClientLimits.slot();
+        try {
             try {
-                if (stopping) {
-                    h.set("Connection", "close");
-                    throw new HttpError(503, "this node is stopping");
+                limits.leave(slot); // the headers are in
+                ex.getRequestBody();
+                ex.setStreams(null, limits.guard(ex.getResponseBody()));
+                Headers h = ex.getResponseHeaders();
+                h.set("X-Content-Type-Options", "nosniff");
+                h.set("Cache-Control", "no-store");
+                h.set("X-Frame-Options", "DENY");
+                h.set("Referrer-Policy", "no-referrer");
+                try {
+                    if (stopping) {
+                        h.set("Connection", "close");
+                        throw new HttpError(503, "this node is stopping");
+                    }
+                    readAhead(ex, slot);
+                    if (!limits.acquire(slot)) {
+                        HttpError busy = new HttpError(503, "busy: every request thread is in use; try again");
+                        busy.retryAfter = 1;
+                        throw busy;
+                    }
+                    route(ex, caller);
+                } catch (HttpError e) {
+                    if (e.status == 401) {
+                        h.set("WWW-Authenticate", REALM);
+                    }
+                    if (e.retryAfter > 0) {
+                        h.set("Retry-After", Long.toString(e.retryAfter));
+                    }
+                    if (e.allow != null) {
+                        h.set("Allow", e.allow);
+                    }
+                    drain(ex.getRequestBody());
+                    sendJson(ex, e.status, error(e.getMessage()));
+                } catch (RuntimeException e) {
+                    LOG.log(Level.SEVERE, "request failed: " + ex.getRequestMethod() + " " + ex.getRequestURI().getPath(), e);
+                    drain(ex.getRequestBody());
+                    sendJson(ex, 500, error("internal error"));
                 }
-                route(ex, caller);
-            } catch (HttpError e) {
-                if (e.status == 401) {
-                    h.set("WWW-Authenticate", REALM);
-                }
-                if (e.retryAfter > 0) {
-                    h.set("Retry-After", Long.toString(e.retryAfter));
-                }
-                if (e.allow != null) {
-                    h.set("Allow", e.allow);
-                }
-                drain(ex.getRequestBody());
-                sendJson(ex, e.status, error(e.getMessage()));
-            } catch (RuntimeException e) {
-                LOG.log(Level.SEVERE, "request failed: " + ex.getRequestMethod() + " " + ex.getRequestURI().getPath(), e);
-                drain(ex.getRequestBody());
-                sendJson(ex, 500, error("internal error"));
+            } finally {
+                limits.release(slot);
+                limits.close(slot, ex);
             }
         } catch (IOException e) {
             LOG.log(Level.FINE, "client connection failed", e);
@@ -292,7 +317,7 @@ public final class HttpApi implements AutoCloseable {
             }
             case "/metrics" -> {
                 requireMethod(method, "GET");
-                send(ex, 200, Metrics.CONTENT_TYPE, metrics.render(deps.ops().gauges(), ready())
+                send(ex, 200, Metrics.CONTENT_TYPE, metrics.render(deps.ops().gauges(), ready(), limits.cuts())
                         .getBytes(StandardCharsets.UTF_8));
             }
             case "/v1/backup" -> {
@@ -493,8 +518,10 @@ public final class HttpApi implements AutoCloseable {
         }
     }
 
-    /** Request threads, by default (http_threads). */
+    /** Requests run at once, by default (http_threads). */
     static final int THREADS = 64;
+    /** Requests read or answered at once, by default (http_connections): the threads. */
+    static final int CONNECTIONS = 1024;
 
     /** At most this many /v1/changes requests wait at once; the rest answer at once. Half the threads stay free. */
     private final int maxWaiting;
@@ -902,6 +929,102 @@ public final class HttpApi implements AutoCloseable {
     /** Oversized bodies up to this size are read and discarded before the 413, see {@link #tooLarge}. */
     static final long DRAIN_LIMIT = 8L << 20;
 
+    private static final byte[] NO_BYTES = new byte[0];
+
+    /**
+     * Reads the request's body into memory before the request takes a permit, so that a client that sends it
+     * slowly holds a thread but no permit, and only as long as {@link ClientLimits} allows. The handlers then read
+     * the copy as they read the stream before: the same limits, the same errors, in the same order (a 401 is still
+     * decided before the body is looked at). A body over the route's limit is read and discarded up to
+     * {@link #DRAIN_LIMIT}, keeping its first limit + 1 bytes, or none if its declared length is already too
+     * large; one that cannot be read becomes a stream that fails.
+     *
+     * <p>Past {@link ClientLimits#SMALL_BODY} a body's bytes count against the node's budget for bodies being
+     * read; when it is spent the request gets 503. Node-to-node requests with the cluster key are not counted.
+     */
+    private void readAhead(HttpExchange ex, ClientLimits.Slot slot) throws IOException {
+        Headers rh = ex.getRequestHeaders();
+        boolean chunked = rh.getFirst("Transfer-Encoding") != null;
+        long declared = 0;
+        String len = rh.getFirst("Content-Length");
+        if (len != null) {
+            try {
+                declared = Long.parseLong(len.trim());
+            } catch (NumberFormatException e) {
+                return; // readBody answers 400
+            }
+        }
+        if (!chunked && declared <= 0) {
+            return;
+        }
+        boolean peer = ex.getRequestURI().getRawPath().startsWith("/internal/") && deps.internal() != null
+                && deps.internal().authorized(rh.getFirst(InternalRoutes.KEY_HEADER));
+        int max = peer ? MAX_INTERNAL_BODY : MAX_BODY;
+        InputStream in = ex.getRequestBody();
+        byte[] buf = NO_BYTES;
+        int n = 0;
+        boolean failed = false;
+        boolean busy = false;
+        limits.enter(slot, ClientLimits.BODY);
+        try {
+            if (chunked || declared <= max) {
+                // Grown as bytes arrive, never ahead of them: a declared length costs nothing until it is sent.
+                long cap = chunked ? (long) max + 1 : declared + 1;
+                buf = new byte[(int) Math.min(cap, 8192)];
+                while (n < cap) {
+                    if (n == buf.length) {
+                        int grown = (int) Math.min(cap, (long) buf.length * 2);
+                        long counted = Math.max(0, grown - ClientLimits.SMALL_BODY)
+                                - Math.max(0, buf.length - ClientLimits.SMALL_BODY);
+                        if (!peer && counted > 0 && !limits.reserveBody(slot, counted)) {
+                            busy = true;
+                            break;
+                        }
+                        buf = java.util.Arrays.copyOf(buf, grown);
+                    }
+                    int r = in.read(buf, n, buf.length - n);
+                    if (r < 0) {
+                        break;
+                    }
+                    n += r;
+                    ClientLimits.received(slot, r);
+                }
+            }
+            if (busy || n > max || !chunked && declared > max) {
+                byte[] skip = new byte[65536];
+                long left = DRAIN_LIMIT;
+                int r;
+                while (left > 0 && (r = in.read(skip, 0, (int) Math.min(skip.length, left))) > 0) {
+                    left -= r;
+                    ClientLimits.received(slot, r);
+                }
+            }
+        } catch (ClientLimits.Cut c) {
+            throw c;
+        } catch (IOException e) {
+            // A malformed chunked body, or a client that went away; readBody answers 400 if the route reads it.
+            failed = true;
+        } finally {
+            limits.leave(slot);
+        }
+        if (failed) {
+            ex.setStreams(new InputStream() {
+                @Override
+                public int read() throws IOException {
+                    throw new IOException("the request body could not be read");
+                }
+            }, null);
+        } else {
+            ex.setStreams(new java.io.ByteArrayInputStream(busy ? NO_BYTES : buf, 0, busy ? 0 : n), null);
+        }
+        if (busy) {
+            ex.getResponseHeaders().set("Connection", "close");
+            HttpError e = new HttpError(503, "busy reading other large requests; try again");
+            e.retryAfter = 1;
+            throw e;
+        }
+    }
+
     static byte[] readBody(HttpExchange ex) throws IOException {
         return readBody(ex, MAX_BODY);
     }
@@ -962,15 +1085,27 @@ public final class HttpApi implements AutoCloseable {
      * otherwise sometimes destroyed by the TCP reset that closing a socket with unread input causes.
      */
     private static void drain(InputStream in) {
+        // Usually the copy readAhead made; the client's own stream when the request failed before that.
+        ClientLimits.Slot s = ClientLimits.slot();
         byte[] buf = new byte[65536];
         long left = DRAIN_LIMIT;
         try {
-            int n;
-            while (left > 0 && (n = in.read(buf, 0, (int) Math.min(buf.length, left))) > 0) {
-                left -= n;
+            if (s != null) {
+                s.owner.enter(s, ClientLimits.BODY);
+            }
+            try {
+                int n;
+                while (left > 0 && (n = in.read(buf, 0, (int) Math.min(buf.length, left))) > 0) {
+                    left -= n;
+                    ClientLimits.received(s, n);
+                }
+            } finally {
+                if (s != null) {
+                    s.owner.leave(s);
+                }
             }
         } catch (IOException ignored) {
-            // The client went away; nothing to answer.
+            // The client went away or was cut; nothing to answer.
         }
     }
 
@@ -981,8 +1116,17 @@ public final class HttpApi implements AutoCloseable {
     }
 
     private static void sendJson(HttpExchange ex, int status, Object body) throws IOException {
-        send(ex, status, "application/json; charset=utf-8",
-                (Json.write(body) + "\n").getBytes(StandardCharsets.UTF_8));
+        ClientLimits.Slot s = ClientLimits.slot();
+        // Room for a large answer is taken before it is built: many built at once ran a node out of heap.
+        if (s != null && !s.owner.reserveAnswer(s, 3 * Json.estimate(body))) {
+            HttpError e = new HttpError(503, "busy: too many large answers in memory; try again");
+            e.retryAfter = 1;
+            throw e;
+        }
+        StringBuilder b = new StringBuilder();
+        Json.write(body, b);
+        b.append('\n');
+        send(ex, status, "application/json; charset=utf-8", b.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -993,12 +1137,26 @@ public final class HttpApi implements AutoCloseable {
      */
     static final int WRITE_SLICE = 64 * 1024;
 
+    /**
+     * Writes the answer. The request's permit goes back first (the answer is built), and every write is a phase
+     * with a deadline (see {@link ClientLimits}), so a client that does not read holds only its thread.
+     */
     private static void send(HttpExchange ex, int status, String type, byte[] body) throws IOException {
         ex.getResponseHeaders().set("Content-Type", type);
-        ex.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
-        try (OutputStream out = ex.getResponseBody()) {
-            for (int off = 0; off < body.length; off += WRITE_SLICE) {
-                out.write(body, off, Math.min(WRITE_SLICE, body.length - off));
+        ClientLimits.Slot s = ClientLimits.slot();
+        if (s != null) {
+            s.owner.unsent(s, body.length);
+        }
+        try {
+            ClientLimits.sendHeaders(ex, status, body.length == 0 ? -1 : body.length);
+            try (OutputStream out = ex.getResponseBody()) {
+                for (int off = 0; off < body.length; off += WRITE_SLICE) {
+                    out.write(body, off, Math.min(WRITE_SLICE, body.length - off));
+                }
+            }
+        } finally {
+            if (s != null) {
+                s.owner.sent(s);
             }
         }
     }

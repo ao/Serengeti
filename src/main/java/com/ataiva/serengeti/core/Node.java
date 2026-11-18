@@ -229,7 +229,7 @@ public final class Node implements AutoCloseable {
         QueryService qs = queries.create(storage, clock, cluster);
         try {
             this.api = HttpApi.start(config.bind, config.port, tls, new HttpApi.Deps(users, token, qs, this::status,
-                    System::currentTimeMillis, cluster, operations()), config.httpThreads);
+                    System::currentTimeMillis, cluster, operations()), config.httpThreads, config.httpConnections);
         } catch (IOException e) {
             if (backups != null) {
                 backups.close();
