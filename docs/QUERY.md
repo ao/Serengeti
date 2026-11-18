@@ -210,9 +210,10 @@ It answers a WHERE whose top-level AND fixes its first columns, in order, and ma
 
 So `WHERE customer = 'c1' AND placed >= '2026-01' AND placed < '2026-02'` reads the rows of one customer in
 January, `WHERE customer IN ('c1', 'c2') AND placed > '2026-06'` those of two customers since June, and
-`WHERE customer = 'c1'` all the rows of `c1`. The index is read only for its first columns that the
-condition fixes: `WHERE placed > '2026-06'` or `customer != 'c1' AND placed = '2026-06-01'` does not use
-it. The rest of the condition is checked on the rows the index finds, as for an index on one column.
+`WHERE customer = 'c1'` all the rows of `c1`. With no column fixed, a range or LIKE prefix on the first
+column reads it too (`WHERE customer > 'c4'`). A condition with no such term on the first column does not
+use it: `WHERE placed > '2026-06'` or `customer != 'c1' AND placed = '2026-06-01'`. The rest of the
+condition is checked on the rows the index finds, as for an index on one column.
 
 Every row is in the index, with missing and null values sorting first in each column and objects and
 arrays last, but no lookup finds one whose first column is missing, null, an object or an array. A row
@@ -333,9 +334,10 @@ through an index costs 3 to 10 times one read by a scan, and those rows are sort
 smaller than the rows it must find (OFFSET included), the ordered read is not tried. The share bounds the
 worst case, a condition that no row meets: on 200,000 rows of 10 columns, `WHERE c = 'none' ORDER BY at DESC
 LIMIT 10` takes 32 ms against 28 for the same statement answered by the sort (in-process medians of 31, the
-two statements in turn, on a c7g.4xlarge, JDK 17). With 10% of the rows matching it takes 0.23 ms instead of
-40, and `ORDER BY at DESC LIMIT 10` 0.07 ms instead of 330 (medians on a c7g.4xlarge container limited to 4
-CPUs).
+two statements in turn, on a c7g.4xlarge, JDK 17). With 10% of the rows matching it takes 0.23 ms, and
+`ORDER BY at DESC LIMIT 10` 0.07 ms (in-process medians on a c7g.4xlarge container limited to 4 CPUs);
+answered by the sort, each takes about 24 ms (medians of 31 over HTTP from a client container on the same
+machine, the image of 71e6f18 on JDK 21).
 
 ## Ordering
 
@@ -443,7 +445,8 @@ keyset pages.
 
 An OFFSET page reads every row before it. A read in `_id` order or through an index in order stops once
 it has found m + n + 1 rows that match (the last one to know whether more follow); a sort reads every row
-that matches and holds the first m + n + 1 by the ORDER BY; GROUP BY and DISTINCT make every group first,
+that matches and keeps the first m + n + 1 by the ORDER BY, holding at most four times that many at once;
+GROUP BY and DISTINCT make every group first,
 as without OFFSET. So the 50th page of 1,000 rows in `_id` order reads 50,001 rows, where a keyset page
 reads 1,001. Keyset pages stay the way to read a large table (see "Reading a large table"), also because a
 row inserted or deleted before an OFFSET page, between two of them, moves the rows after it by one, so the
@@ -482,11 +485,14 @@ row, in insert order:
 {"type":"write","affected":2,"ids":["a","5f0c6f0e-..."]}
 ```
 
-An INSERT with ON CONFLICT also says how many tuples it inserted, updated and skipped; `affected` is
-`inserted` plus `updated`, and `ids` lists the rows it wrote, which may be none:
+An INSERT with ON CONFLICT also says how many tuples it inserted, updated and skipped: DO UPDATE counts
+the tuples whose row was there in `updated`, DO NOTHING in `skipped`, so one of the two is always 0.
+`affected` is `inserted` plus `updated`, and `ids` lists the rows it wrote, in tuple order, which may be
+none. With `b` in the table and `d` not, `VALUES ('b', 1), ('d', 1) ON CONFLICT DO UPDATE SET n = n + 1`
+answers:
 
 ```
-{"type":"write","affected":2,"inserted":1,"updated":1,"skipped":1,"ids":["b","d"]}
+{"type":"write","affected":2,"inserted":1,"updated":1,"skipped":0,"ids":["b","d"]}
 ```
 
 `CREATE ... IF NOT EXISTS` on an existing object and `DROP ... IF EXISTS` on a missing one return
@@ -515,10 +521,11 @@ An INSERT with ON CONFLICT also says how many tuples it inserted, updated and sk
 - Parentheses and NOT may nest at most 64 levels deep in one condition (`Parser.MAX_DEPTH`). Long
   chains of AND or OR do not count towards this.
 - Names are at most 63 characters.
-- SELECT with ORDER BY reads every matching row, holds the first OFFSET + LIMIT + 1 by its keys in
-  memory (OFFSET + 10,001 without LIMIT), and sorts those, except when its first key that decides
-  anything is `_id` ascending, which is the order rows are read in (see below), and when an index gives
-  the rows in its order (see "ORDER BY through an index"). `ORDER BY _id DESC` sorts. A statement whose
+- SELECT with ORDER BY sorts: it reads every matching row and keeps the first OFFSET + LIMIT + 1 by its
+  keys (OFFSET + 10,001 without LIMIT), holding up to four times that many in memory before it sorts them
+  and drops the rest. It does not sort when its first key that decides anything is `_id` ascending,
+  which is the order rows are read in (see below), or when an index gives the rows in its order (see
+  "ORDER BY through an index"). `ORDER BY _id DESC` sorts. A statement whose
   WHERE has no term an index answers (see Indexes) scans the table.
 - An OR is read through indexes only when every branch has a term an index answers, its reads find at most
   1/16 of the table's rows, and they are at most 32 reads of at most 4,000 values in all (see "OR through
@@ -535,7 +542,7 @@ SELECT * FROM shop.items WHERE _id > 'the last _id of the page before' ORDER BY 
 
 and so on until a page has fewer than 1,000 rows. Rows are read in `_id` order, so such a page does
 not sort, does not read the rows before it, and stops after its 1,000 rows (and one more, to know
-whether `truncated` is true without LIMIT). The same holds without ORDER BY. A page may have up to
+whether more follow). The same holds without ORDER BY. A page may have up to
 10,000 rows, the cap. Other conditions can be added with AND, `WHERE _id > 'x' AND kind = 2 ORDER BY
 _id LIMIT 1000`; the page then reads rows until it has 1,000 that match.
 
