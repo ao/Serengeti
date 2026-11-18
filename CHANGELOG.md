@@ -73,6 +73,8 @@ GitHub release notes and tags.
 - Clients for Python (standard library only) and JavaScript (`fetch`), one file each, in `clients/`:
   queries, reads that move on to the next node, writes that are never sent twice, the change feed,
   accounts and TLS with a cluster's own CA. `clients/run.sh` tests both against the image; CI runs it.
+  `rows("db.table", where=...)` reads every row of a table, or of a condition on it, in `_id` order through
+  keyset pages, and reads on after a page the node ended early (`truncated`); queries take `max_bytes`.
 - `serengeti shell`, and a `serengeti` command in the image: statements typed at a prompt, read from a
   script or given with `-c`, with results as a table, tab-separated values or JSON. A statement runs at
   `;`, or at the end of a line once it is complete. In a node's container, `docker exec -it NAME serengeti
