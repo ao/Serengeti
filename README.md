@@ -170,17 +170,19 @@ curl -s -u "admin:$SERENGETI_PASSWORD" -X PUT -H 'Content-Type: application/json
 # {"user":"dashboard","role":"read"}
 ```
 
-A write by a read account gets 403. A read or write account can also be limited to some databases; it then
-gets 403 for any statement or change feed that names another one, and `SHOW DATABASES` lists only its own:
+A write by a read account gets 403. A read or write account can also be limited to some databases (`shop`)
+and tables (`blog.posts`); it then gets 403 for any statement or change feed that names anything else, and
+`SHOW DATABASES` and `SHOW TABLES` list only what it may use. A table's entry does not give its database:
+no CREATE or DROP DATABASE, and no change feed of the whole database.
 
 ```sh
 curl -s -u "admin:$SERENGETI_PASSWORD" -X PUT -H 'Content-Type: application/json' \
-  --data '{"password": "a long password for the shop", "role": "write", "databases": ["shop"]}' \
+  --data '{"password": "a long password for the shop", "role": "write", "databases": ["shop", "blog.posts"]}' \
   http://127.0.0.1:1985/v1/users/shop-app; echo
-# {"user":"shop-app","role":"write","databases":["shop"]}
+# {"user":"shop-app","role":"write","databases":["blog.posts","shop"]}
 ```
 
-In a cluster, accounts replicate: an account's role, databases and password merge apart, the newest change
+In a cluster, accounts replicate: an account's role, list and password merge apart, the newest change
 to each winning on every node, a delete is not undone by changes made where it had not arrived, and a node
 that was down catches up.
 [docs/API.md](docs/API.md#accounts) has the rest.
@@ -219,20 +221,20 @@ Serengeti is smaller than both, and young: 2.0 was its first usable release.
 
 GitHub Actions runs these on every change:
 
-- 610 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
+- 627 unit and property tests on Java 17 and 21, among them a property test that runs random writes and
   syncs on three replicas and checks, against the true causal history, that each replica keeps exactly
   the writes no other write had seen, one that restarts, crashes and checkpoints a node at random and
   checks that every change feed cursor it gave out gets the same changes again or 410, and others that
   compare index lookups, ORDER BY and OR read through indexes, OFFSET pages, upserts and GROUP BY with
   scans or with a model;
-- 138 checks against the built image on amd64 and arm64, including `kill -9` during writes (and a change
-  feed cursor followed across the kills and a `docker restart`), account roles
-  and accounts limited to some databases, a second node refused on a data directory in use, the shell and
-  backup commands, and scheduled backups;
+- 152 checks against the built image on amd64 and arm64, including `kill -9` during writes (and a change
+  feed cursor followed across the kills and a `docker restart`), account roles and accounts limited to some
+  databases and tables, a second node refused on a data directory in use, the shell and backup commands, and
+  scheduled backups;
 - 39 checks on a 3-node TLS cluster in Docker: nodes killed and restarted, one partitioned with iptables,
   one with fsync slowed by a second, local writes on both sides of a partition. Every write that was
   acknowledged must be on every node at the end;
-- 76 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster (and the same from 2.1), one node at a
+- 92 checks that upgrade a 2.0.0 node and a 3-node 2.0.0 cluster (and the same from 2.1), one node at a
   time under writes, and roll a node back to 2.0.0 after it has made indexes (one on two columns) and
   accounts;
 - a conformance suite of about 1,140 checks on the HTTP API and the query language, with 5,000 generated
@@ -303,8 +305,8 @@ kept-alive connection, and 2.1 sets it itself.
   table, and so does an OR unless an index answers every branch and they find at most 1/16 of the rows.
 - You need every write serialised, such as a balance that must never go below zero across nodes.
 - You need more than 7 nodes, or nodes that hold only part of the data.
-- You need permissions per table, or another role in each database: an account has one role, for every
-  table of every database it may use.
+- You need a different role on each database or table, such as reading one table and writing another: an
+  account has one role, for every database and table its list gives it.
 - Clients you do not trust can reach the node directly. It serves 64 requests at a time (`http_threads`). A
   client that sends its request slowly holds one of them for up to 30 s, so 64 such connections, renewed,
   stall it, and a signed-in client that stops reading a large answer holds one until the connection drops.

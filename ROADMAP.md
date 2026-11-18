@@ -16,7 +16,7 @@ here has a date.
   prefixes and ORs of them, and give rows in their order for `ORDER BY ... LIMIT`.
 - An HTTP API ([docs/API.md](docs/API.md)) in which every route except `GET /health` and `GET /ready`
   needs HTTP Basic credentials. Accounts have a role (metrics, read, write or admin), read and write accounts
-  can be limited to some databases, and accounts replicate across the cluster. The first admin password comes from the environment, a file or a one-time setup token.
+  can be limited to some databases and tables, and accounts replicate across the cluster. The first admin password comes from the environment, a file or a one-time setup token.
   Failed logins are limited per address.
 - A change feed: `GET /v1/changes` follows a table's changes with a cursor and a long poll; cursors
   outlive a restart of the node.
@@ -46,8 +46,8 @@ here has a date.
 - ORDER BY sorts the matching rows in memory unless its keys are an index's columns after those the WHERE
   fixes, all in one direction ([docs/QUERY.md](docs/QUERY.md), "ORDER BY through an index");
 - no joins and no transactions across statements; nothing is linearizable;
-- an account has one role, for every table of every database it may use: there are no permissions per
-  table;
+- an account has one role, for every database and table its list gives it: it cannot read one table and
+  write another;
 - the HTTP server serves 64 requests at a time and is not hardened against slow clients: put a buffering
   proxy in front of a node that untrusted networks reach.
 

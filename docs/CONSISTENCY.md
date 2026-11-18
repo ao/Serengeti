@@ -210,4 +210,7 @@ bde4274, from 2.0.0 and from a 2.1 image built from engine/2.1-fixes (a limited 
 makes an index on two columns before the rollback and one while the old nodes remain: a 2.1 node lists it as
 one index on a column named `n,k` and answers by scan, and once upgraded every node finds through it the
 rows the old nodes wrote. 76 of 76 at 14431c2 on a c7g.4xlarge, from 2.0.0 and from a 2.1 image built from
-engine/2.1-fixes b983d15.
+engine/2.1-fixes b983d15. It also makes an account limited to one table, before the rollback and on the
+first upgraded node while the old nodes remain: the old version never has it (it takes no accounts from
+peers, and the account is not in `users.json`), and once upgraded every node applies its list. 92 of 92 at
+d4c9f8a on a c7g.4xlarge, from 2.0.0 and from the same 2.1 image.

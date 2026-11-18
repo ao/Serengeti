@@ -9,14 +9,14 @@ credentials of an account; see [Accounts](#accounts) for the roles.
 | `GET /health` | none | `{"status":"ok"}` while the process serves HTTP. |
 | `GET /ready` | none | `{"status":"ready"}`, or 503 `{"status":"not ready"}` while a readiness check fails. |
 | `POST /v1/setup` | setup token | Sets the first admin password. |
-| `POST /v1/query` | Basic | Runs one statement from [QUERY.md](QUERY.md). The read role can run SELECT and SHOW only, and an account limited to some databases can name only those. |
+| `POST /v1/query` | Basic | Runs one statement from [QUERY.md](QUERY.md). The read role can run SELECT and SHOW only, and an account limited to some databases and tables can name only those. |
 | `POST /post` | Basic | The 1.x route name, still served. Same body and result as `/v1/query`. |
 | `GET /v1/status` | Basic | Node id, version, uptime in seconds, number of databases, fsync policy, and in a cluster a `cluster` object: size, quorum, peers reachable, whether the node is caught up or stale, and each peer. |
 | `POST /v1/password` | Basic | Changes the caller's password. |
 | `GET /v1/changes` | Basic | The changes this node applied after a cursor, waiting for one. See [Changes](#changes). |
 | `GET /v1/backup` | Basic, admin | Streams a snapshot of the data. See [Backup](#backup). |
-| `GET /v1/users` | Basic, admin | The accounts, their roles and their databases. See [Accounts](#accounts). |
-| `PUT /v1/users/NAME` | Basic, admin | Creates an account, or changes its password, role or databases. |
+| `GET /v1/users` | Basic, admin | The accounts, their roles and their lists of databases and tables. See [Accounts](#accounts). |
+| `PUT /v1/users/NAME` | Basic, admin | Creates an account, or changes its password, role or list. |
 | `DELETE /v1/users/NAME` | Basic, admin | Deletes an account. |
 | `GET /metrics` | Basic | Prometheus text format. See [Metrics](#metrics). |
 | `GET /` | Basic | The console. |
@@ -196,8 +196,9 @@ change is made, and an account deleted meanwhile gets 401.
 (and table `T`, if given) that this node applied after the cursor, in the order it applied them: rows
 written here, rows merged from other nodes, and tables and databases dropped or created. With nothing new it waits up
 to `wait` seconds (0 to 60, default 0) for a change; `limit` is 1 to 10,000 (default 1,000). Any role may
-follow changes, except `metrics`. An account limited to some databases gets 403 for any other `db`; `db` is
-matched exactly here, so it must be written as the database's name is (lowercase). A long poll checks the
+follow changes, except `metrics`. An account with a list (see Accounts) needs the database's entry to follow
+all of `db`, and the database's or the table's entry to follow one `table`; anything else is a 403. `db` and
+`table` are matched exactly here, so they must be written as the names are (lowercase). A long poll checks the
 account again when it returns, so a change to the account made meanwhile applies to its answer.
 
 ```
@@ -274,45 +275,77 @@ contains a password hash. `DELETE /v1/users/NAME` deletes the account (404 if th
 to 64 ASCII letters, digits, `.`, `_` or `-`; a password is at least 12 characters and at most 72 bytes in
 UTF-8. The last admin cannot be deleted or given another role (409).
 
-A read or write account can be limited to some databases:
+A read or write account can be limited to some databases and tables:
 
 ```
 PUT /v1/users/shop-app
 {"password": "a long password for it", "role": "write", "databases": ["shop", "shop_archive"]}
 ```
 
-201 `{"user":"shop-app","role":"write","databases":["shop","shop_archive"]}`. Such an account can run only
-statements that name one of its databases. Any other statement that names a database gets 403 `this
-account may not use database D`, whether or not `D` exists, before anything is read or written; `SHOW
-DATABASES` lists the account's databases that exist, and the change feed is limited the same way. The role
-still applies: a limited read account only reads its databases, and creating one of them needs a write
-account. The list has 1 to 100 database names, none twice; names are folded to lowercase, as in queries,
-and the list comes back sorted. `GET /v1/users` and the answers to `PUT` show it. `"databases": null`
+201 `{"user":"shop-app","role":"write","databases":["shop","shop_archive"]}`. Each entry of the list is a
+database, `db`, or a table, `db.table`:
+
+| Entry | Gives |
+|---|---|
+| `shop` | The database and every table in it: every statement that names them, CREATE and DROP DATABASE included, and the change feed of the whole database. |
+| `shop.orders` | That table: SELECT, INSERT, UPDATE and DELETE on it, CREATE and DROP INDEX, SHOW INDEXES and SHOW CONFLICTS, CREATE and DROP TABLE of it, and its change feed (`?db=shop&table=orders`). Not CREATE or DROP DATABASE, nor the feed of the whole database. |
+
+`SHOW DATABASES` lists the databases that exist and that the list names, whole or by one of their tables, and
+`SHOW TABLES IN D` lists the tables of `D` that exist and that the list gives. Any other statement, and the
+change feed of anything else, gets 403 before anything is read or written, whether or not the database or
+table exists:
+
+| Refused | Message |
+|---|---|
+| Anything in a database `D` the list has nothing of | `this account may not use database D` |
+| A table `D.T` the list does not give, when it gives other tables of `D` | `this account may not use table D.T` |
+| CREATE or DROP DATABASE `D`, or the feed of all of `D`, when the list gives only tables of `D` | `this account may not use database D as a whole, only some of its tables` |
+
+For example, a reporting account that reads two tables:
+
+```
+PUT /v1/users/orders-report
+{"password": "a long password for it", "role": "read", "databases": ["shop.orders", "shop.customers"]}
+```
+
+It can run `SELECT * FROM shop.orders` and follow `GET /v1/changes?db=shop&table=orders`; `SELECT * FROM
+shop.items` gets 403 `this account may not use table shop.items`, and `SHOW TABLES IN shop` lists `customers`
+and `orders` only. The same list on a write account would also let it drop and create those two tables, but
+not the database; `serengeti import --create` makes such a table without CREATE DATABASE when the database
+exists.
+
+The role still applies: a limited read account only reads what its list gives, and creating a database or
+table needs a write account. The list has 1 to 100 entries in all, none twice; names are folded to lowercase,
+as in queries, and the list comes back sorted. A database's entry and one of its tables' may both be given;
+the database's already gives the table. `GET /v1/users` and the answers to `PUT` show it. `"databases": null`
 removes the limit. A change that leaves `databases` out keeps the list, and so does the account's own
 password change. Admin accounts (accounts and backups reach every database) and metrics accounts (no data)
 cannot have a list: that is a 400, and so is giving a limited account one of those roles, unless the same
 change has `"databases": null`. A limited account still sees node-wide numbers: the number of databases
 in `/v1/status`, the counters of `/metrics` (log size, fsyncs, data size, conflicts, requests), and, in
-the change feed's cursor, a sequence that counts changes to every database, so it can tell how often other
-databases are written. It sees no names or rows of other databases.
+the change feed's cursor, a sequence that counts changes to every database, so it can tell how often others
+are written. It sees no names or rows of databases or tables outside its list, except that the feed of a
+table also lists its database being created or dropped.
 
-Read, metrics and limited accounts are not in the `users.json` that 2.0 and 2.1 read (they would let a
-limited account reach every database), so after a rollback to either they do not exist. A write account
-that is given a list leaves `users.json` with that change, and returns to it when the list is removed.
+Read, metrics and limited accounts (whether the list names databases or tables) are not in the `users.json`
+that 2.0 and 2.1 read: they would let a limited account reach every database, so after a rollback to either
+those accounts do not exist. A write account that is given a list leaves `users.json` with that change, and
+returns to it when the list is removed.
 
 In a cluster, account changes made on one node reach the others within seconds, and a node that was down
-catches up when it returns. A list of databases travels with the account; a node refuses an account whose
-list it cannot read rather than take it without one. Accounts travel between nodes as bcrypt hashes, over
-the cluster's TLS and behind its cluster key. A node that is out of date (see CONSISTENCY.md) still takes
-and passes on account changes. Nodes older than 2.2 do not take part: in a cluster being upgraded, an
-account made on a 2.2 node works on the 2.2 nodes only.
+catches up when it returns. The list travels with the account; a node refuses an account whose list it cannot
+read rather than take it without one, or read one of its entries as another. Accounts travel between nodes
+as bcrypt hashes, over the cluster's TLS and behind its cluster key. A node that is out of date (see
+CONSISTENCY.md) still takes and passes on account changes. Nodes older than 2.2 do not take part: in a
+cluster being upgraded, an account made on a 2.2 node works on the 2.2 nodes only, and 2.0 and 2.1 nodes
+never see a list.
 
-An account has three parts, each with its own version: the role, the list of databases, and the password.
-A change moves the parts it names: `password` the password, `role` the role, `databases` the list. On every
-node each part comes from the newest change to it. So two admins who change one account on two nodes at the
-same moment, each a different part (a role and a list, a password and a list, a password and a role), both
-keep their change. Two changes to the same part keep the newer one: two lists given at once end as the later
-list.
+An account has three parts, each with its own version: the role, the list, and the password. A change moves
+the parts it names: `password` the password, `role` the role, `databases` the list. On every node each part
+comes from the newest change to it. So two admins who change one account on two nodes at the same moment,
+each a different part (a role and a list, a password and a list, a password and a role), both keep their
+change. Two changes to the same part keep the newer one: two lists given at once end as the later list,
+whole, whatever databases and tables each holds; they are not joined.
 
 An account's own password change (`POST /v1/password`) moves only the password. It never changes the role
 or the list, so an account cannot undo its demotion or its list that way, and it loses to a password an

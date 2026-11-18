@@ -27,7 +27,8 @@ serengeti import [--csv [--csv-types]] [--on-conflict fail|skip|update] [--gener
 The rows come from FILE, or from standard input without it (or with `-`), as UTF-8. A byte order mark
 at the start is skipped; bytes that are not UTF-8 stop the import at their line. `--create` creates the
 database and the table first if they are not there; without it, a missing table stops the import before
-any row is read.
+any row is read. It runs CREATE DATABASE only when the database is missing, so an account limited to the
+table (see API.md, "Accounts") can use it in a database that exists.
 
 ### NDJSON
 
