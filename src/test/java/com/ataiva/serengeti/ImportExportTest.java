@@ -438,6 +438,35 @@ class ImportExportTest {
         assertEquals(0, imp("\uFEFF{\"_id\":\"bom\"}\n", "d.t").status(), "a byte order mark is skipped");
     }
 
+    /**
+     * --create with an account limited to the table: the table is made in a database that exists without CREATE
+     * DATABASE, which the account may not run; a database that does not exist is refused with that reason.
+     */
+    @Test
+    void createWorksForAnAccountLimitedToTheTable() throws Exception {
+        start();
+        HttpResponse<String> made = HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/v1/users/loader"))
+                .header("Authorization", auth()).header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString("{\"password\": \"loader password 1\", \"role\": \"write\","
+                        + " \"databases\": [\"d.made\", \"e.t\"]}")).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(201, made.statusCode(), made.body());
+        Map<String, String> env = Map.of("SERENGETI_PASSWORD", "loader password 1");
+        String[][] runs = {{"d.made", "0", ""}, {"e.t", "1", "403: this account may not use database e as a whole"},
+            {"d.t", "1", "403: this account may not use table d.t"}};
+        for (String[] r : runs) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            int status = Import.run(new String[] {"--url", "http://127.0.0.1:" + port, "--user", "loader", "--create", r[0]},
+                    env, new ByteArrayInputStream("{\"_id\":\"x\"}".getBytes(StandardCharsets.UTF_8)),
+                    new PrintStream(out, true), new PrintStream(err, true), null);
+            assertEquals(Integer.parseInt(r[1]), status, r[0] + ": " + err);
+            assertTrue(err.toString().contains(r[2]), r[0] + ": " + err);
+        }
+        assertEquals(List.of(List.of("x")), rows("SELECT _id FROM d.made"));
+        assertEquals(0L, count("d.t"), "nothing reached the table the account may not use");
+        assertFalse(rows("SHOW DATABASES").contains(List.of("e")), "and no database was made");
+    }
+
     @Test
     void theArgumentsAndTheTableAreCheckedBeforeAnyRow() throws Exception {
         start();

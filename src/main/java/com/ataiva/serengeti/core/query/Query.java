@@ -4,7 +4,6 @@ import com.ataiva.serengeti.core.storage.Hlc;
 import com.ataiva.serengeti.core.storage.StorageEngine;
 import java.io.IOException;
 import java.util.Collection;
-import java.util.Set;
 
 /**
  * Parses and runs query text. This is the entry point for callers such as an HTTP handler:
@@ -34,43 +33,52 @@ public final class Query {
         return check(text, mayWrite, null).run();
     }
 
-    /** As {@link #run(String, boolean)}, for a caller limited to {@code databases} (null: every database). */
-    public Result run(String text, boolean mayWrite, Collection<String> databases) throws IOException {
-        return check(text, mayWrite, databases).run();
+    /**
+     * As {@link #run(String, boolean)}, for a caller limited by a list of databases and tables (null: every
+     * database). See {@link #check}.
+     */
+    public Result run(String text, boolean mayWrite, Collection<String> list) throws IOException {
+        return check(text, mayWrite, list).run();
     }
 
     /**
      * Parses {@code text} and checks that the caller may run it, reading and writing nothing. A caller that
-     * may not write may run SELECT and SHOW only. A caller limited to {@code databases} (null: every database)
-     * may run a statement only if it names one of them, whether or not the one it names exists, and SHOW
-     * DATABASES shows only those that exist.
+     * may not write may run SELECT and SHOW only. A caller limited by {@code list} (null: every database), whose
+     * entries are databases ({@code db}) and tables ({@code db.table}) as {@link Scope} reads them, may run a
+     * statement only if the list gives what it reaches ({@link Reach}), whether or not that exists: CREATE and
+     * DROP DATABASE need the database's entry, SHOW TABLES any entry for the database, and every other statement
+     * but SHOW DATABASES the database's entry or its table's. SHOW DATABASES and SHOW TABLES list only what the
+     * list gives.
      *
      * @throws ParseException if the text is not a statement
      * @throws ForbiddenException if the caller may not run it
      */
-    public Checked check(String text, boolean mayWrite, Collection<String> databases) {
+    public Checked check(String text, boolean mayWrite, Collection<String> list) {
         Statement s = Parser.parse(text);
         if (!mayWrite && !reads(s)) {
             throw new ForbiddenException("this account has the read role: it can run SELECT and SHOW only");
         }
-        Set<String> only = databases == null ? null : Set.copyOf(databases);
+        Scope scope = list == null ? null : Scope.of(list);
         Reach reach = Reach.of(s);
-        if (only != null && reach instanceof Reach.Database d && !only.contains(d.name())) {
-            throw new ForbiddenException("this account may not use database " + d.name());
+        if (scope != null) {
+            String refused = scope.refusal(reach);
+            if (refused != null) {
+                throw new ForbiddenException(refused);
+            }
         }
-        return new Checked(s, reach, only);
+        return new Checked(s, reach, scope);
     }
 
     /** A statement the caller may run, from {@link #check}. */
     public final class Checked {
         private final Statement statement;
         private final Reach reach;
-        private final Set<String> databases;
+        private final Scope scope;
 
-        private Checked(Statement statement, Reach reach, Set<String> databases) {
+        private Checked(Statement statement, Reach reach, Scope scope) {
             this.statement = statement;
             this.reach = reach;
-            this.databases = databases;
+            this.scope = scope;
         }
 
         public Statement statement() {
@@ -79,11 +87,19 @@ public final class Query {
 
         /** Runs it. See {@link Executor#execute}. */
         public Result run() throws IOException {
-            if (databases != null) {
-                if (reach instanceof Reach.Listing) {
-                    return executor.databases(databases::contains);
+            if (scope != null) {
+                // Decided again here, so that nothing check() refused can run whatever calls this.
+                String refused = scope.refusal(reach);
+                if (refused != null) {
+                    throw new ForbiddenException(refused);
                 }
-                if (!(reach instanceof Reach.Database)) {
+                if (reach instanceof Reach.Listing) {
+                    return executor.databases(scope::touches);
+                }
+                if (reach instanceof Reach.Tables t) {
+                    return executor.tables(t.db(), table -> scope.table(t.db(), table));
+                }
+                if (!(reach instanceof Reach.Database) && !(reach instanceof Reach.Table)) {
                     throw new ForbiddenException("this account may not run this statement"); // no other kind
                 }
             }

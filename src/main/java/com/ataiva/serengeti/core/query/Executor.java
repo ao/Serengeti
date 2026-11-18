@@ -113,10 +113,7 @@ public final class Executor {
             return databases(db -> true);
         }
         if (s instanceof Statement.ShowTables t) {
-            return engine.read(store -> {
-                requireDb(store, t.db());
-                return names("table", store.tables(t.db()));
-            });
+            return tables(t.db(), table -> true);
         }
         if (s instanceof Statement.ShowConflicts c) {
             return engine.read(store -> conflicts(store, c));
@@ -228,6 +225,14 @@ public final class Executor {
     /** SHOW DATABASES, listing only the databases {@code shown} accepts. */
     public Result databases(java.util.function.Predicate<String> shown) {
         return engine.read(store -> names("database", store.databases().stream().filter(shown).toList()));
+    }
+
+    /** SHOW TABLES IN {@code db}, listing only the tables {@code shown} accepts. */
+    public Result tables(String db, java.util.function.Predicate<String> shown) {
+        return engine.read(store -> {
+            requireDb(store, db);
+            return names("table", store.tables(db).stream().filter(shown).toList());
+        });
     }
 
     /**

@@ -569,4 +569,116 @@ class NodeTest {
             assertFalse(late.body().contains("\"b\""), late.body());
         }
     }
+
+    @Test
+    void anAccountLimitedToSomeTablesReachesOnlyThoseOverHttpAndARefusalChangesNothing() throws Exception {
+        try (Node n = Node.start(config(tmp.resolve("data"), "SERENGETI_ADMIN_PASSWORD", PW), Node.QUERIES)) {
+            for (String q : List.of("CREATE DATABASE shop", "CREATE TABLE shop.items", "CREATE TABLE shop.orders",
+                    "INSERT INTO shop.orders (_id, n) VALUES ('o1', 1)", "CREATE DATABASE blog", "CREATE TABLE blog.posts")) {
+                assertEquals(200, query(n, q).statusCode(), q);
+            }
+            String wpw = "writer password 1";
+            String rpw = "reader password 1";
+            HttpResponse<String> made = as(n, "admin", PW, "PUT", "/v1/users/w",
+                    "{\"password\": \"" + wpw + "\", \"role\": \"write\", \"databases\": [\"Shop.Items\", \"shop.new\"]}");
+            assertEquals(201, made.statusCode(), made.body());
+            assertEquals("{\"user\":\"w\",\"role\":\"write\",\"databases\":[\"shop.items\",\"shop.new\"]}", made.body().trim());
+            assertEquals(201, as(n, "admin", PW, "PUT", "/v1/users/r",
+                    "{\"password\": \"" + rpw + "\", \"role\": \"read\", \"databases\": [\"shop.items\", \"blog\"]}").statusCode());
+            assertTrue(as(n, "admin", PW, "GET", "/v1/users", null).body()
+                    .contains("{\"user\":\"r\",\"role\":\"read\",\"databases\":[\"blog\",\"shop.items\"]}"));
+            String all = (String) com.ataiva.serengeti.core.json.Json.parseObject(
+                    as(n, "admin", PW, "GET", "/v1/changes?db=shop&after=now", null).body()).get("cursor");
+            // What the table entry gives the write account.
+            for (String q : List.of("INSERT INTO shop.items (_id, n) VALUES ('a', 1)", "UPDATE shop.items SET n = 2 WHERE _id = 'a'",
+                    "CREATE INDEX ON shop.items (n)", "SHOW INDEXES IN shop.items", "SHOW CONFLICTS IN shop.items",
+                    "DROP INDEX ON shop.items (n)", "CREATE TABLE shop.new", "DROP TABLE shop.new")) {
+                HttpResponse<String> r = queryAs(n, "w", wpw, q);
+                assertEquals(200, r.statusCode(), q + ": " + r.body());
+            }
+            assertTrue(queryAs(n, "w", wpw, "SELECT * FROM shop.items").body().contains("[[\"a\",2]]"));
+            assertEquals("{\"type\":\"rows\",\"columns\":[\"database\"],\"rows\":[[\"shop\"]],\"count\":1,\"truncated\":false}",
+                    queryAs(n, "w", wpw, "SHOW DATABASES").body().trim());
+            assertEquals("{\"type\":\"rows\",\"columns\":[\"table\"],\"rows\":[[\"items\"]],\"count\":1,\"truncated\":false}",
+                    queryAs(n, "w", wpw, "SHOW TABLES IN shop").body().trim());
+            // And what it does not, with the reason, whether or not it exists.
+            String[][] refused = {
+                {"SELECT * FROM shop.orders", "this account may not use table shop.orders"},
+                {"DELETE FROM shop.orders", "this account may not use table shop.orders"},
+                {"DROP TABLE shop.orders", "this account may not use table shop.orders"},
+                {"INSERT INTO shop.nowhere (n) VALUES (1)", "this account may not use table shop.nowhere"},
+                {"CREATE TABLE shop.other", "this account may not use table shop.other"},
+                {"CREATE DATABASE IF NOT EXISTS shop", "this account may not use database shop as a whole, only some of its tables"},
+                {"DROP DATABASE shop", "this account may not use database shop as a whole, only some of its tables"},
+                {"SELECT * FROM blog.posts", "this account may not use database blog"},
+                {"SHOW TABLES IN blog", "this account may not use database blog"},
+                {"CREATE DATABASE other", "this account may not use database other"},
+            };
+            for (String[] c : refused) {
+                HttpResponse<String> r = queryAs(n, "w", wpw, c[0]);
+                assertEquals(403, r.statusCode(), c[0] + ": " + r.body());
+                assertEquals("{\"error\":\"" + c[1] + "\"}", r.body().trim(), c[0]);
+            }
+            assertEquals(403, as(n, "w", wpw, "POST", "/v1/query",
+                    "{\"query\": \"SELECT * FROM shop.orders\", \"consistency\": \"majority\"}").statusCode());
+            // The read account: reads its table and all of blog, writes nothing.
+            assertEquals(200, queryAs(n, "r", rpw, "SELECT * FROM shop.items").statusCode());
+            assertEquals(200, queryAs(n, "r", rpw, "SELECT * FROM blog.posts").statusCode());
+            assertTrue(queryAs(n, "r", rpw, "INSERT INTO shop.items (n) VALUES (3)").body().contains("read role"));
+            assertEquals(403, queryAs(n, "r", rpw, "SELECT * FROM shop.orders").statusCode());
+            // The change feed: a table's with its entry, a whole database's only with the database's.
+            String[][] feeds = {
+                {"w", wpw, "/v1/changes?db=shop&table=items&after=now", "200"},
+                {"w", wpw, "/v1/changes?db=shop&after=now", "403"},
+                {"w", wpw, "/v1/changes?db=shop&table=orders&after=now", "403"},
+                {"w", wpw, "/v1/changes?db=shop&table=Items&after=now", "403"},
+                {"w", wpw, "/v1/changes?db=shop&table=&after=now", "403"},
+                {"w", wpw, "/v1/changes?db=blog&table=posts&after=now", "403"},
+                {"r", rpw, "/v1/changes?db=blog&after=now", "200"},
+                {"r", rpw, "/v1/changes?db=shop&table=items&after=now", "200"},
+                {"r", rpw, "/v1/changes?db=shop&after=now", "403"},
+            };
+            for (String[] f : feeds) {
+                assertEquals(Integer.parseInt(f[3]), as(n, f[0], f[1], "GET", f[2], null).statusCode(), f[0] + " " + f[2]);
+            }
+            assertEquals("{\"error\":\"this account may not use database shop as a whole, only some of its tables\"}",
+                    as(n, "w", wpw, "GET", "/v1/changes?db=shop&after=now", null).body().trim());
+            assertEquals("{\"error\":\"this account may not use table shop.orders\"}",
+                    as(n, "w", wpw, "GET", "/v1/changes?db=shop&table=orders&after=now", null).body().trim());
+            // Backups and accounts stay admin only.
+            assertEquals(403, as(n, "w", wpw, "GET", "/v1/backup", null).statusCode());
+            assertEquals(403, as(n, "r", rpw, "GET", "/v1/users", null).statusCode());
+            assertEquals(403, as(n, "w", wpw, "PUT", "/v1/users/w", "{\"databases\": null}").statusCode());
+            // Nothing a refusal named was read or written: shop.orders holds its row, and the feed of shop lists
+            // only the write account's allowed changes, all to shop.items or shop.new.
+            assertTrue(query(n, "SELECT * FROM shop.orders").body().contains("[[\"o1\",1]]"));
+            assertTrue(query(n, "SHOW DATABASES").body().contains("[[\"blog\"],[\"shop\"]]"));
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> changes = (List<Map<String, Object>>) com.ataiva.serengeti.core.json.Json.parseObject(
+                    as(n, "admin", PW, "GET", "/v1/changes?db=shop&after=" + all, null).body()).get("changes");
+            assertFalse(changes.isEmpty());
+            for (Map<String, Object> c : changes) {
+                assertTrue(List.of("items", "new").contains(c.get("table")), c.toString());
+            }
+            // A long poll on a table checks the list again when it returns.
+            String cursor = (String) com.ataiva.serengeti.core.json.Json.parseObject(
+                    as(n, "w", wpw, "GET", "/v1/changes?db=shop&table=items&after=now", null).body()).get("cursor");
+            java.util.concurrent.CompletableFuture<HttpResponse<String>> poll = java.util.concurrent.CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return as(n, "w", wpw, "GET", "/v1/changes?db=shop&table=items&wait=20&after=" + cursor, null);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    });
+            Thread.sleep(500);
+            assertEquals(200, as(n, "admin", PW, "PUT", "/v1/users/w", "{\"databases\": [\"shop.orders\"]}").statusCode());
+            assertEquals(200, query(n, "INSERT INTO shop.items (_id, n) VALUES ('b', 2)").statusCode());
+            HttpResponse<String> late = poll.get(15, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(403, late.statusCode(), late.body());
+            assertFalse(late.body().contains("\"b\""), late.body());
+            assertEquals(200, queryAs(n, "w", wpw, "SELECT * FROM shop.orders").statusCode(), "the new list holds");
+            assertEquals(403, queryAs(n, "w", wpw, "SELECT * FROM shop.items").statusCode());
+        }
+    }
 }

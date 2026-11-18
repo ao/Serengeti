@@ -1280,4 +1280,151 @@ class UsersTest {
     private static java.util.Map<String, Object> entryOf(Users u, String name) {
         return u.entries().stream().filter(e -> e.get("user").equals(name)).findFirst().orElseThrow();
     }
+
+    /** Table entries (db.table) are folded and sorted with the database entries, and kept across a restart. */
+    @Test
+    void listsMayHoldTablesAsWellAsDatabases() throws IOException {
+        Users a = node("a");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        Users.Changed c = a.change("app", PW, Users.Role.READ,
+                Users.Limit.to(List.of("Shop.Orders", "blog", "shop.items", "shop")));
+        assertEquals(new Users.Access(Users.Role.READ, List.of("blog", "shop", "shop.items", "shop.orders")), c.access(),
+                "a database's entry and one of its tables' may both be given");
+        assertEquals(Optional.of(c.access()), a.authenticate("app", PW));
+        assertEquals(c.access(), Users.open(dir.resolve("a"), 4, now::get).accounts().get("app"), "across a restart");
+        List<String> hundred = new java.util.ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            hundred.add("db" + i);
+            hundred.add("db0.t" + i);
+        }
+        assertEquals(100, Users.Limit.to(hundred).databases().size(), "100 entries in all, of either kind");
+        List<String> tooMany = new java.util.ArrayList<>(hundred);
+        tooMany.add("x.y");
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> Users.Limit.to(tooMany)).getMessage()
+                .contains("1 to 100 names of databases (db) or tables (db.table)"));
+        for (String bad : List.of("shop.", ".orders", ".", "shop..orders", "shop.orders.x", "shop.select", "select.orders",
+                "shop.1x", "shop.a-b", "shop .orders", "shop. orders", "shop.café", "shop." + "x".repeat(64))) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> Users.Limit.to(List.of("blog", bad)), bad);
+            assertTrue(e.getMessage().contains("is not a database name or a table name (db.table)"), e.getMessage());
+        }
+        assertEquals("table shop.t is listed twice", assertThrows(IllegalArgumentException.class,
+                () -> Users.Limit.to(List.of("shop.t", "SHOP.T"))).getMessage());
+        assertEquals("database shop is listed twice", assertThrows(IllegalArgumentException.class,
+                () -> Users.Limit.to(List.of("shop", "Shop"))).getMessage());
+        // Only read and write accounts, as with databases.
+        Users.Limit orders = Users.Limit.to(List.of("shop.orders"));
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> a.change("boss", PW, Users.Role.ADMIN, orders))
+                .getMessage().contains("admin account reaches every database"));
+        assertThrows(IllegalArgumentException.class, () -> a.change("scraper", PW, Users.Role.METRICS, orders));
+        assertEquals(java.util.Set.of("admin", "app"), a.list().keySet());
+    }
+
+    /**
+     * users.json, which 2.0 and 2.1 read, never holds an account with table entries: they would ignore the list
+     * and let it reach every database. It returns there once the list is removed.
+     */
+    @Test
+    void anAccountWithTablesIsLeftOutOfTheFileOlderVersionsRead() throws IOException {
+        Users a = node("a");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.change("tabled", PW, Users.Role.WRITE, Users.Limit.to(List.of("shop.orders")));
+        a.setPassword("moved", PW, Users.Role.WRITE);
+        assertEquals(java.util.Set.of("admin", "moved"), legacyUsers(dir.resolve("a")).keySet());
+        String movedHash = (String) legacyUsers(dir.resolve("a")).get("moved").get("hash");
+        assertTrue(a.setDatabases("moved", Users.Limit.to(List.of("shop.orders", "blog"))));
+        assertEquals(java.util.Set.of("admin"), legacyUsers(dir.resolve("a")).keySet());
+        Path legacy = dir.resolve("a").resolve(Users.FILE);
+        assertFalse(Files.readString(legacy).contains("shop"), Files.readString(legacy));
+        assertFalse(Files.readString(legacy).contains("tabled"));
+        // 2.1 rewrites users.json with what it knows. The accounts with tables keep their lists.
+        String adminHash = (String) legacyUsers(dir.resolve("a")).get("admin").get("hash");
+        PrivateFiles.writeAtomically(legacy, "{\"users\": {\"admin\": {\"hash\": \"" + adminHash + "\", \"role\": \"admin\"}}}");
+        Users old = Users.open(dir.resolve("a"), 4, now::get);
+        assertEquals(new Users.Access(Users.Role.WRITE, List.of("shop.orders")), old.accounts().get("tabled"));
+        assertEquals(new Users.Access(Users.Role.WRITE, List.of("blog", "shop.orders")), old.accounts().get("moved"));
+        assertEquals(a.digest(), old.digest());
+        assertTrue(old.setDatabases("moved", Users.Limit.NONE));
+        assertEquals(java.util.Set.of("admin", "moved"), legacyUsers(dir.resolve("a")).keySet());
+        assertEquals(movedHash, legacyUsers(dir.resolve("a")).get("moved").get("hash"));
+    }
+
+    /** A list with tables replicates and merges as one part, exactly as a list of databases does. */
+    @Test
+    void listsWithTablesMergeAsListsDo() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        Users c = node("c");
+        List<Users> all = List.of(a, b, c);
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.setPassword("app", PW, Users.Role.READ);
+        syncAll(all);
+        // Two lists given at once on two nodes: the later wins whole, whatever each holds. No union.
+        a.setDatabases("app", Users.Limit.to(List.of("shop.orders", "blog")));
+        b.setDatabases("app", Users.Limit.to(List.of("shop.items"))); // later
+        syncAll(all);
+        for (Users u : all) {
+            assertEquals(new Users.Access(Users.Role.READ, List.of("shop.items")), u.accounts().get("app"));
+        }
+        // A list of tables and a role change at once both stand.
+        a.setDatabases("app", Users.Limit.to(List.of("shop.orders")));
+        c.setRole("app", Users.Role.WRITE); // later, list left alone
+        syncAll(all);
+        for (Users u : all) {
+            assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop.orders"))), u.authenticate("app", PW));
+        }
+        // A database's entry, then a list of two of its tables given later elsewhere: the narrower, later list.
+        b.setDatabases("app", Users.Limit.to(List.of("shop")));
+        c.setDatabases("app", Users.Limit.to(List.of("shop.orders", "shop.items"))); // later
+        syncAll(all);
+        for (Users u : all) {
+            assertEquals(new Users.Access(Users.Role.WRITE, List.of("shop.items", "shop.orders")), u.accounts().get("app"));
+        }
+        // An own password change keeps the list on every node.
+        assertTrue(a.changeOwnPassword("app", PW, "my own password 1"));
+        syncAll(all);
+        for (Users u : all) {
+            assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop.items", "shop.orders"))),
+                    u.authenticate("app", "my own password 1"));
+        }
+        // A delete beats a list of tables given later on a node that had not heard of it.
+        assertTrue(a.delete("app"));
+        assertTrue(b.setDatabases("app", Users.Limit.to(List.of("blog.posts")))); // later, the deleted incarnation
+        syncAll(all);
+        for (Users u : all) {
+            assertFalse(u.list().containsKey("app"));
+            assertEquals(Optional.empty(), u.authenticate("app", "my own password 1"));
+        }
+        assertEquals(a.digest(), b.digest());
+        assertEquals(a.digest(), c.digest());
+    }
+
+    /** A peer's entry whose table entries are not in the form every node writes is refused, with its batch. */
+    @Test
+    void aMalformedTableEntryFromAPeerIsRefusedWhole() throws IOException {
+        Users a = node("a");
+        Users b = node("b");
+        a.setPassword("admin", PW, Users.Role.ADMIN);
+        a.change("app", PW, Users.Role.WRITE, Users.Limit.to(List.of("shop.orders")));
+        b.merge(a.entries());
+        String before = b.digest();
+        var good = new java.util.LinkedHashMap<String, Object>(entryOf(a, "app"));
+        assertEquals(List.of("shop.orders"), good.get("databases"));
+        good.put("at", "5000.0.a");
+        good.put("db_at", "5000.0.a");
+        for (List<String> bad : List.of(List.of("shop.Orders"), List.of("shop."), List.of(".orders"), List.of("shop.orders.x"),
+                List.of("shop..orders"), List.of("shop.orders", "shop"), List.of("shop.orders", "shop.orders"),
+                List.of("shop/orders"), List.of("shop.or-ders"), List.of("shop." + "x".repeat(64)))) {
+            var entry = new java.util.LinkedHashMap<String, Object>(good);
+            entry.put("databases", bad);
+            assertThrows(IllegalArgumentException.class, () -> b.merge(List.of(entryOf(a, "admin"), entry)), bad.toString());
+        }
+        assertEquals(before, b.digest(), "nothing of a refused batch was merged");
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop.orders"))), b.authenticate("app", PW));
+        // The stored form is checked for shape only: a table named by a word that is a keyword is read.
+        var reserved = new java.util.LinkedHashMap<String, Object>(good);
+        reserved.put("databases", List.of("shop.select"));
+        assertEquals(1, b.merge(List.of(reserved)));
+        assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop.select"))), b.authenticate("app", PW));
+    }
 }

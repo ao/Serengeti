@@ -321,13 +321,25 @@ final class Import {
                 + skipped + " skipped (" + String.format(Locale.ROOT, "%.1f s", nanos / 1e9) + ")";
     }
 
-    /** Creates the table if asked, and checks that it is there and the account may read it. */
+    /**
+     * Creates the table if asked, and checks that it is there and the account may read it. The database is made
+     * only when the table cannot be for want of it: an account limited to the table, not its database, may
+     * create the table but not run CREATE DATABASE, even with IF NOT EXISTS.
+     */
     private void prepare(boolean create) throws Stop {
         String q = db + "." + table;
         List<String> checks = new ArrayList<>();
         if (create) {
-            checks.add("CREATE DATABASE IF NOT EXISTS " + db);
-            checks.add("CREATE TABLE IF NOT EXISTS " + q);
+            Remote.Reply r = send("CREATE TABLE IF NOT EXISTS " + q);
+            boolean noDatabase = r.code() == 400 && r.body().get("error") instanceof String e
+                    && e.startsWith("database '") && e.endsWith("' does not exist");
+            if (r.code() != 200 && !noDatabase) {
+                throw new Stop(r.code() == 401 ? 2 : 1, -1, r.answer().message());
+            }
+            if (noDatabase) {
+                checks.add("CREATE DATABASE IF NOT EXISTS " + db);
+                checks.add("CREATE TABLE IF NOT EXISTS " + q);
+            }
         }
         checks.add("SELECT _id FROM " + q + " LIMIT 0");
         for (String s : checks) {

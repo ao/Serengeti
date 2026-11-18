@@ -1,6 +1,7 @@
 package com.ataiva.serengeti.core.server;
 
 import com.ataiva.serengeti.core.json.Json;
+import com.ataiva.serengeti.core.query.Scope;
 import com.ataiva.serengeti.core.storage.Stamp;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,8 +28,9 @@ import org.mindrot.jbcrypt.BCrypt;
  * stamps that order their changes, and {@code users.json} holds the admin and write accounts that reach every
  * database in the form 2.0 and 2.1 read, so a node can be rolled back. Both are mode 0600.
  *
- * <p>A read or write account may be limited to some databases ({@link Access#databases}). The list is part of
- * the account: an admin change, stamped and merged like a role.
+ * <p>A read or write account may be limited to some databases and tables ({@link Access#databases}, one list of
+ * {@code db} and {@code db.table} entries). The list is part of the account: an admin change, stamped and merged
+ * as one part whatever it holds. An account with any list, of databases or tables, is left out of users.json.
  *
  * <p>Accounts merge across a cluster like rows, in any order and the same on every node (see {@link #merge}).
  * Each entry belongs to an incarnation, {@code made_at}: the stamp of the change that made the account, or of
@@ -68,13 +70,8 @@ public final class Users {
     static final long CACHE_MILLIS = 60_000;
     private static final int CACHE_MAX = 10_000;
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9._-]{1,64}");
-    /** The most databases one account may be limited to. */
+    /** The most entries (databases and tables together) one account's list may hold. */
     public static final int MAX_DATABASES = 100;
-    /**
-     * A database name in a stored list (from a peer or this node's file): the parser's form. Not checked
-     * against the keywords, so that a word reserved by a later version does not make the file unreadable.
-     */
-    private static final Pattern STORED_DB = Pattern.compile("[a-z_][a-z0-9_]{0,62}");
     /**
      * A bcrypt hash this library can check ({@code $2a$}; it refuses {@code $2b$} and {@code $2y$}). From a
      * peer, at cost 4 to 14, so that a peer cannot make each login here cost hours; in this node's own files
@@ -137,8 +134,10 @@ public final class Users {
     }
 
     /**
-     * What an account may reach: its role, and the databases a limited read or write account may use (sorted,
-     * as the parser writes names). {@code databases} is null for an account that reaches every database.
+     * What an account may reach: its role, and the list of a limited read or write account (sorted, as the
+     * parser writes names): databases ({@code db}, the database and all its tables) and tables ({@code db.table},
+     * that table only), as {@link Scope} reads them. {@code databases} is null for an account that reaches every
+     * database.
      */
     public record Access(Role role, List<String> databases) {
         public Access {
@@ -154,13 +153,13 @@ public final class Users {
             return databases != null;
         }
 
-        /** Whether the account may use database {@code db}: always without a list. */
-        public boolean mayUse(String db) {
-            return databases == null || databases.contains(db);
+        /** What the list gives, or null for an account that reaches every database. */
+        public Scope scope() {
+            return databases == null ? null : Scope.of(databases);
         }
     }
 
-    /** What an admin change does to an account's databases: keep them, remove the limit, or set a list. */
+    /** What an admin change does to an account's list: keep it, remove the limit, or set a list. */
     public static final class Limit {
         /** Leaves the list as it is (none for a new account). */
         public static final Limit KEEP = new Limit(true, null);
@@ -176,28 +175,33 @@ public final class Users {
         }
 
         /**
-         * A limit to {@code names}: 1 to {@link #MAX_DATABASES} database names as query text writes them,
-         * folded to lowercase as the parser folds them, with none named twice.
+         * A limit to {@code names}: 1 to {@link #MAX_DATABASES} entries in all, each a database name ({@code db})
+         * or a table name ({@code db.table}) as query text writes them, folded to lowercase as the parser folds
+         * them ({@link Scope#entry}), with none named twice. A database's entry and one of its tables' may both
+         * be given; the database's gives the table already.
          *
          * @throws IllegalArgumentException with the reason, if the list is not that
          */
         public static Limit to(List<?> names) {
             if (names == null || names.isEmpty() || names.size() > MAX_DATABASES) {
-                throw new IllegalArgumentException("databases is a list of 1 to " + MAX_DATABASES + " database names");
+                throw new IllegalArgumentException("databases is a list of 1 to " + MAX_DATABASES
+                        + " names of databases (db) or tables (db.table)");
             }
             java.util.TreeSet<String> out = new java.util.TreeSet<>();
             for (Object o : names) {
                 if (!(o instanceof String s)) {
-                    throw new IllegalArgumentException("databases must be a list of database names (strings)");
+                    throw new IllegalArgumentException("databases must be a list of names of databases or tables"
+                            + " (strings)");
                 }
-                String n = com.ataiva.serengeti.core.query.Query.nameOf(s);
+                String n = Scope.entry(s);
                 if (n == null) {
                     throw new IllegalArgumentException("'" + (s.length() > 64 ? s.substring(0, 64) + "..." : s)
-                            + "' is not a database name: letters, digits and _, not starting with a digit, at most"
-                            + " 63 characters, not a keyword");
+                            + "' is not a database name or a table name (db.table): each name is letters, digits"
+                            + " and _, not starting with a digit, at most 63 characters, not a keyword");
                 }
                 if (!out.add(n)) {
-                    throw new IllegalArgumentException("database " + n + " is listed twice");
+                    throw new IllegalArgumentException((n.indexOf('.') < 0 ? "database " : "table ") + n
+                            + " is listed twice");
                 }
             }
             return new Limit(false, List.copyOf(out));
@@ -513,7 +517,10 @@ public final class Users {
         return apply(user, password, role, limit, false, false, false);
     }
 
-    /** Limits an account to some databases, or with {@link Limit#NONE} removes the limit. False if there is no such account. */
+    /**
+     * Limits an account to some databases and tables, or with {@link Limit#NONE} removes the limit. False if there
+     * is no such account.
+     */
     public boolean setDatabases(String user, Limit limit) throws IOException {
         try {
             apply(user, null, null, limit, false, false, false);
@@ -624,7 +631,7 @@ public final class Users {
         String why = role == Role.ADMIN
                 ? "an admin account reaches every database (accounts and backups)"
                 : "a metrics account reads no data";
-        return why + ", so it cannot be limited to databases; only read and write accounts can"
+        return why + ", so it cannot be limited to databases or tables; only read and write accounts can"
                 + (kept ? ". This account has a list: give \"databases\": null with the new role" : "");
     }
 
@@ -803,8 +810,9 @@ public final class Users {
 
     /**
      * One entry, from a peer ({@code fromPeer}, which bounds the bcrypt cost) or from this node's own file. A
-     * {@code databases} key that is not a list as every node writes it (1 to 100 names, sorted, none twice)
-     * makes the entry malformed: it is never read as no limit. An account always has a hash.
+     * {@code databases} key that is not a list as every node writes it (1 to 100 database and table entries,
+     * sorted, none twice) makes the entry malformed: it is never read as no limit, nor any entry of it as
+     * another. An account always has a hash.
      *
      * <p>A stamp left out is {@code at} ({@code pw_at}: none). Entries 2.2 wrote before accounts merged in
      * parts have only {@code at} and {@code pw_at}, and {@code at} versioned the whole entry, so each is read as
@@ -851,14 +859,17 @@ public final class Users {
         return Stamp.parse(s);
     }
 
-    /** A list as every node writes it ({@link Limit#to}: 1 to 100 names, sorted, none twice), or null. */
+    /**
+     * A list as every node writes it ({@link Limit#to}: 1 to 100 entries in the stored form of {@link Scope#stored},
+     * sorted, none twice), or null.
+     */
     private static List<String> storedDatabases(Object o) {
         if (!(o instanceof List<?> list) || list.isEmpty() || list.size() > MAX_DATABASES) {
             return null;
         }
         List<String> out = new ArrayList<>(list.size());
         for (Object x : list) {
-            if (!(x instanceof String s) || !STORED_DB.matcher(s).matches()
+            if (!(x instanceof String s) || !Scope.stored(s)
                     || !out.isEmpty() && out.get(out.size() - 1).compareTo(s) >= 0) {
                 return null;
             }
@@ -942,8 +953,9 @@ public final class Users {
     /**
      * Writes accounts.json, then users.json, both with the next save count. users.json is what 2.0 and 2.1
      * read: they know the roles "admin" and "user" and ignore other keys, so write accounts are written as
-     * "user" (2.0's name for them), and read and metrics accounts, accounts limited to some databases and
-     * tombstones are left out. After a rollback those accounts cannot log in, which is the safe way round.
+     * "user" (2.0's name for them), and read and metrics accounts, accounts with a list (of databases or
+     * tables) and tombstones are left out. After a rollback those accounts cannot log in, which is the safe way
+     * round.
      */
     private void save(Map<String, Account> next) throws IOException {
         long v = version + 1;
@@ -952,7 +964,7 @@ public final class Users {
         next.forEach((name, a) -> {
             all.add(entry(name, a));
             // Only the roles 2.0 and 2.1 know: they would take any other one for a write account. And no
-            // limited account: they would ignore the list and let it reach every database.
+            // account with a list, of databases or tables: they would ignore it and let it reach every database.
             if (a.exists() && !a.access().limited() && (a.role() == Role.ADMIN || a.role() == Role.WRITE)) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("hash", a.hash());

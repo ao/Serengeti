@@ -647,8 +647,8 @@ class HttpApiTest {
             {"/v1/users/app", "{" + pw + ", \"role\": \"admin\"}", "\"databases\": null"},
             {"/v1/users/x", "{" + pw + ", \"databases\": []}", "1 to 100"},
             {"/v1/users/x", "{" + pw + ", \"databases\": " + many + "}", "1 to 100"},
-            {"/v1/users/x", "{" + pw + ", \"databases\": \"shop\"}", "list of database names"},
-            {"/v1/users/x", "{" + pw + ", \"databases\": {\"shop\": true}}", "list of database names"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": \"shop\"}", "list of names of databases (db) or tables"},
+            {"/v1/users/x", "{" + pw + ", \"databases\": {\"shop\": true}}", "list of names of databases (db) or tables"},
             {"/v1/users/x", "{" + pw + ", \"databases\": [\"shop\", \"SHOP\"]}", "listed twice"},
             {"/v1/users/x", "{" + pw + ", \"databases\": [\"1x\"]}", "not a database name"},
             {"/v1/users/x", "{" + pw + ", \"databases\": [\"select\"]}", "not a database name"},
@@ -678,5 +678,49 @@ class HttpApiTest {
         // Its own password change keeps its list.
         assertEquals(200, as("app", "app password 123", "POST", "/v1/password", "{\"password\": \"app password 456\"}").statusCode());
         assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), users.authenticate("app", "app password 456"));
+    }
+
+    @Test
+    void anAdminLimitsAnAccountToSomeTablesAndBadEntriesAre400() throws Exception {
+        setUp();
+        AtomicReference<Users.Access> seen = new AtomicReference<>();
+        queries = (q, r) -> {
+            seen.set(r);
+            return Map.of("echo", q);
+        };
+        String pw = "app password 123";
+        HttpResponse<String> made = as("admin", PASSWORD, "PUT", "/v1/users/app",
+                "{\"password\": \"" + pw + "\", \"role\": \"read\", \"databases\": [\"Shop.Orders\", \"blog\", \"shop.items\"]}");
+        assertEquals(201, made.statusCode(), made.body());
+        assertEquals("{\"user\":\"app\",\"role\":\"read\",\"databases\":[\"blog\",\"shop.items\",\"shop.orders\"]}",
+                made.body().trim());
+        assertEquals(200, as("app", pw, "POST", "/v1/query", "{\"query\": \"SHOW DATABASES\"}").statusCode());
+        assertEquals(new Users.Access(Users.Role.READ, List.of("blog", "shop.items", "shop.orders")), seen.get(),
+                "the query service is given the list as it is stored");
+        String[][] cases = {
+            {"[\"shop.\"]", "is not a database name or a table name (db.table)"},
+            {"[\".orders\"]", "is not a database name or a table name (db.table)"},
+            {"[\"shop.orders.x\"]", "is not a database name or a table name (db.table)"},
+            {"[\"shop.select\"]", "is not a database name or a table name (db.table)"},
+            {"[\"shop.1x\"]", "is not a database name or a table name (db.table)"},
+            {"[\"shop orders\"]", "is not a database name or a table name (db.table)"},
+            {"[\"shop.orders\", \"SHOP.ORDERS\"]", "table shop.orders is listed twice"},
+            {"[\"shop.orders\", null]", "strings"},
+        };
+        for (String[] c : cases) {
+            HttpResponse<String> r = as("admin", PASSWORD, "PUT", "/v1/users/app", "{\"databases\": " + c[0] + "}");
+            assertEquals(400, r.statusCode(), c[0] + " -> " + r.body());
+            assertTrue(((String) json(r).get("error")).contains(c[1]), c[0] + " -> " + r.body());
+        }
+        assertEquals(new Users.Access(Users.Role.READ, List.of("blog", "shop.items", "shop.orders")),
+                users.accounts().get("app"), "nothing changed");
+        // A list of tables on an admin or metrics account is refused as one of databases is.
+        HttpResponse<String> r = as("admin", PASSWORD, "PUT", "/v1/users/boss",
+                "{\"password\": \"long enough pw 1\", \"role\": \"admin\", \"databases\": [\"shop.orders\"]}");
+        assertEquals(400, r.statusCode());
+        assertEquals(400, as("admin", PASSWORD, "PUT", "/v1/users/app", "{\"role\": \"metrics\"}").statusCode());
+        // The limited account still gets no accounts or backups.
+        assertEquals(403, as("app", pw, "GET", "/v1/users", null).statusCode());
+        assertEquals(403, as("app", pw, "GET", "/v1/backup", null).statusCode());
     }
 }

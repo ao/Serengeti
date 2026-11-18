@@ -168,9 +168,10 @@ class DatabaseLimitTest {
     }
 
     /**
-     * Every Statement type the parser can produce is among the forms above, and what it reaches is its {@code db}
-     * component (read here by reflection, not through {@link Reach}), or for SHOW DATABASES none. A statement
-     * type added later fails this test until it has a form here.
+     * Every Statement type the parser can produce is among the forms above, and what it reaches comes from its
+     * {@code db} and {@code table} components (read here by reflection, not through {@link Reach}): the table for
+     * a statement with both, the tables of the database for SHOW TABLES, the database for CREATE and DROP
+     * DATABASE, and for SHOW DATABASES none. A statement type added later fails this test until it has a form here.
      */
     @Test
     void everyStatementTypeIsCoveredAndReachesTheDatabaseItNames() {
@@ -190,21 +191,52 @@ class DatabaseLimitTest {
         assertEquals(14, all.size());
     }
 
-    /** {@code new Reach.Database(db)} for a statement with a {@code db} component; SHOW DATABASES lists. */
+    /**
+     * {@code Reach.Table(db, table)} for a statement with {@code db} and {@code table} components, {@code
+     * Reach.Tables(db)} for SHOW TABLES, {@code Reach.Database(db)} for another with only {@code db} (CREATE and
+     * DROP DATABASE); SHOW DATABASES lists.
+     */
     static Reach expectedReach(Statement s) {
-        for (RecordComponent c : s.getClass().getRecordComponents()) {
-            if (c.getName().equals("db")) {
-                try {
-                    return new Reach.Database((String) c.getAccessor().invoke(s));
-                } catch (ReflectiveOperationException e) {
-                    throw new AssertionError(e);
-                }
-            }
+        String db = component(s, "db");
+        String table = component(s, "table");
+        if (db != null && table != null) {
+            return new Reach.Table(db, table);
+        }
+        if (db != null) {
+            return s instanceof Statement.ShowTables ? new Reach.Tables(db) : new Reach.Database(db);
         }
         if (s instanceof Statement.ShowDatabases) {
             return new Reach.Listing();
         }
         throw new AssertionError(s.getClass().getSimpleName() + " names no database: decide what it reaches");
+    }
+
+    /** The database a reach names, or null for SHOW DATABASES. */
+    static String databaseOf(Reach r) {
+        if (r instanceof Reach.Database d) {
+            return d.name();
+        }
+        if (r instanceof Reach.Table t) {
+            return t.db();
+        }
+        if (r instanceof Reach.Tables t) {
+            return t.db();
+        }
+        return null;
+    }
+
+    /** The String component {@code name} of record {@code s}, or null if it has none. */
+    static String component(Statement s, String name) {
+        for (RecordComponent c : s.getClass().getRecordComponents()) {
+            if (c.getName().equals(name)) {
+                try {
+                    return (String) c.getAccessor().invoke(s);
+                } catch (ReflectiveOperationException e) {
+                    throw new AssertionError(e);
+                }
+            }
+        }
+        return null;
     }
 
     @Test

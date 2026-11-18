@@ -63,9 +63,10 @@ class DatabaseLimitProperties {
         Reach reach = DatabaseLimitTest.expectedReach(s);
         assertEquals(reach, Reach.of(Parser.parse(text)), text);
         boolean roleRefuses = !mayWrite && !Query.reads(s);
-        if (reach instanceof Reach.Database d && !databases.contains(d.name()) && !roleRefuses) {
+        String db = DatabaseLimitTest.databaseOf(reach);
+        if (db != null && !databases.contains(db) && !roleRefuses) {
             ForbiddenException e = assertThrows(ForbiddenException.class, () -> query.check(text, mayWrite, databases), text);
-            assertEquals("this account may not use database " + d.name(), e.getMessage());
+            assertEquals("this account may not use database " + db, e.getMessage());
         } else if (roleRefuses) {
             assertThrows(ForbiddenException.class, () -> query.check(text, mayWrite, databases), text);
         } else {

@@ -159,6 +159,12 @@ if [ "$(acct 1 admin "$PW" GET /v1/users)" = 200 ]; then # this build has accoun
     expect "a limited account reaches its database" 200 "$(acct 1 limited 'limited password 1' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')"
     limits=1
   fi
+  if [ "$(acct 1 admin "$PW" PUT /v1/users/tabled '{"password": "tabled password 1", "role": "write", "databases": ["d.t"]}')" = 201 ]; then
+    ok "make a write account limited to table d.t"
+    expect "it reaches its table" 200 "$(acct 1 tabled 'tabled password 1' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')"
+    expect "but not its database as a whole" 403 "$(acct 1 tabled 'tabled password 1' POST /v1/query '{"query": "CREATE DATABASE IF NOT EXISTS d"}')"
+    tables=1
+  fi
   accounts=1
 fi
 replace 1 "$OLD_IMAGE" -
@@ -185,6 +191,10 @@ if [ "${limits:-0}" = 1 ]; then
   expect "the limited account cannot log in to $OLD_IMAGE" 401 "$(acct 1 limited 'limited password 1' GET /v1/status)"
   expect "nor the write account that was given a list" 401 "$(acct 1 moved 'moved password 1' GET /v1/status)"
 fi
+if [ "${tables:-0}" = 1 ]; then
+  # Nor this one: $OLD_IMAGE would let it reach every database.
+  expect "the account limited to a table cannot log in to $OLD_IMAGE" 401 "$(acct 1 tabled 'tabled password 1' GET /v1/status)"
+fi
 replace 1 "$IMAGE" -
 wait_up 1
 if [ "${accounts:-0}" = 1 ]; then
@@ -195,6 +205,10 @@ fi
 if [ "${limits:-0}" = 1 ]; then
   expect "upgraded again, the limited accounts are back" 200 "$(acct 1 moved 'moved password 1' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')"
   expect "with their lists" 403 "$(acct 1 limited 'limited password 1' POST /v1/query '{"query": "CREATE DATABASE other"}')"
+fi
+if [ "${tables:-0}" = 1 ]; then
+  expect "upgraded again, the account limited to a table is back" 200 "$(acct 1 tabled 'tabled password 1' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')"
+  expect "with its list" 403 "$(acct 1 tabled 'tabled password 1' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.u"}')"
 fi
 q 1 'SHOW INDEXES IN d.t' >/dev/null
 case "$(body)" in *'"rows":[["n"],["n, k"]]'*) ok "upgraded again, both indexes are back" ;; *) bad "index after rollback" "$(body)" ;; esac
@@ -245,8 +259,27 @@ for i in 1 2 3; do
       *) bad "the index on two columns on n2" "$st $(body)" ;;
     esac
     expect "n2 ($OLD_IMAGE) finds the row by both columns" 1 "$(count 2 "n = 0 AND tag = 'old'")"
+    if [ "${tables:-0}" = 1 ]; then
+      # Made on the upgraded node while the others are old: $OLD_IMAGE takes no accounts from peers, so it
+      # never sees it (and could not apply the list).
+      expect "a table-limited account made on n1 while old nodes remain" 201 "$(acct 1 admin "$PW" PUT /v1/users/mixed-tabled '{"password": "mixed tabled password", "role": "read", "databases": ["d.t"]}')"
+      expect "reaches its table on n1" 200 "$(acct 1 mixed-tabled 'mixed tabled password' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')"
+      expect "and only that on n1" 403 "$(acct 1 mixed-tabled 'mixed tabled password' POST /v1/query '{"query": "SHOW TABLES IN other"}')"
+      sleep 3
+      expect "n2 ($OLD_IMAGE) does not know it" 401 "$(acct 2 mixed-tabled 'mixed tabled password' GET /v1/status)"
+    fi
   fi
 done
+if [ "${tables:-0}" = 1 ]; then
+  for i in 1 2 3; do
+    for _ in $(seq 1 60); do
+      [ "$(acct "$i" mixed-tabled 'mixed tabled password' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')" = 200 ] && break
+      sleep 0.5
+    done
+    expect "n$i, upgraded, has the table-limited account" 200 "$(acct "$i" mixed-tabled 'mixed tabled password' POST /v1/query '{"query": "SELECT COUNT(*) FROM d.t"}')"
+    expect "n$i applies its list" 403 "$(acct "$i" mixed-tabled 'mixed tabled password' POST /v1/query '{"query": "CREATE DATABASE IF NOT EXISTS d"}')"
+  done
+fi
 docker exec "$RUN-client" sh -c 'touch /tmp/stop; for i in $(seq 1 60); do [ -e /tmp/stopped ] && break; sleep 0.5; done'
 acked=$(docker exec "$RUN-client" sh -c 'wc -l < /tmp/acked' | tr -d ' ')
 # A write that got a 503 may still have been written (docs/CONSISTENCY.md), so nodes can hold more rows

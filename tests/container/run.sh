@@ -155,10 +155,28 @@ expect "the other database is still there" 200 "$(query env "SHOW TABLES IN blog
 expect "a list on an admin account is 400" 400 "$(status env PUT /v1/users/limited "admin:$PW" '{"role": "admin"}')"
 expect "it is left out of users.json, which 2.1 reads" 0 "$(docker exec "$RUN-env" grep -c limited /data/users.json || true)"
 expect "remove its row" 200 "$(query env "DELETE FROM shop.items WHERE _id = 'l'")"
+TPW='tabled password 1'
+expect "an account limited to one table" 201 "$(status env PUT /v1/users/tabled "admin:$PW" \
+  "{\"password\": \"$TPW\", \"role\": \"write\", \"databases\": [\"Shop.Items\"]}")"
+expect "a second table it may not use" 200 "$(query env "CREATE TABLE shop.orders")"
+expect "it writes in its table" 200 "$(status env POST /v1/query "tabled:$TPW" "{\"query\": \"INSERT INTO shop.items (_id, name) VALUES ('tb', 'tab')\"}")"
+contains "it sees the table's database" '"rows":[["shop"]]' "$(body env POST /v1/query "tabled:$TPW" '{"query": "SHOW DATABASES"}')"
+contains "and only its table in it" '"rows":[["items"]]' "$(body env POST /v1/query "tabled:$TPW" '{"query": "SHOW TABLES IN shop"}')"
+contains "another table of it is 403 with the reason" 'this account may not use table shop.orders' \
+  "$(req env POST /v1/query "tabled:$TPW" '{"query": "SELECT * FROM shop.orders"}')"
+contains "and so is the database itself" 'this account may not use database shop as a whole, only some of its tables' \
+  "$(req env POST /v1/query "tabled:$TPW" '{"query": "DROP DATABASE shop"}')"
+expect "it follows its table's changes" 200 "$(status env GET '/v1/changes?db=shop&table=items&after=now' "tabled:$TPW")"
+expect "but not the whole database's" 403 "$(status env GET '/v1/changes?db=shop&after=now' "tabled:$TPW")"
+expect "it is left out of users.json too" 0 "$(docker exec "$RUN-env" grep -c tabled /data/users.json || true)"
+expect "remove its row" 200 "$(query env "DELETE FROM shop.items WHERE _id = 'tb'")"
+expect "and the other table" 200 "$(query env "DROP TABLE shop.orders")"
 docker restart "$RUN-env" >/dev/null
 wait_up env
 expect "the list holds after a restart" 403 "$(status env POST /v1/query "limited:$LPW" '{"query": "SHOW TABLES IN blog"}')"
 contains "and is listed" '"user":"limited","role":"write","databases":["shop"]' "$(body env GET /v1/users "admin:$PW")"
+expect "the list of tables holds too" 403 "$(status env POST /v1/query "tabled:$TPW" '{"query": "SELECT * FROM shop.orders"}')"
+contains "and is listed" '"user":"tabled","role":"write","databases":["shop.items"]' "$(body env GET /v1/users "admin:$PW")"
 contains "rows are there after a restart" '"rows":[["a","bolt"],["b","nut"]]' \
   "$(body env POST /v1/query "admin:$PW" '{"query": "SELECT _id, name FROM shop.items"}')"
 expect "accounts are there after a restart" 200 "$(status env GET /v1/status "reader:$RPW")"

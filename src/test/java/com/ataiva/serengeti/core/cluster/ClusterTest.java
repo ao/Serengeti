@@ -476,6 +476,86 @@ class ClusterTest {
         assertEquals(200, as(0, "app", pw, "POST", "/v1/query", inD));
     }
 
+    private static String q(String statement) {
+        return Json.write(Map.of("query", statement));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aListOfTablesMadeOnOneNodeHoldsOnEveryNodeAndItsChangesMerge() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        waitWritable(0);
+        for (String s : List.of("CREATE DATABASE d", "CREATE TABLE d.t", "CREATE TABLE d.u", "CREATE DATABASE e",
+                "CREATE TABLE e.t")) {
+            assertEquals(200, query(0, s).statusCode(), s);
+        }
+        String pw = "tabled password 1";
+        assertEquals(201, as(0, "admin", PW, "PUT", "/v1/users/app",
+                "{\"password\": \"" + pw + "\", \"role\": \"write\", \"databases\": [\"d.t\"]}"));
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " knows app", () -> as(n, "app", pw, "POST", "/v1/query", q("SELECT * FROM d.t")) == 200);
+            // It arrives with its list, and the list means the same on every node.
+            for (String s : List.of("SELECT * FROM d.u", "SELECT * FROM e.t", "CREATE DATABASE IF NOT EXISTS d",
+                    "DROP TABLE d.u", "SHOW TABLES IN e")) {
+                assertEquals(403, as(n, "app", pw, "POST", "/v1/query", q(s)), "node " + n + ": " + s);
+            }
+            assertEquals(403, as(n, "app", pw, "GET", "/v1/changes?db=d&after=now", null), "the feed of all of d");
+            assertEquals(200, as(n, "app", pw, "GET", "/v1/changes?db=d&table=t&after=now", null), "the feed of d.t");
+            assertEquals(403, as(n, "app", pw, "GET", "/v1/changes?db=d&table=u&after=now", null));
+            String tables = HTTP.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports[n] + "/v1/query"))
+                    .header("Authorization", "Basic " + Base64.getEncoder()
+                            .encodeToString(("app:" + pw).getBytes(StandardCharsets.UTF_8)))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(q("SHOW TABLES IN d"))).build(),
+                    HttpResponse.BodyHandlers.ofString()).body();
+            assertEquals(List.of(List.of("t")), Json.parseObject(tables).get("rows"), "node " + n + ": only d.t is listed");
+        }
+        assertEquals(200, as(2, "app", pw, "POST", "/v1/query", q("INSERT INTO d.t (_id) VALUES ('by-app')")));
+        // A change of the list made on another node spreads as any list does: a table added on node 1.
+        assertEquals(200, as(1, "admin", PW, "PUT", "/v1/users/app", "{\"databases\": [\"d.t\", \"e.t\"]}"));
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has e.t in the list",
+                    () -> as(n, "app", pw, "POST", "/v1/query", q("SELECT * FROM e.t")) == 200);
+            assertEquals(403, as(n, "app", pw, "POST", "/v1/query", q("SELECT * FROM d.u")));
+        }
+        // Then the whole of database d, and nothing of e, on node 2.
+        assertEquals(200, as(2, "admin", PW, "PUT", "/v1/users/app", "{\"databases\": [\"d\"]}"));
+        for (int i = 0; i < 3; i++) {
+            int n = i;
+            eventually("node " + n + " has d whole", () -> as(n, "app", pw, "GET", "/v1/changes?db=d&after=now", null) == 200);
+            assertEquals(200, as(n, "app", pw, "POST", "/v1/query", q("SELECT * FROM d.u")));
+            assertEquals(403, as(n, "app", pw, "POST", "/v1/query", q("SELECT * FROM e.t")));
+        }
+        // A node refuses a peer's entry whose table entries are malformed, rather than read them as something else.
+        URI users = URI.create("http://127.0.0.1:" + ports[0] + "/internal/v3/users");
+        Map<String, Object> entry = null;
+        for (Object o : (List<Object>) Json.parseObject(HTTP.send(HttpRequest.newBuilder(users)
+                .header(InternalRoutes.KEY_HEADER, KEY).build(), HttpResponse.BodyHandlers.ofString()).body()).get("users")) {
+            if ("app".equals(((Map<String, Object>) o).get("user"))) {
+                entry = new java.util.LinkedHashMap<>((Map<String, Object>) o);
+            }
+        }
+        assertEquals(List.of("d"), entry.get("databases"));
+        String[] stamp = ((String) entry.get("db_at") != null ? (String) entry.get("db_at") : (String) entry.get("at"))
+                .split("\\.", 3);
+        entry.put("db_at", (Long.parseLong(stamp[0]) + 1) + "." + stamp[1] + "." + stamp[2]); // newer than node 0's
+        for (List<String> bad : List.of(List.of("d.T"), List.of("d."), List.of("d.t.x"), List.of("d.t", "d"), List.of(".t"))) {
+            Map<String, Object> e = new java.util.LinkedHashMap<>(entry);
+            e.put("databases", bad);
+            HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder(users).header(InternalRoutes.KEY_HEADER, KEY)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("users", List.of(e))))).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, r.statusCode(), bad + ": " + r.body());
+        }
+        assertEquals(200, as(0, "app", pw, "POST", "/v1/query", q("SELECT * FROM d.u")), "the list is as it was");
+        assertEquals(403, as(0, "app", pw, "POST", "/v1/query", q("SELECT * FROM e.t")));
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void aWriteOnOneNodeShowsInAnotherNodesChangeFeed() throws Exception {

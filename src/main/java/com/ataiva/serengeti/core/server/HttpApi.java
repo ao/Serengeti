@@ -3,6 +3,8 @@ package com.ataiva.serengeti.core.server;
 import com.ataiva.serengeti.core.Version;
 import com.ataiva.serengeti.core.json.Json;
 import com.ataiva.serengeti.core.json.JsonException;
+import com.ataiva.serengeti.core.query.Reach;
+import com.ataiva.serengeti.core.query.Scope;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -275,8 +277,8 @@ public final class HttpApi implements AutoCloseable {
             users(ex, method, path, role);
             return;
         }
-        // An account limited to some databases reaches data only through /v1/query and /v1/changes, which
-        // check the database; backups and accounts are admin only, and admins have no list.
+        // An account limited by a list reaches data only through /v1/query and /v1/changes, which
+        // check the database or table; backups and accounts are admin only, and admins have no list.
         switch (path) {
             case "/v1/query", "/post" -> {
                 // /post is the v1 route, kept for one release. It takes the same JSON body: a raw text/plain
@@ -458,7 +460,8 @@ public final class HttpApi implements AutoCloseable {
                                 throw new HttpError(400, e.getMessage());
                             }
                         } else {
-                            throw new HttpError(400, "databases must be a list of database names, or null for every database");
+                            throw new HttpError(400, "databases must be a list of names of databases (db) or tables"
+                                    + " (db.table), or null for every database");
                         }
                     }
                     Users.Changed c;
@@ -515,9 +518,11 @@ public final class HttpApi implements AutoCloseable {
         if (db == null || db.isEmpty() || after == null) {
             throw new HttpError(400, "db and after are required; after=now gives a cursor to follow from");
         }
-        // As the query language checks a statement: whether or not the database exists, before anything is read.
-        // The feed matches db exactly, so a name the account has in another case is refused, not folded.
-        requireDatabase(access, db);
+        // As the query language checks a statement: whether or not the database or table exists, before anything
+        // is read. The feed of a whole database needs the database's entry; with table, the table's will do. The
+        // feed matches db and table exactly, so a name the account has in another case is refused, not folded.
+        Reach reach = q.get("table") == null ? new Reach.Database(db) : new Reach.Table(db, q.get("table"));
+        requireReach(access, reach);
         int limit = intParam(q, "limit", 1000, 1, 10_000);
         int wait = intParam(q, "wait", 0, 0, 60);
         if (after.equals("now")) {
@@ -549,7 +554,7 @@ public final class HttpApi implements AutoCloseable {
             if (!now.role().mayRead()) {
                 throw new HttpError(403, "the metrics role may only use GET /metrics, GET /v1/status and POST /v1/password");
             }
-            requireDatabase(now, db);
+            requireReach(now, reach);
         }
         List<Object> out = new ArrayList<>(page.changes().size());
         for (com.ataiva.serengeti.core.storage.ChangeFeed.Change c : page.changes()) {
@@ -570,11 +575,12 @@ public final class HttpApi implements AutoCloseable {
         sendJson(ex, 200, page(out, page.cursor()));
     }
 
-    /** 403 unless the account may use database {@code db} (any database, without a list). */
-    private static void requireDatabase(Users.Access access, String db) {
-        if (!access.mayUse(db)) {
-            throw new HttpError(403, "this account may not use database "
-                    + (db.length() > 64 ? db.substring(0, 64) + "..." : db));
+    /** 403 unless the account's list gives what {@code reach} names (anything, without a list). */
+    private static void requireReach(Users.Access access, Reach reach) {
+        Scope scope = access.scope();
+        String refused = scope == null ? null : scope.refusal(reach);
+        if (refused != null) {
+            throw new HttpError(403, refused);
         }
     }
 
