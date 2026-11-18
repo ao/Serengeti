@@ -647,11 +647,19 @@ public final class HttpApi implements AutoCloseable {
         if (ack != null && !"local".equals(ack) && !"majority".equals(ack)) {
             throw new HttpError(400, "ack must be \"local\" or \"majority\"");
         }
+        Object maxBytes = body.get("max_bytes");
+        if (maxBytes != null && !(maxBytes instanceof Long n && n >= 1)) {
+            throw new HttpError(400, "max_bytes must be a whole number of bytes, at least 1");
+        }
         Object result;
+        // A smaller bound than the node's on this answer's rows, for a client that holds its answers whole.
+        com.ataiva.serengeti.core.query.Executor.answerBytesForThisRequest((Long) maxBytes);
         try {
             result = deps.queries().run(q, access, "majority".equals(c), (String) ack);
         } catch (QueryService.Rejected r) {
             throw new HttpError(r.status(), r.getMessage());
+        } finally {
+            com.ataiva.serengeti.core.query.Executor.answerBytesForThisRequest(null);
         }
         sendJson(ex, 200, result);
     }

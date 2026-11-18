@@ -2167,15 +2167,16 @@ public final class Store {
                 return -1;
             }
             if (l instanceof Lookup.Composite c) {
-                // Several bounds: counted, up to ID_RANGE_COUNTED ids, the same whatever the order of the terms.
-                long cap = Math.min(atMost, ID_RANGE_COUNTED);
+                // Several bounds: counted, up to ID_RANGE_COUNTED ids without a cap (the same whatever the order
+                // of the terms), or up to the caller's cap (an ordered read's budget asks up to 16,384: review 22l).
+                long cap = atMost == Long.MAX_VALUE ? ID_RANGE_COUNTED : atMost;
                 long n = 0;
                 for (String ignored : idRange(t, c.range())) {
                     if (++n > cap) {
                         break;
                     }
                 }
-                return n <= cap || atMost <= ID_RANGE_COUNTED ? n : t.rows.size();
+                return n <= cap || atMost != Long.MAX_VALUE ? n : t.rows.size();
             }
             if (l instanceof Lookup.Compare c && c.op().equals("=")) {
                 return 1;

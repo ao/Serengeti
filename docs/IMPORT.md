@@ -108,7 +108,10 @@ read 10 rows: 4 inserted, 0 updated, 0 skipped (0.1 s)
 ```
 
 Some lines after it may be written too: those in groups sent before the one refused. A rerun with
-`--on-conflict skip` skips every row already there, so it finishes the job either way.
+`--on-conflict skip` skips every row already there, so it finishes the job either way. An import with
+`--on-conflict update` is rerun with `--on-conflict update`, which the message says: it sets the same
+values again, where skip would leave the rows that were there as they were. A file that cannot be read
+(a directory, no permission) gives exit status 2 before anything is sent.
 
 A 503 (the node is at its memory limit, is stopping, or cannot reach a majority), a 429 (too many failed
 logins from the address), a proxy's 502 or 504, or a connection that fails, is not a refusal: the
@@ -141,7 +144,11 @@ SELECT * FROM shop.items WHERE _id > 'the last _id read' ORDER BY _id LIMIT 1000
 
 Each page reads only its own rows and no page uses OFFSET, so a table of any size is read in time
 proportional to its size. `--page` is the most rows in a page (default 1000, at most 10,000); the first
-page has 100 rows, and later pages are sized to answers of about 4 MB, so large rows make smaller pages.
+page has 10 rows, and each later page at most twice the one before, sized so that the largest row seen so
+far would fill about 4 MB, so large rows make smaller pages. A page the node ended early because its answer
+reached the node's bound on size (`truncated`, docs/API.md) is read on from its last `_id`. The `_id` of a
+row goes into the next page's statement, so a table whose ids come close to 1 MiB (the body limit) cannot be
+exported this way.
 `--where` takes a WHERE condition of QUERY.md; it is parsed first, so it cannot reach past the page's own
 condition (`_id > 'x' AND (CONDITION)`), and GROUP BY, HAVING, ORDER BY, LIMIT and OFFSET in it are
 refused.
@@ -152,7 +159,8 @@ otherwise; a row changed after its page was read is exported as it was; a row de
 read is not exported. `serengeti backup` takes a consistent copy of every table.
 
 The output goes to FILE, written as `FILE.tmp` with mode 0600 and renamed once complete (nothing is kept
-when the export fails), or to standard output.
+when the export fails or is stopped by a signal such as SIGTERM or Ctrl-C; `kill -9` leaves `FILE.tmp`),
+or to standard output.
 
 - NDJSON, the default: one JSON object per row, with the columns in the order `SELECT *` gives them
   (`_id` first) and null values left out, since a missing column and a null read the same. Numbers are
@@ -161,8 +169,8 @@ when the export fails), or to standard output.
 - `--csv`: a header of every column found in the rows, `_id` first, in the order first seen, then one
   record per row. Strings are always quoted, numbers and booleans are bare, null is empty, and objects and
   arrays are written as their JSON text, quoted. Lines end with CRLF. The header is known only once every
-  row is read, so the rows wait meanwhile in a file of mode 0600, deleted at the end: next to FILE, or in
-  the system's temporary directory when the output is standard output.
+  row is read, so the rows wait meanwhile in a file of mode 0600, deleted at the end and on a signal: next
+  to FILE, or in the system's temporary directory when the output is standard output.
 
 On standard error, export says how many rows it wrote. The exit status is that of import: 0 for a
 complete export, 1 when the node refused a page (a table that does not exist, a `--where` naming a

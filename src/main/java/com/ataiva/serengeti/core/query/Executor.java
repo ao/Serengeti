@@ -38,6 +38,13 @@ public final class Executor {
     private final int maxRows;
     private final int maxGroups;
     private final int maxDistinct;
+    /**
+     * The most bytes the rows of one SELECT's answer may hold, by {@link com.ataiva.serengeti.core.storage.Weight}:
+     * the node builds an answer whole, as text and then bytes, so 10,000 rows of 100 kB ran it out of heap. Past
+     * this a page ends early (with at least one row) and says {@code truncated}, so the client reads on after its
+     * last _id (review 22l). A sixteenth of the heap, at least 1 MiB.
+     */
+    private long maxAnswerBytes = Math.max(1L << 20, Runtime.getRuntime().maxMemory() / 16);
 
     public Executor(StorageEngine engine, Hlc clock) {
         this(engine, clock, DEFAULT_MAX_ROWS);
@@ -65,6 +72,29 @@ public final class Executor {
 
     public int maxRows() {
         return maxRows;
+    }
+
+    /** A client's own bound on its answer's rows (`max_bytes`), for the request this thread is answering. */
+    private static final ThreadLocal<Long> REQUEST_ANSWER_BYTES = new ThreadLocal<>();
+
+    /**
+     * Sets, for the statements this thread runs until it is set again, a bound on an answer's rows below the
+     * node's own (see maxAnswerBytes); null removes it. The HTTP API sets it from a request's `max_bytes`.
+     */
+    public static void answerBytesForThisRequest(Long bytes) {
+        if (bytes == null) {
+            REQUEST_ANSWER_BYTES.remove();
+        } else {
+            REQUEST_ANSWER_BYTES.set(bytes);
+        }
+    }
+
+    /** Sets the bound on an answer's rows, in bytes (see the field); for tests. */
+    void maxAnswerBytes(long bytes) {
+        if (bytes < 1) {
+            throw new IllegalArgumentException("bytes " + bytes);
+        }
+        maxAnswerBytes = bytes;
     }
 
     /**
@@ -1110,11 +1140,23 @@ public final class Executor {
             columns = new ArrayList<>(all);
         }
         List<List<Object>> rows = new ArrayList<>(page.size());
+        long bytes = 0;
+        Long asked = REQUEST_ANSWER_BYTES.get();
+        long bound = asked == null ? maxAnswerBytes : Math.min(maxAnswerBytes, asked);
         for (Match m : page) {
             List<Object> r = new ArrayList<>(columns.size());
+            long w = 16;
             for (String c : columns) {
-                r.add(get(m.id, m.row, c));
+                Object v = get(m.id, m.row, c);
+                r.add(v);
+                w += 8 + com.ataiva.serengeti.core.storage.Weight.ofAnswerValue(v);
             }
+            if (!rows.isEmpty() && bytes + w > bound) {
+                // More rows follow; the client reads on after the last _id of this page (see maxAnswerBytes).
+                truncated = true;
+                break;
+            }
+            bytes += w;
             rows.add(r);
         }
         return new Result.Rows(columns, rows, truncated);

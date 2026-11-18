@@ -49,7 +49,7 @@ final class Export {
     static final int DEFAULT_PAGE = 1000;
     static final int MAX_PAGE = 10_000;
     /** The first page is small, and later pages are sized to about this many bytes of answer. */
-    static final int FIRST_PAGE = 100;
+    static final int FIRST_PAGE = 10;
     static final long PAGE_BYTES = 4L << 20;
 
     private Export() {}
@@ -170,6 +170,13 @@ final class Export {
         Path spool = null;
         long t0 = System.nanoTime();
         long[] rows = {0};
+        // A signal skips `finally`: the files of rows written so far would stay on disk (review 22l).
+        Path[] left = {tmp, null};
+        Thread cleanup = new Thread(() -> {
+            delete(left[0]);
+            delete(left[1]);
+        }, "export-cleanup");
+        Runtime.getRuntime().addShutdownHook(cleanup);
         try {
             OutputStream raw;
             if (tmp != null) {
@@ -185,21 +192,22 @@ final class Export {
                     // file of their own meanwhile.
                     spool = target != null ? target.resolveSibling(target.getFileName() + ".rows.tmp")
                             : Files.createTempFile("serengeti-export", ".jsonl", privateFile());
+                    left[1] = spool;
                     Files.deleteIfExists(spool);
                     Files.createFile(spool, privateFile());
                     Set<String> columns = new LinkedHashSet<>(List.of("_id"));
                     try (Writer s = Files.newBufferedWriter(spool, StandardCharsets.UTF_8)) {
-                        pages(remote, table, condition, page, row -> {
+                        pages(remote, table, condition, page, (row, json) -> {
                             columns.addAll(row.keySet());
-                            s.write(Json.write(row));
+                            s.write(json);
                             s.write('\n');
                             rows[0]++;
                         });
                     }
                     writeCsv(spool, List.copyOf(columns), out);
                 } else {
-                    pages(remote, table, condition, page, row -> {
-                        out.write(Json.write(row));
+                    pages(remote, table, condition, page, (row, json) -> {
+                        out.write(json);
                         out.write('\n');
                         rows[0]++;
                     });
@@ -229,12 +237,17 @@ final class Export {
         } finally {
             delete(spool);
             delete(tmp);
+            try {
+                Runtime.getRuntime().removeShutdownHook(cleanup);
+            } catch (IllegalStateException shuttingDown) {
+                // The hook runs anyway.
+            }
         }
     }
 
     /** What is done with each row read. */
     interface Sink {
-        void row(Map<String, Object> row) throws IOException;
+        void row(Map<String, Object> row, String json) throws IOException;
     }
 
     /** Reads the table page by page, in _id order, and hands each row on with its null values left out. */
@@ -242,6 +255,7 @@ final class Export {
             throws IOException, Fail {
         String last = null;
         int page = Math.min(FIRST_PAGE, maxPage);
+        long largest = 1;
         for (;;) {
             String where;
             if (last == null) {
@@ -251,7 +265,7 @@ final class Export {
             }
             Remote.Reply r;
             try {
-                r = remote.query("SELECT * FROM " + table + where + " ORDER BY _id LIMIT " + page);
+                r = remote.query("SELECT * FROM " + table + where + " ORDER BY _id LIMIT " + page, PAGE_BYTES);
             } catch (Remote.Unavailable e) {
                 throw new Fail(3, remote.base() + " stayed unavailable: " + e.getMessage());
             }
@@ -278,14 +292,18 @@ final class Export {
                     throw new Fail(1, remote.base() + ": a page repeated or lost its place");
                 }
                 pageLast = id;
-                sink.row(row);
+                String json = Json.write(row);
+                largest = Math.max(largest, json.length());
+                sink.row(row, json);
             }
-            if (list.size() < page) {
+            // A page ends early with `truncated` when its answer reached the node's bound on size: read on.
+            if (list.isEmpty() || list.size() < page && !Boolean.TRUE.equals(body.get("truncated"))) {
                 return;
             }
             last = pageLast;
-            long perRow = Math.max(1, r.answer().text().length() / list.size());
-            page = (int) Math.max(1, Math.min(maxPage, PAGE_BYTES / perRow));
+            // Sized from the largest row seen, not the mean, and at most doubled each time: rows that grow along
+            // the table made a page of 60 MB from the mean of small ones (review 22l).
+            page = (int) Math.max(1, Math.min(Math.min(maxPage, 2L * page), PAGE_BYTES / Math.max(1, largest)));
         }
     }
 

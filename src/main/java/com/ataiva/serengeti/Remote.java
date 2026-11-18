@@ -65,7 +65,23 @@ final class Remote {
 
     /** POST /v1/query with one statement, sent again while the node says to wait. */
     Reply query(String statement) throws Unavailable {
-        byte[] body = body(statement);
+        return query(statement, null);
+    }
+
+    /**
+     * As above, asking the node to end the answer's rows at about {@code maxBytes} (docs/API.md, `max_bytes`;
+     * null: the node's own bound), so that a page of large rows stays small enough to hold.
+     */
+    Reply query(String statement, Long maxBytes) throws Unavailable {
+        byte[] body;
+        if (maxBytes == null) {
+            body = body(statement);
+        } else {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("query", statement);
+            m.put("max_bytes", maxBytes);
+            body = Json.write(m).getBytes(StandardCharsets.UTF_8);
+        }
         int attempt = 0;
         String retriedAfter = null;
         long wait = FIRST_WAIT_MS;

@@ -389,6 +389,44 @@ class OffsetTest {
         assertEquals(801, r.visited(), "the 5th row with q < 2 is r0800");
     }
 
+    /**
+     * An answer's rows hold at most the executor's bound: a page past it ends early, with at least one row, and
+     * says truncated, with LIMIT too; keyset pages that go on from the last _id read every row (review 22l).
+     */
+    @Test
+    void anAnswerEndsAtItsBoundOnSizeAndSaysSo() throws IOException {
+        Executor small = new Executor(engine, new Hlc("n4"));
+        small.maxAnswerBytes(8_000);
+        Query q = new Query(small);
+        Result.Rows first = run(q, "SELECT * FROM d.t ORDER BY _id LIMIT 1000");
+        assertTrue(first.truncated(), "past the bound, with LIMIT");
+        assertTrue(first.rows().size() > 1 && first.rows().size() < 1000, "rows: " + first.rows().size());
+        List<Object> all = new ArrayList<>();
+        Result.Rows page = first;
+        for (int pages = 1; ; pages++) {
+            page.rows().forEach(r -> all.add(r.get(0)));
+            if (!page.truncated() && page.rows().size() < 1000) {
+                assertTrue(pages > 2, "pages: " + pages);
+                break;
+            }
+            page = run(q, "SELECT * FROM d.t WHERE _id > '" + all.get(all.size() - 1) + "' ORDER BY _id LIMIT 1000");
+        }
+        List<Object> want = new ArrayList<>();
+        for (int i = 0; i < N; i++) {
+            want.add(id(i));
+        }
+        assertEquals(want, all, "every row once, in order");
+        // One row past the bound alone: it is still answered.
+        small.maxAnswerBytes(1);
+        Result.Rows one = run(q, "SELECT * FROM d.t ORDER BY _id LIMIT 5");
+        assertEquals(1, one.rows().size());
+        assertTrue(one.truncated());
+        // Under the bound nothing changes.
+        Result.Rows plain = run(query, "SELECT * FROM d.t ORDER BY _id LIMIT 1000");
+        assertEquals(1000, plain.rows().size());
+        assertFalse(plain.truncated());
+    }
+
     @Test
     void theSortKeepsTheFirstRowsItNeedsAndReadsEveryMatch() {
         // No index gives q's order: every row is read, and the first m + n by the ORDER BY are kept.

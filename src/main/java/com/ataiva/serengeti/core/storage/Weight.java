@@ -22,6 +22,11 @@ public final class Weight {
         return 24 + 16 + align((long) s.length() * (latin1 ? 1 : 2));
     }
 
+    /** As {@link #ofValue}, for the query answer's bound on its size (see Executor). */
+    public static long ofAnswerValue(Object v) {
+        return ofValue(v);
+    }
+
     /** A JSON value as the parser holds it. */
     @SuppressWarnings("unchecked")
     static long ofValue(Object v) {

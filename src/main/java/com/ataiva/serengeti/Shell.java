@@ -187,6 +187,15 @@ final class Shell {
         String password = env.get("SERENGETI_PASSWORD");
         try {
             if (url != null) {
+                // A user or password in the URL is not used to sign in, and was printed with every message about
+                // the node (review 22l): refuse it, without printing it.
+                String rest = url.replaceFirst("^[A-Za-z][A-Za-z0-9+.-]*://", "");
+                int slash = rest.indexOf('/');
+                if ((slash < 0 ? rest : rest.substring(0, slash)).contains("@")) {
+                    err.println("serengeti " + cmd + ": --url must not hold a user or password; give the account"
+                            + " with --user and its password in SERENGETI_PASSWORD");
+                    return null;
+                }
                 base = URI.create(url.replaceAll("/+$", ""));
                 if (!"http".equals(base.getScheme()) && !"https".equals(base.getScheme()) || base.getHost() == null) {
                     err.println("serengeti " + cmd + ": --url wants http://HOST:PORT or https://HOST:PORT, not '" + url + "'");

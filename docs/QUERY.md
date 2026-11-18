@@ -371,7 +371,8 @@ SELECT kind, COUNT(*), MAX(price) FROM shop.items GROUP BY kind ORDER BY count(*
 
 - `COUNT(*)` counts rows, and `COUNT(c)` the rows where c is not null (a missing c counts as null).
   `COUNT(DISTINCT c)` counts the distinct values of c that are not null, equal as GROUP BY makes them
-  (below): 1 and 1.0 are one value, and so are equal objects and equal arrays.
+  (below): 1 and 1.0 are one value, and so are objects and arrays that are equal as written, keys in any
+  order; numbers inside them compare as written, so `[1]` and `[1.0]` are two values.
 - `SUM(c)` and `AVG(c)` take the numbers of c and skip every other value: null, strings, booleans,
   objects and arrays. If the numbers are all integers, SUM is an integer, added exactly; if the total
   does not fit in 64 bits the statement fails with `SUM overflows a 64-bit integer` (400 over HTTP). Only
@@ -520,6 +521,9 @@ answers:
   argument), and with GROUP BY or DISTINCT at most 10,000 groups. A LIMIT above the cap is an error.
   Without LIMIT, if more rows or groups match (after HAVING and OFFSET), the first 10,000 are returned
   and `truncated` is true. COUNT(*) is not capped.
+- A SELECT's rows hold at most a sixteenth of the node's heap (at least 1 MiB), as the memory limit
+  estimates them: a page that would hold more ends early, with at least one row, and `truncated` is true,
+  with LIMIT too. A keyset page goes on from its last `_id`.
 - OFFSET plus LIMIT, or OFFSET plus the cap without LIMIT, is at most 100,000 (`Executor.MAX_OFFSET_ROWS`;
   see "LIMIT and OFFSET").
 - A GROUP BY holds at most 100,000 groups while it reads the rows (`Executor.DEFAULT_MAX_GROUPS`, also

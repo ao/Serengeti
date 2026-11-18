@@ -252,6 +252,10 @@ final class Import {
             return 2;
         }
         String file = positional.size() > 1 && !positional.get(1).equals("-") ? positional.get(1) : null;
+        if (file != null && Files.isDirectory(Path.of(file))) {
+            err.println("serengeti import: cannot read " + file + ": it is a directory");
+            return 2;
+        }
         InputStream in;
         try {
             in = file == null ? stdin : Files.newInputStream(Path.of(file));
@@ -281,16 +285,21 @@ final class Import {
                 } catch (CharacterCodingException e) {
                     throw new Stop(1, 1, "the input is not UTF-8 text");
                 } catch (IOException e) {
-                    throw new Stop(1, 1, "the input could not be read: " + e.getMessage());
+                    // Nothing was read, so nothing is written and there is no line to put right (review 22l).
+                    throw new Stop(2, 0, "cannot read " + (file == null ? "standard input" : file) + ": "
+                            + e.getMessage());
                 }
                 job.load(csv ? new CsvRows(chars, types, generate) : new JsonRows(chars, generate));
                 code = 0;
             } catch (Stop s) {
                 err.println("serengeti import: " + (s.line > 0 ? "line " + s.line + ": " : "") + s.getMessage());
                 if (s.line > 0) {
+                    // In update mode a rerun must update again: skip would leave the rows that were there as they
+                    // were, the line put right and every line after the stop included (review 22l).
                     err.println("serengeti import: the lines before line " + s.line + " are written; "
                             + (s.status == 1 ? "with line " + s.line + " put right, " : "")
-                            + "a rerun with --on-conflict skip finishes the job");
+                            + "a rerun with --on-conflict " + (mode == Mode.UPDATE ? "update" : "skip")
+                            + " finishes the job");
                 }
                 code = s.status;
             }
