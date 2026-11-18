@@ -47,6 +47,7 @@ Needs Basic credentials of any account. The body is Prometheus text format 0.0.4
 |---|---|---|
 | `serengeti_http_requests_total{route,code}` | counter | Requests answered, by route and status code. Code 0 means no response was sent. |
 | `serengeti_http_request_duration_seconds{route}` | histogram | Time from receiving a request to the end of its response. Buckets from 5 ms to 10 s. |
+| `serengeti_http_cut_total{reason}` | counter | Connections the node closed because of a limit on slow clients: `slow_body` (a body sent too slowly), `slow_write` (a write not taken within 30 s), `busy` (its thread taken for a new connection while every thread was busy), `unsent` (a stalled write cut to make room for answers). See CONFIGURATION.md, "Slow clients". |
 | `serengeti_login_failures_total` | counter | Requests with a wrong user name or password. |
 | `serengeti_login_limited_total` | counter | Requests refused by the failed-login limit (429). |
 | `serengeti_wal_bytes` | gauge | Size of `wal.log` in bytes. |
@@ -392,7 +393,7 @@ Serengeti's code.
 | 415 | `Content-Type` is not `application/json`. |
 | 429 | Ten failed logins or setup attempts from this address in the last minute. `Retry-After` gives the seconds to wait. |
 | 500 | Storage failed (a write that could not reach the disk is taken back) or another unexpected error. |
-| 503 | Not set up yet; a write or a `"consistency": "majority"` read that cannot reach a majority (see [CONSISTENCY.md](CONSISTENCY.md)); a write that adds data to a node at its memory limit (`memory_limit_percent`); the change feed after an fsync of the node's log failed; a node that is stopping (`this node is stopping`, with `Connection: close`). |
+| 503 | Not set up yet; a write or a `"consistency": "majority"` read that cannot reach a majority (see [CONSISTENCY.md](CONSISTENCY.md)); a write that adds data to a node at its memory limit (`memory_limit_percent`); the change feed after an fsync of the node's log failed; a node that is stopping (`this node is stopping`, with `Connection: close`); a node too busy to take the request, with `Retry-After: 1` (`busy: every request thread is in use` after 10 s without one of the `http_threads`, `busy: too many large answers in memory` after 10 s without room for a large answer, `busy reading other large requests` when the bodies being read hold their budget; see CONFIGURATION.md, "Slow clients"). |
 
 ## Browser use
 

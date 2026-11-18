@@ -299,6 +299,18 @@ GitHub release notes and tags.
   logs that it is ignored.
 
 ### Changed
+- Slow clients no longer stall a node. Requests are read and answered on up to `http_connections` threads
+  (new, 1,024), and `http_threads` (64) of them at once run requests, from when the body is in until the
+  answer starts to go out. A body must keep up 16 KiB a second after its first 5 s, a write the client
+  does not take within 30 s closes the connection, and when every thread is busy a new connection takes the
+  thread of the slowest client. Large answers share a quarter of the heap from before they are built until
+  they are written, and bodies past 64 KiB a sixteenth; a request that does not fit gets 503 with
+  `Retry-After: 1`. Before, 256 connections from four addresses that sent headers one byte a second left a
+  probe of `/health`, `/v1/status` and a small query 14% of its requests answered within 5 s (8% at 1,000);
+  now it gets every one, with a p99 under 100 ms, at 64, 256 and 1,000 connections sending headers or bodies
+  slowly or not reading 4 MB answers, from one address or four, over plain HTTP and TLS (`tests/slow/run.sh`:
+  a 1 GiB node in Docker on a c7g.4xlarge, 60 s a case). `serengeti_http_cut_total{reason}` counts the
+  connections closed. See docs/CONFIGURATION.md, "Slow clients", and `tests/slow/run.sh`.
 - A SELECT's rows hold at most a sixteenth of the node's heap (at least 1 MiB), as the memory limit
   estimates them. The node builds an answer whole, so 10,000 rows of 100 kB would run it out of heap (2.1
   too). A page past the bound ends early, with at least one row, and `truncated` is true, with LIMIT too:

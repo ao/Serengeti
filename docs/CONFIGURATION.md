@@ -24,7 +24,8 @@ node exit with status 2 and a one-line message.
 | `write_ack` | `majority` | In a cluster: `majority` acknowledges a write once a majority of nodes has it; `local` once this node has it, even with no peer reachable. Requests override it with `"ack"`. See [CONSISTENCY.md](CONSISTENCY.md). |
 | `tombstone_ttl_hours` | `168` | How long a delete's tombstone is kept (it is dropped at the next 10-minute boundary after). A cluster node away longer than this less 20 minutes must be emptied to rejoin. Set it the same on every node. 1 to 87600. |
 | `changes_buffer` | `10000` | How many recent changes the node keeps in memory for `GET /v1/changes` (see API.md, "Changes"), 0 to 1,000,000; `0` turns the feed off, and the route answers 404. Each held change keeps its row's value alive, so a large buffer of large rows costs memory. The changes outlive a restart (`changes.jsonl`, below). Started with `0`, the node deletes the feed's files, and the next start with a buffer begins a new epoch. |
-| `http_threads` | `64` | Threads that answer HTTP requests, 1 to 1024. A request holds one while it is read, run and answered, so a client that sends slowly holds one for up to 30 s; half of them at most wait on `GET /v1/changes`. |
+| `http_threads` | `64` | HTTP requests that run at once, 1 to 1024. A request holds one of them from when its body is in until its answer starts to go out, so slow clients do not hold them (see [Slow clients](#slow-clients)); half of them at most wait on `GET /v1/changes`. A request that gets none within 10 s is answered 503. |
+| `http_connections` | `1024` | HTTP requests read or answered at once: the server's threads, at least `http_threads`, at most 16384. A client that sends or reads slowly holds one of these within the limits in [Slow clients](#slow-clients). |
 | `memory_limit_percent` | `60` | Writes that add data (INSERT, UPDATE, CREATE) are refused with 503 once the rows and index entries held are estimated to take this share of the maximum heap; deletes and drops are always taken and make room at once. 10 to 100; `100` turns it off. Every database is held in memory, so this is the node's capacity. The image gives the heap 60% of the container's memory: a 512 MiB container holds an estimated 185 MiB of data with the default. |
 | `backup_dir` | none | Directory for scheduled backups, created if missing (mode 0700). Not the data directory or inside it. See [Scheduled backups](#scheduled-backups). The image has an empty `/backups` for a volume. |
 | `backup_interval_minutes` | `60` | Minutes between scheduled backups, 1 to 10080 (a week). |
@@ -42,6 +43,35 @@ keytool -genkeypair -alias node -keyalg EC -groupname secp256r1 -dname CN=db.exa
 
 For anything longer-lived, use a certificate from your own CA, with the host name clients use in its
 subject alternative names.
+
+## Slow clients
+
+A node reads each request and writes its answer on one of up to `http_connections` threads, started as
+needed and stopped after a minute idle, and runs at most `http_threads` requests at once. A request takes one
+of those only once its body is in, and gives it back when its answer starts to go out, so a client that sends
+or reads slowly holds a thread but none of the `http_threads`. The same limits apply to every client, signed
+in or not, and cannot be changed:
+
+- A request's line, headers and body must all arrive within 30 s of its first byte, and a connection that
+  sends nothing for 30 s is closed.
+- After the first 5 s of a body, each further second must bring 16 KiB more of it, or the connection is
+  closed. Bodies are read into memory before the request runs; past the first 64 KiB of each, they share a
+  sixteenth of the heap (at least 16 MiB), and a body that does not fit is answered 503. Node-to-node
+  requests with the cluster key are not counted.
+- A write that the client does not take within 30 s closes the connection.
+- Answers of 256 KiB or more share a quarter of the heap (at least 48 MiB), counted from before they are
+  built (three times their estimated size) until they are written. When one does not fit, writes that have
+  waited on their client for a second or more are cut, oldest first; then the request waits up to 10 s for
+  room, without holding one of the `http_threads`, and is answered 503 if none comes.
+- When all `http_connections` threads are busy, a new connection takes the thread of the client that has
+  been sending its headers longest, or else its body, or else waiting for a write to be taken, if for a
+  second or more. Otherwise the connection waits for a thread.
+
+Each thread reserves 1 MiB for its stack and uses only the pages it reaches: a 1 GiB node held 276 MiB with
+1,000 connections sending their headers slowly, against 111 MiB with 64 (`tests/slow/run.sh` on a
+c7g.4xlarge). Past `http_connections`, connections wait or take a slow client's thread: with 3,000
+connections from six addresses sending headers slowly, a probe got 82 to 89% of its requests answered.
+`serengeti_http_cut_total{reason}` (API.md, "Metrics") counts the connections closed by these limits.
 
 ## Certificates for a cluster
 

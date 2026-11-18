@@ -307,11 +307,11 @@ kept-alive connection, and 2.1 sets it itself.
 - You need more than 7 nodes, or nodes that hold only part of the data.
 - You need a different role on each database or table, such as reading one table and writing another: an
   account has one role, for every database and table its list gives it.
-- Clients you do not trust can reach the node directly. It serves 64 requests at a time (`http_threads`). A
-  client that sends its request slowly holds one of them for up to 30 s, so 64 such connections, renewed,
-  stall it, and a signed-in client that stops reading a large answer holds one until the connection drops.
-  Put a proxy that buffers requests and responses (nginx, Caddy, HAProxy) in front of a node that untrusted
-  networks reach.
+- Clients you do not trust can reach the node in large numbers. A node keeps answering while up to 1,024
+  connections (`http_connections`) send their requests or read their answers slowly (docs/CONFIGURATION.md,
+  "Slow clients"); past that, a new connection takes the thread of the slowest client, and with 3,000 such
+  connections from six addresses a probe got 82 to 89% of its requests answered. Put a proxy that limits
+  connections per address (nginx, Caddy, HAProxy) in front of a node that the internet reaches.
 
 ## Security defaults
 

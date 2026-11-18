@@ -48,8 +48,9 @@ here has a date.
 - no joins and no transactions across statements; nothing is linearizable;
 - an account has one role, for every database and table its list gives it: it cannot read one table and
   write another;
-- the HTTP server serves 64 requests at a time and is not hardened against slow clients: put a buffering
-  proxy in front of a node that untrusted networks reach.
+- a node keeps answering while up to 1,024 connections (`http_connections`) send or read slowly, and
+  degrades past that: put a proxy that limits connections per address in front of a node that the internet
+  reaches.
 
 ## Possible next steps
 
