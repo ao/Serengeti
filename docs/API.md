@@ -163,13 +163,14 @@ Reads return the column names and one array per row:
 {"type":"write","affected":2,"ids":["8f0c...","1d2e..."]}
 ```
 
-`INSERT ... ON CONFLICT` (docs/QUERY.md) also returns how many of its tuples were inserted, updated and
-skipped. `affected` is `inserted` plus `updated`, and `ids` lists the rows written, in tuple order, and is
-there even when empty. Other answers are as before, so a client that reads only `affected` and `ids` reads
-these too.
+`INSERT ... ON CONFLICT` (docs/QUERY.md) also returns how many of its tuples were inserted, updated (DO
+UPDATE) and skipped (DO NOTHING), so one of the last two is 0. `affected` is `inserted` plus `updated`, and
+`ids` lists the rows written, in tuple order, and is there even when empty. Other answers are as before,
+so a client that reads only `affected` and `ids` reads these too. A DO UPDATE where `bolt` was there and
+`nut` was not:
 
 ```json
-{"type":"write","affected":2,"inserted":1,"updated":1,"skipped":1,"ids":["bolt","nut"]}
+{"type":"write","affected":2,"inserted":1,"updated":1,"skipped":0,"ids":["bolt","nut"]}
 ```
 
 ## Password
@@ -231,8 +232,9 @@ starts a new one only when it can no longer give the same answers: after `sereng
 directory that was emptied or has no `changes.jsonl` (also the first start on 2.2 after an older version),
 after a log that lost a record it had whole (a damaged disk; a record whose length field was damaged
 reads as a write cut off, and the records after it are dropped without a new epoch), after a crash in the
-milliseconds of a checkpoint between writing the snapshot and emptying the log, and after any stop that was
-not clean of a run with `fsync` `off`, whatever the next run has. The node logs which at start. A cursor from another epoch, from another node, or older than
+milliseconds of a checkpoint between writing the snapshot and emptying the log, and after a run with
+`fsync` `off` that did not stop cleanly, whatever the next run's `fsync`. The node logs which at start.
+A cursor from another epoch, from another node, or older than
 what the node still holds gets 410: read the table again and follow from `after=now`. Cursors belong to the
 node that gave them. At most 32 requests wait at once; more answer at once, with whatever there is.
 
