@@ -145,7 +145,8 @@ GitHub release notes and tags.
   `SHOW INDEXES`. The index keeps the rows in the ORDER BY order of a, then b. A WHERE whose top-level AND
   has `=`, IN or a LIKE without wildcards on its first columns, and then any of `<`, `<=`, `>`, `>=` and a
   LIKE prefix on the next, reads only the rows those terms allow (IN lists as every combination of their
-  values, up to 1,000); SELECT, COUNT(*), GROUP BY, UPDATE and DELETE use it. Of the indexes that can
+  values, up to 1,000), and so does a range on the first column alone; SELECT, COUNT(*), GROUP BY, UPDATE
+  and DELETE use it. Of the indexes that can
   answer (and of single-column indexes and `_id`), the read of the fewest rows is used, then the one that
   names the most columns; a range too large to gather gives way to the next. Its entries count towards
   the memory limit. The definition replicates and is kept in
@@ -285,9 +286,10 @@ GitHub release notes and tags.
 - A SELECT without ORDER BY, or with `ORDER BY _id` ascending, stops reading once it has its rows (one past
   the LIMIT or the cap) instead of visiting the rest of the table, and `ORDER BY _id` ascending no longer
   sorts, since rows are read in that order. A keyset page reads only its own rows.
-- A SELECT whose ORDER BY sorts holds only the first OFFSET + LIMIT + 1 matching rows in memory as it
-  reads (OFFSET + 10,001 without LIMIT), in a heap, and sorts those, instead of holding and sorting every
-  matching row. It still reads every matching row.
+- A SELECT whose ORDER BY sorts keeps only the first OFFSET + LIMIT + 1 matching rows as it reads
+  (OFFSET + 10,001 without LIMIT): it holds up to four times that many, sorts them and drops the rest
+  each time it gets there, instead of holding and sorting every matching row. It still reads every
+  matching row.
 - The image sets `MALLOC_ARENA_MAX=2`. glibc otherwise keeps a malloc arena per thread: filling a node in a
   512 MiB container, that memory reached about 150 MB the JVM does not count (measured with Native Memory
   Tracking against the container's anonymous memory), and the kernel killed the node before its memory
