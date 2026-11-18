@@ -358,3 +358,5 @@ indexes (a 10-minute run on 3 nodes, seed 2220, checked it first: 38,002 operati
 | 431166c (UPDATE arithmetic, ON CONFLICT, ORDER BY through an index) | 2218 | 330,728 | 101,901 / 60,030 | 597 | 10 of 10 |
 | 6595ca4 (OR through index unions; reviews 22g, 22h) | 2219 | 315,100 | 95,879 / 56,042 | 653 | 10 of 10 |
 | c026851 (OFFSET, pages that stream first; reviews 22i, 22j; check 6 extended) | 2221 | 292,447 | 87,319 / 51,745 | 624 | 10 of 10 |
+| f66186a (import and export, object values, answers bounded in size; 2026-11-18) | 2222 | 280,705 | 86,610 / 51,245 | 676 | 10 of 10 |
+| 8b16e8e (sync keeps bucket sizes with the live sums) | 2223 | 301,740 | 91,642 / 53,527 | 667 | 10 of 10 |
