@@ -598,6 +598,28 @@ client's inserts back to 2.1's rate (5,965 against 6,001), and give back what th
 doing durable writes at 32 clients took 2,640 writes/s on 16 threads and 4,827 on 64 (2.2 against 2.1,
 above). The image keeps both settings as they were.
 
+## 2.2 with its query additions against 2.1
+
+After the request log's change, 2.2 gained UPDATE arithmetic, ON CONFLICT, OFFSET, ORDER BY and OR read
+through indexes, all of which run through the planner that every query passes. To see whether cheap requests
+paid for it, scenarios b, c and c-index ran again on a new EC2 c7g.2xlarge (8 Neoverse-V1 cores, 15.3 GiB,
+EBS), A = 2.1 at b983d15 and B = 2.2 at 71e6f18, in the order A, B, A, B on 2026-11-18 (`tests/bench/run.sh`
+with `SCENARIOS="b c c-index"`, 1 GiB per node). Requests/s, the two runs of each:
+
+| Scenario | Request | Clients | 2.1 | 2.2 |
+|---|---|---:|---|---|
+| c | `SELECT * WHERE _id = x`, 100,000 rows | 8 | 16,147; 16,180 | 19,442; 20,160 |
+| c | `SELECT COUNT(*)`, 100,000 rows | 8 | 1,302; 1,267 | 21,126; 21,718 |
+| c | `SELECT * WHERE n = x` (no index), 100,000 rows | 8 | 227; 228 | 565; 559 |
+| c-index | `SELECT * WHERE n = x` through the index, 100,000 rows | 8 | 16,530; 16,477 | 19,657; 19,648 |
+| b | INSERT, fsync=interval | 1 | 5,741; 5,794 | 5,399; 5,408 |
+| b | INSERT, fsync=interval | 8 | 13,212; 13,830 | 14,366; 14,378 |
+| b | INSERT, fsync=interval | 32 | 12,599; 13,106 | 13,158; 13,433 |
+
+The planner's work does not show in the cheapest reads: 2.2 does 19 to 25% more of them than 2.1, as after
+the request log's change (above). A single client's inserts are still 6 to 7% slower; at 32 clients the 99th
+percentile is 7.2 to 7.5 ms against 17.1 to 17.2 for 2.1.
+
 ## Running it again
 
 On a Linux machine with Docker, from a checkout of this repository (the harness) and a checkout of the
