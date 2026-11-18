@@ -225,14 +225,14 @@ export class Client {
   }
 
   // Creates or changes an account; what is left out stays as it is. `databases` limits a read or write
-  // account to a list of database names, and null removes the limit.
+  // account to a list of databases ("shop") and tables ("shop.orders"), and null removes the limit.
   setUser(name, { password, role, databases } = {}) {
     const body = {};
     if (password !== undefined) body.password = password;
     if (role !== undefined) body.role = role;
     if (databases !== undefined) {
       if (databases !== null && !Array.isArray(databases)) {
-        throw new TypeError("databases is an array of database names, or null");
+        throw new TypeError("databases is an array of database and table names, or null");
       }
       body.databases = databases;
     }

@@ -190,7 +190,8 @@ class Client:
     def set_user(self, name, password=None, role=None, databases=_KEEP):
         """Create or change an account; what is left out stays as it is.
 
-        ``databases`` limits a read or write account to a list of database names; ``None`` removes the limit.
+        ``databases`` limits a read or write account to a list of databases (``"shop"``) and tables
+        (``"shop.orders"``); ``None`` removes the limit.
         Returns the account as the node has it now: ``{"user": ..., "role": ..., "databases": [...]}``.
         """
         body = {}
@@ -200,7 +201,7 @@ class Client:
             body["role"] = role
         if databases is not _KEEP:
             if isinstance(databases, (str, bytes)):
-                raise TypeError("databases is a list of database names, or None")
+                raise TypeError("databases is a list of database and table names, or None")
             body["databases"] = None if databases is None else list(databases)
         return self._call("PUT", "/v1/users/" + urllib.parse.quote(name, safe=""), body, retry=False)
 
