@@ -9,9 +9,11 @@ here has a date.
   (`SERENGETI_FSYNC`, default `always`); concurrent writes share fsyncs. Snapshots bound the log, and
   recovery drops an incomplete last record. A lock on the data directory keeps a second node off it.
 - Tables of JSON rows, and the query language in [docs/QUERY.md](docs/QUERY.md): CREATE and DROP for
-  databases, tables and indexes on 1 to 4 columns, SHOW, INSERT, SELECT and SELECT DISTINCT with WHERE
-  (comparisons, IN, LIKE, IS NULL), ORDER BY on one or more keys and LIMIT, COUNT, COUNT(DISTINCT), SUM,
-  MIN, MAX and AVG with GROUP BY and HAVING, UPDATE and DELETE.
+  databases, tables and indexes on 1 to 4 columns, SHOW, INSERT (with `ON CONFLICT DO NOTHING` or `DO UPDATE
+  SET`, and object and array values), SELECT and SELECT DISTINCT with WHERE (comparisons, IN, LIKE, IS
+  NULL), ORDER BY on one or more keys, LIMIT and OFFSET, COUNT, COUNT(DISTINCT), SUM, MIN, MAX and AVG with
+  GROUP BY and HAVING, UPDATE (with `SET n = n + 1`) and DELETE. Indexes answer comparisons, IN, LIKE
+  prefixes and ORs of them, and give rows in their order for `ORDER BY ... LIMIT`.
 - An HTTP API ([docs/API.md](docs/API.md)) in which every route except `GET /health` and `GET /ready`
   needs HTTP Basic credentials. Accounts have a role (metrics, read, write or admin), read and write accounts
   can be limited to some databases, and accounts replicate across the cluster. The first admin password comes from the environment, a file or a one-time setup token.
@@ -29,7 +31,8 @@ here has a date.
   Node-to-node traffic needs a cluster key and uses TLS.
 - `GET /ready`, Prometheus metrics at `GET /metrics`, a request log, and backup and restore
   (`GET /v1/backup`, `serengeti backup` or on a schedule into `backup_dir`, and `serengeti restore`).
-- `serengeti shell`, and clients for Python and JavaScript in [clients/](clients/).
+- `serengeti shell`, `serengeti import` and `serengeti export` (NDJSON and CSV, [docs/IMPORT.md](docs/IMPORT.md)),
+  and clients for Python and JavaScript in [clients/](clients/).
 - Rolling upgrades from 2.0 and 2.1, and a rollback to either on the same data directory.
 - A console at `/`, a container image for linux/amd64 and linux/arm64, and examples for Docker Compose,
   Kubernetes, and Prometheus with Grafana.

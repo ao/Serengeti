@@ -150,9 +150,12 @@ q "SELECT name FROM shop.items WHERE qty > 200"
 ```
 
 A `WHERE` that compares an indexed column with a value, checks it against an IN list or a LIKE prefix
-(`name LIKE 'bo%'`), alone or as one term of an AND, reads only the matching rows; anything else scans
-the table. Lookups by `_id` never scan. Indexes change how fast a
-query runs, not what it returns. [docs/QUERY.md](docs/QUERY.md) has the rules.
+(`name LIKE 'bo%'`), alone or as one term of an AND, reads only the matching rows. So does an index on
+several columns (`CREATE INDEX ON shop.orders (customer, placed)`) for the terms that fix its first columns,
+and an OR whose every branch an index answers. `ORDER BY` an indexed column with a `LIMIT` reads the index in
+order and stops once it has the page: on 200,000 rows, `ORDER BY at DESC LIMIT 10` takes 0.07 ms instead of
+the sort's 24 (in-process, c7g.4xlarge). Anything else scans the table. Lookups by `_id` never scan.
+Indexes change how fast a query runs, not what it returns. [docs/QUERY.md](docs/QUERY.md) has the rules.
 
 ## Accounts
 
@@ -271,6 +274,12 @@ requests in both versions. With that made cheaper, in a later session on another
 rows up by `_id` 20,767 times a second at 8 clients against 2.1's 16,643, and took 3 to 9% more
 non-durable inserts than 2.1 at 8 and 32 clients (6 to 8% fewer at 1); see
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md#the-request-log-and-g1s-concurrent-cycles).
+
+With the query additions of 2.2 (UPDATE arithmetic, ON CONFLICT, OFFSET, ORDER BY and OR through indexes),
+in a session on 2026-11-18 on another c7g.2xlarge, 2.2 looked rows up by `_id` 19,442 and 20,160 times a
+second in two runs against 2.1's 16,147 and 16,180, counted 100,000 rows 21,126 and 21,718 times a second
+against 1,302 and 1,267, and took 6 to 7% fewer single-client inserts; see
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md#22-with-its-query-additions-against-21).
 
 2.1 against 2.0.0, measured in an earlier session:
 
