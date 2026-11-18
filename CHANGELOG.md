@@ -292,6 +292,14 @@ GitHub release notes and tags.
   logs that it is ignored.
 
 ### Changed
+- A SELECT's rows hold at most a sixteenth of the node's heap (at least 1 MiB), as the memory limit
+  estimates them. The node builds an answer whole, so 10,000 rows of 100 kB would run it out of heap (2.1
+  too). A page past the bound ends early, with at least one row, and `truncated` is true, with LIMIT too:
+  read on from its last `_id`. A request may ask for a smaller bound with `"max_bytes": n`; `serengeti
+  export` asks for 4 MiB. See docs/API.md.
+- `serengeti shell`, `backup`, `import` and `export` refuse a `--url` that holds a user or password (it
+  was not used to sign in, and was printed with every message about the node); give the account with
+  `--user` and the password in `SERENGETI_PASSWORD`.
 - A node catching up pulls only the rows that differ, not every row of each bucket that differs. For the
   differing buckets it asks a peer for each row's id and a hash of its versions
   (`GET /internal/v3/hashes`, about 40 bytes a row), and pulls the rows whose hashes differ or that only
