@@ -184,5 +184,10 @@ and missing columns both come back missing. Without `--csv-types`, every value c
 `ImportExportTest` checks both round trips, every refusal and error path, retries through a proxy that
 answers 503, 429 or drops connections, and 100,000 rows: on an AWS c7g.4xlarge (JDK 21, the node in the
 same JVM, `fsync` `always`, plain HTTP on loopback), 100,000 rows of five columns (7.8 MB of NDJSON)
-import in 2.1 s and export in 0.55 s, or 0.72 s as CSV. `tests/container/run.sh` runs both commands from
-the image against a TLS node with `--ca`.
+import in 2.1 s and export in 0.55 s, or 0.72 s as CSV. From the image, with the command and the node
+each in its own container on one c7g.4xlarge (plain HTTP on a Docker network, the image's settings for
+the command line: 96 MB of heap, no optimising compiler), the same 8.2 MB of rows imported in 2.9 s and
+3.6 s in two runs, and exported in 0.6 s and 0.7 s, or 1.0 s and 1.1 s as CSV, as the commands report;
+starting each container added 0.4 to 0.8 s. A rerun with `--on-conflict skip` took 2.1 s, and the CSV
+imported back with `--csv-types` in 2.5 s and exported as the same NDJSON. `tests/container/run.sh` runs
+both commands from the image against a TLS node with `--ca`.
