@@ -225,7 +225,7 @@ GitHub release notes and tags.
 - In a cluster, a statement right after a CREATE DATABASE or CREATE TABLE could reach a node the change had
   not reached yet and get `does not exist` (2.1 too): a client behind a load balancer, such as the
   Kubernetes example's Service, got it now and then. Such a statement now asks the peers for the database's
-  schema first (up to 1 s, at most once a second per database) and runs once more. See CONSISTENCY.md.
+  schema (waiting at most 2 s) and runs once more. See CONSISTENCY.md.
 - An index key kept the value of the row that first had it alive after that row changed or was deleted
   while another row kept an equal value (2.1 too), and the memory limit did not count it: up to the size of
   the indexed values. The key now takes a remaining row's value.

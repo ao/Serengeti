@@ -163,9 +163,12 @@ than D.
 
 A schema change acknowledged by a majority reaches the other nodes a moment later. So that a client behind
 a load balancer can create a database and then its table on whichever node it reaches, a statement that names
-a database or table its node has not got first asks the peers for that database's schema, waiting up to 1 s,
-and runs once more; only then does it answer `does not exist`. A node asks for one database's schema at most
-once a second; statements that name it meanwhile wait for that answer.
+a database or table its node has not got first asks the peers for that database's schema and runs once more;
+only then does it answer `does not exist`. The peers are asked after the statement failed, so their answer
+has every schema change they had by then; statements that fail while one such request for the database is
+out share the next one, so a statement waits at most 2 s. A node has such requests out for at most 16
+databases at once, and none while it is stale. `DROP ... IF EXISTS` does not ask: on a node that the
+database or table has not reached yet, it does nothing and answers 200.
 
 ## Reads
 

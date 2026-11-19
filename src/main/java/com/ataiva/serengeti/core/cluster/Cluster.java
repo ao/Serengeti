@@ -399,52 +399,112 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
 
     // ---- reads ----
 
-    /** A schema pull for one database (see pullSchema): when it began, and whether it merged anything. */
-    private record SchemaPull(long at, CompletableFuture<Boolean> merged) {}
+    /**
+     * The schema pulls of one database (see pullSchema): the one running, and the one that starts when it
+     * ends, for the statements that came meanwhile. Guarded by schemaPulls.
+     */
+    private static final class SchemaPulls {
+        CompletableFuture<Boolean> running;
+        CompletableFuture<Boolean> next;
+    }
 
-    /** The latest schema pull of each database a statement named that was not here. */
-    private final Map<String, SchemaPull> schemaPulls = new java.util.concurrent.ConcurrentHashMap<>();
+    /** The databases whose schema is being pulled, at most SCHEMA_PULLS_AT_ONCE. */
+    private final Map<String, SchemaPulls> schemaPulls = new java.util.HashMap<>();
 
-    /** A statement waits at most this long for the peers' schema of a database it names that is not here. */
+    /** A schema pull waits at most this long for the peers. */
     static final long SCHEMA_PULL_MILLIS = 1_000;
 
+    /** At most this many databases have their schema pulled at once; past that a statement is not retried. */
+    static final int SCHEMA_PULLS_AT_ONCE = 16;
+
     /**
-     * Pulls the schema of {@code db} (its creates and drops of tables and indexes) from every peer, and merges
-     * it, waiting up to SCHEMA_PULL_MILLIS. For a statement naming a database or table this node has not got
-     * yet: a CREATE DATABASE acknowledged by a majority reaches the other nodes a moment later, and a client
-     * behind a load balancer whose next statement reached one of those got "does not exist" (seen in
-     * examples/kubernetes). A database is pulled at most once a second, so names that exist nowhere cost the
-     * peers little; statements that name it meanwhile wait for that pull and get its answer. Returns true if
-     * anything merged.
+     * Pulls the schema of {@code db} (its creates and drops of tables and indexes) from every peer and merges
+     * it. For a statement naming a database or table this node has not got yet: a CREATE DATABASE acknowledged
+     * by a majority reaches the other nodes a moment later, and a client behind a load balancer whose next
+     * statement reached one of those got "does not exist" (seen in examples/kubernetes).
+     *
+     * <p>Each caller gets a pull that started after it called, so the pull sees every change the peers had
+     * by then: one running for the database is not joined, but the callers that arrive while it runs share
+     * the next. A pull waits SCHEMA_PULL_MILLIS for the peers at most, so a caller waits at most twice that.
+     * Returns true if a peer answered (whether or not it had anything new: a change may also have arrived
+     * by replication meanwhile), in which case the statement is worth running again; false if no peer
+     * answered, or this node is stale or stopping, or SCHEMA_PULLS_AT_ONCE other databases are being pulled.
      */
     public boolean pullSchema(String db) {
-        if (closed || peers.isEmpty()) {
+        if (closed || stale || peers.isEmpty()) {
             return false;
         }
-        long now = System.currentTimeMillis();
-        if (schemaPulls.size() > 10_000) {
-            schemaPulls.clear();
-        }
-        SchemaPull fresh = new SchemaPull(now, new CompletableFuture<>());
-        SchemaPull pull = schemaPulls.compute(db,
-                (k, old) -> old != null && now - old.at() < SCHEMA_PULL_MILLIS ? old : fresh);
-        if (pull == fresh) {
-            List<CompletableFuture<Integer>> runs = new ArrayList<>();
-            for (Peer p : peers) {
-                runs.add(client.schema(p.address, db).thenApply(this::mergeOrThrow).exceptionally(e -> 0)
-                        .completeOnTimeout(0, SCHEMA_PULL_MILLIS, TimeUnit.MILLISECONDS));
+        CompletableFuture<Boolean> mine;
+        boolean start = false;
+        synchronized (schemaPulls) {
+            SchemaPulls s = schemaPulls.get(db);
+            if (s == null) {
+                if (schemaPulls.size() >= SCHEMA_PULLS_AT_ONCE) {
+                    return false;
+                }
+                s = new SchemaPulls();
+                schemaPulls.put(db, s);
             }
-            CompletableFuture.allOf(runs.toArray(new CompletableFuture<?>[0])).whenComplete((v, e) ->
-                    fresh.merged().complete(runs.stream().mapToInt(f -> f.getNow(0)).sum() > 0));
+            if (s.running == null) {
+                s.running = mine = new CompletableFuture<>();
+                start = true;
+            } else {
+                if (s.next == null) {
+                    s.next = new CompletableFuture<>();
+                }
+                mine = s.next;
+            }
+        }
+        if (start) {
+            startSchemaPull(db, mine);
         }
         try {
-            return pull.merged().get(SCHEMA_PULL_MILLIS + 100, TimeUnit.MILLISECONDS);
+            return mine.get(2 * SCHEMA_PULL_MILLIS + 200, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /** Runs one schema pull of {@code db}, completes {@code done} with whether a peer answered, and starts the next. */
+    private void startSchemaPull(String db, CompletableFuture<Boolean> done) {
+        List<CompletableFuture<Boolean>> runs = new ArrayList<>();
+        try {
+            for (Peer p : peers) {
+                runs.add(client.schema(p.address, db).thenApply(ops -> { mergeOrThrow(ops); return true; })
+                        .exceptionally(e -> {
+                            Throwable cause = e instanceof java.util.concurrent.CompletionException
+                                    && e.getCause() != null ? e.getCause() : e;
+                            if (cause instanceof java.io.UncheckedIOException) {
+                                LOG.warning("could not merge the schema of " + db + " from " + p.address + ": "
+                                        + cause.getMessage());
+                            }
+                            return false;
+                        })
+                        .completeOnTimeout(false, SCHEMA_PULL_MILLIS, TimeUnit.MILLISECONDS));
+            }
+        } catch (RuntimeException e) {
+            // stopping: the peers not asked count as not answering
+        }
+        CompletableFuture.allOf(runs.toArray(new CompletableFuture<?>[0])).whenComplete((v, e) -> {
+            boolean answered = runs.stream().anyMatch(f -> f.getNow(false));
+            CompletableFuture<Boolean> next;
+            synchronized (schemaPulls) {
+                SchemaPulls s = schemaPulls.get(db);
+                next = s.next;
+                s.next = null;
+                s.running = next;
+                if (next == null) {
+                    schemaPulls.remove(db);
+                }
+            }
+            done.complete(answered);
+            if (next != null) {
+                startSchemaPull(db, next);
+            }
+        });
     }
 
     /**
