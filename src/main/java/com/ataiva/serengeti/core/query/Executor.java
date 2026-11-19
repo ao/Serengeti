@@ -182,7 +182,7 @@ public final class Executor {
                     if (d.ifExists()) {
                         return none();
                     }
-                    throw new QueryException("'" + d.db() + "." + d.table() + "' has no index on "
+                    throw new NoSuchPlaceException(d.db(), "'" + d.db() + "." + d.table() + "' has no index on "
                             + String.join(", ", d.columns()));
                 }
                 return one(new Op.DropIndex(d.db(), d.table(), key, stamp(store)));

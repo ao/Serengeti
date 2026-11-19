@@ -361,3 +361,4 @@ indexes (a 10-minute run on 3 nodes, seed 2220, checked it first: 38,002 operati
 | f66186a (import and export, object values, answers bounded in size; 2026-11-18) | 2222 | 280,705 | 86,610 / 51,245 | 676 | 10 of 10 |
 | 8b16e8e (sync keeps bucket sizes with the live sums) | 2223 | 301,740 | 91,642 / 53,527 | 667 | 10 of 10 |
 | cba0031 (accounts limited to tables, slow clients, reviews 22m, 22n; 2026-11-19) | 2224 | 327,421 | 101,072 / 59,066 | 611 | 10 of 10 |
+| 0712f40 (a statement naming a database not here yet pulls its schema) | 2225 | 344,006 | 104,293 / 60,664 | 640 | 10 of 10 |

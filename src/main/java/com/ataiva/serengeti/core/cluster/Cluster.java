@@ -400,79 +400,114 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     // ---- reads ----
 
     /**
-     * The schema pulls of one database (see pullSchema): the one running, and the one that starts when it
-     * ends, for the statements that came meanwhile. Guarded by schemaPulls.
+     * The schema pulls of one database (see pullSchema): the one running, and the one for the statements that
+     * came meanwhile, which runs when the database's turn comes again. Guarded by schemaPulls.
      */
     private static final class SchemaPulls {
         CompletableFuture<Boolean> running;
         CompletableFuture<Boolean> next;
+        boolean queued;
     }
 
-    /** The databases whose schema is being pulled, at most SCHEMA_PULLS_AT_ONCE. */
+    /** The databases with a schema pull running or waiting, at most SCHEMA_PULLS_WAITING. */
     private final Map<String, SchemaPulls> schemaPulls = new java.util.HashMap<>();
+
+    /** The databases whose next pull waits for one of the SCHEMA_PULLS_AT_ONCE turns, in order. */
+    private final java.util.ArrayDeque<String> schemaPullQueue = new java.util.ArrayDeque<>();
+
+    /** How many schema pulls are running. Guarded by schemaPulls. */
+    private int schemaPullsRunning;
 
     /** A schema pull waits at most this long for the peers. */
     static final long SCHEMA_PULL_MILLIS = 1_000;
 
-    /** At most this many databases have their schema pulled at once; past that a statement is not retried. */
+    /** A statement waits at most this long for its schema pull, its turn included. */
+    static final long SCHEMA_PULL_WAIT_MILLIS = 2_000;
+
+    /** At most this many schema pulls run at once, each asking every peer. */
     static final int SCHEMA_PULLS_AT_ONCE = 16;
+
+    /** At most this many databases have a schema pull running or waiting; past that a statement is not retried. */
+    static final int SCHEMA_PULLS_WAITING = 64;
 
     /**
      * Pulls the schema of {@code db} (its creates and drops of tables and indexes) from every peer and merges
-     * it. For a statement naming a database or table this node has not got yet: a CREATE DATABASE acknowledged
-     * by a majority reaches the other nodes a moment later, and a client behind a load balancer whose next
-     * statement reached one of those got "does not exist" (seen in examples/kubernetes).
+     * it. For a statement naming a database, table or index this node has not got yet: a CREATE DATABASE
+     * acknowledged by a majority reaches the other nodes a moment later, and a client behind a load balancer
+     * whose next statement reached one of those got "does not exist" (seen in examples/kubernetes).
      *
-     * <p>Each caller gets a pull that started after it called, so the pull sees every change the peers had
-     * by then: one running for the database is not joined, but the callers that arrive while it runs share
-     * the next. A pull waits SCHEMA_PULL_MILLIS for the peers at most, so a caller waits at most twice that.
-     * Returns true if a peer answered (whether or not it had anything new: a change may also have arrived
-     * by replication meanwhile), in which case the statement is worth running again; false if no peer
-     * answered, or this node is stale or stopping, or SCHEMA_PULLS_AT_ONCE other databases are being pulled.
+     * <p>Each caller gets a pull that starts after it called, so the pull sees every change the peers had by
+     * then: one running for the database is not joined, but the callers that arrive while it runs share the
+     * next. At most SCHEMA_PULLS_AT_ONCE pulls run at once, and databases take turns: a database's next pull
+     * waits behind those already waiting, so names asked for again and again cannot keep the other waiting ones
+     * out (they can still fill the SCHEMA_PULLS_WAITING places, see docs/CONSISTENCY.md). A
+     * pull waits SCHEMA_PULL_MILLIS for the peers at most, and a caller SCHEMA_PULL_WAIT_MILLIS in all. Returns
+     * true if a peer answered (whether or not it had anything new: a change may also have arrived by
+     * replication meanwhile), in which case the statement is worth running again; false if no peer answered in
+     * time, or this node is stale or stopping, or SCHEMA_PULLS_WAITING other databases are waiting.
      */
     public boolean pullSchema(String db) {
         if (closed || stale || peers.isEmpty()) {
             return false;
         }
         CompletableFuture<Boolean> mine;
-        boolean start = false;
+        List<Map.Entry<String, CompletableFuture<Boolean>>> start;
         synchronized (schemaPulls) {
             SchemaPulls s = schemaPulls.get(db);
             if (s == null) {
-                if (schemaPulls.size() >= SCHEMA_PULLS_AT_ONCE) {
+                if (schemaPulls.size() >= SCHEMA_PULLS_WAITING) {
                     return false;
                 }
                 s = new SchemaPulls();
                 schemaPulls.put(db, s);
             }
-            if (s.running == null) {
-                s.running = mine = new CompletableFuture<>();
-                start = true;
-            } else {
-                if (s.next == null) {
-                    s.next = new CompletableFuture<>();
-                }
-                mine = s.next;
+            if (s.next == null) {
+                s.next = new CompletableFuture<>();
             }
+            mine = s.next;
+            if (s.running == null && !s.queued) {
+                s.queued = true;
+                schemaPullQueue.addLast(db);
+            }
+            start = takeSchemaTurns();
         }
-        if (start) {
-            startSchemaPull(db, mine);
-        }
+        startSchemaPulls(start);
         try {
-            return mine.get(2 * SCHEMA_PULL_MILLIS + 200, TimeUnit.MILLISECONDS);
+            return mine.get(SCHEMA_PULL_WAIT_MILLIS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
         } catch (Exception e) {
-            return false;
+            return false; // not answered in time, or its turn did not come in time
         }
     }
 
-    /** Runs one schema pull of {@code db}, completes {@code done} with whether a peer answered, and starts the next. */
+    /** Gives the free turns to the databases waiting longest; returns the pulls to start. Holds schemaPulls. */
+    private List<Map.Entry<String, CompletableFuture<Boolean>>> takeSchemaTurns() {
+        List<Map.Entry<String, CompletableFuture<Boolean>>> start = new ArrayList<>();
+        while (schemaPullsRunning < SCHEMA_PULLS_AT_ONCE && !schemaPullQueue.isEmpty()) {
+            String db = schemaPullQueue.pollFirst();
+            SchemaPulls s = schemaPulls.get(db);
+            s.queued = false;
+            s.running = s.next;
+            s.next = null;
+            schemaPullsRunning++;
+            start.add(Map.entry(db, s.running));
+        }
+        return start;
+    }
+
+    private void startSchemaPulls(List<Map.Entry<String, CompletableFuture<Boolean>>> start) {
+        for (Map.Entry<String, CompletableFuture<Boolean>> e : start) {
+            startSchemaPull(e.getKey(), e.getValue());
+        }
+    }
+
+    /** Runs one schema pull of {@code db}, then completes {@code done} with whether a peer answered. */
     private void startSchemaPull(String db, CompletableFuture<Boolean> done) {
         List<CompletableFuture<Boolean>> runs = new ArrayList<>();
-        try {
-            for (Peer p : peers) {
+        for (Peer p : peers) {
+            try {
                 runs.add(client.schema(p.address, db).thenApply(ops -> { mergeOrThrow(ops); return true; })
                         .exceptionally(e -> {
                             Throwable cause = e instanceof java.util.concurrent.CompletionException
@@ -484,26 +519,27 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
                             return false;
                         })
                         .completeOnTimeout(false, SCHEMA_PULL_MILLIS, TimeUnit.MILLISECONDS));
+            } catch (RuntimeException e) {
+                // stopping: that peer counts as not answering
             }
-        } catch (RuntimeException e) {
-            // stopping: the peers not asked count as not answering
         }
         CompletableFuture.allOf(runs.toArray(new CompletableFuture<?>[0])).whenComplete((v, e) -> {
             boolean answered = runs.stream().anyMatch(f -> f.getNow(false));
-            CompletableFuture<Boolean> next;
+            List<Map.Entry<String, CompletableFuture<Boolean>>> start;
             synchronized (schemaPulls) {
+                schemaPullsRunning--;
                 SchemaPulls s = schemaPulls.get(db);
-                next = s.next;
-                s.next = null;
-                s.running = next;
-                if (next == null) {
+                s.running = null;
+                if (s.next != null) {
+                    s.queued = true;
+                    schemaPullQueue.addLast(db); // behind the databases already waiting
+                } else {
                     schemaPulls.remove(db);
                 }
+                start = takeSchemaTurns();
             }
             done.complete(answered);
-            if (next != null) {
-                startSchemaPull(db, next);
-            }
+            startSchemaPulls(start);
         });
     }
 

@@ -1,7 +1,7 @@
 package com.ataiva.serengeti.core.query;
 
 /**
- * A statement names a database or table that does not exist on this node. In a cluster it may exist on the
+ * A statement names a database, table or index that does not exist on this node. In a cluster it may exist on the
  * peers already: a schema change acknowledged by a majority reaches the other nodes a moment later.
  */
 public final class NoSuchPlaceException extends QueryException {

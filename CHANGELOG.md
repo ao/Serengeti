@@ -222,7 +222,7 @@ GitHub release notes and tags.
   import` could not load nested JSON. 2.1 nodes answer them with a parse error. See docs/QUERY.md, "Values".
 
 ### Fixed
-- In a cluster, a statement right after a CREATE DATABASE or CREATE TABLE could reach a node the change had
+- In a cluster, a statement right after a CREATE DATABASE, TABLE or INDEX could reach a node the change had
   not reached yet and get `does not exist` (2.1 too): a client behind a load balancer, such as the
   Kubernetes example's Service, got it now and then. Such a statement now asks the peers for the database's
   schema (waiting at most 2 s) and runs once more. See CONSISTENCY.md.

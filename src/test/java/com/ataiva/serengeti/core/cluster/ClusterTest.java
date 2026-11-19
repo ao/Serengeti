@@ -77,8 +77,27 @@ class ClusterTest {
         start(i, KEY);
     }
 
+    /**
+     * The ports are picked free and let go, so until a node listens on its port another socket can hold it
+     * for a moment (a peer's outgoing connection on the same number); the start is then tried again.
+     */
     private void start(int i, String key) throws IOException {
-        nodes[i] = Node.start(config(i, key), Node.QUERIES);
+        for (int attempt = 1; ; attempt++) {
+            try {
+                nodes[i] = Node.start(config(i, key), Node.QUERIES);
+                return;
+            } catch (RuntimeException e) {
+                if (attempt == 20 || e.getMessage() == null || !e.getMessage().contains("Address already in use")) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(250);
+                } catch (InterruptedException stop) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
     }
 
     private void stop(int i) throws IOException {
@@ -204,6 +223,10 @@ class ClusterTest {
             hereOnly(0, new com.ataiva.serengeti.core.storage.Op.CreateTable("shop", "orders", stampOn0(1)));
             r = query(2, "INSERT INTO shop.orders (_id) VALUES ('o1')");
             assertEquals(200, r.statusCode(), "right after a pull that found the database: " + r.body());
+            // So does an index.
+            hereOnly(0, new com.ataiva.serengeti.core.storage.Op.CreateIndex("shop", "orders", "n", stampOn0(3)));
+            r = query(2, "DROP INDEX ON shop.orders (n)");
+            assertEquals(200, r.statusCode(), "an index made on node 0 only: " + r.body());
             // Statements naming it at once share pulls, and each gets its answer.
             hereOnly(0, new com.ataiva.serengeti.core.storage.Op.CreateTable("shop", "lines", stampOn0(2)));
             List<java.util.concurrent.CompletableFuture<HttpResponse<String>>> together = new ArrayList<>();
