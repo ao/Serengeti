@@ -161,6 +161,12 @@ concurrent.
 Schema changes resolve by version alone; a table dropped at version D removes every row version older
 than D.
 
+A schema change acknowledged by a majority reaches the other nodes a moment later. So that a client behind
+a load balancer can create a database and then its table on whichever node it reaches, a statement that names
+a database or table its node has not got first asks the peers for that database's schema, waiting up to 1 s,
+and runs once more; only then does it answer `does not exist`. A node asks for one database's schema at most
+once a second; statements that name it meanwhile wait for that answer.
+
 ## Reads
 
 By default a read is answered from the node's own data and may miss writes that it has not received yet.

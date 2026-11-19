@@ -108,17 +108,16 @@ public final class Node implements AutoCloseable {
                     if (majority && cluster != null) {
                         cluster.syncForRead();
                     }
-                    if (ack == null || cluster == null) {
-                        return checked.run().toJson();
-                    }
-                    Cluster.Ack a = ack.equals("local") ? Cluster.Ack.LOCAL : Cluster.Ack.MAJORITY;
                     try {
-                        return Cluster.withAck(a, () -> checked.run().toJson());
-                    } catch (QueryException | UnavailableException | IOException
-                            | com.ataiva.serengeti.core.storage.WriteRefusedException e) {
-                        throw e;
-                    } catch (Exception e) {
-                        throw new IllegalStateException(e);
+                        return runChecked(checked, ack);
+                    } catch (com.ataiva.serengeti.core.query.NoSuchPlaceException missing) {
+                        // A database or table made a moment ago on another node may not be here yet: its schema
+                        // is pulled from the peers and the statement runs once more. Nothing was read or written
+                        // the first time: the check comes first.
+                        if (cluster == null || !cluster.pullSchema(missing.db())) {
+                            throw missing;
+                        }
+                        return runChecked(checked, ack);
                     }
                 } catch (com.ataiva.serengeti.core.query.ForbiddenException e) {
                     throw new Rejected(403, e.getMessage());
@@ -128,6 +127,22 @@ public final class Node implements AutoCloseable {
                     throw new Rejected(503, e.getMessage());
                 } catch (IOException e) {
                     throw new UncheckedIOException("storage failed", e);
+                }
+            }
+
+            /** Runs a checked statement, with the write acknowledgement {@code ack} asks for (null: the default). */
+            private Object runChecked(Query.Checked checked, String ack) throws IOException {
+                if (ack == null || cluster == null) {
+                    return checked.run().toJson();
+                }
+                Cluster.Ack a = ack.equals("local") ? Cluster.Ack.LOCAL : Cluster.Ack.MAJORITY;
+                try {
+                    return Cluster.withAck(a, () -> checked.run().toJson());
+                } catch (QueryException | UnavailableException | IOException
+                        | com.ataiva.serengeti.core.storage.WriteRefusedException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
                 }
             }
         };

@@ -360,3 +360,4 @@ indexes (a 10-minute run on 3 nodes, seed 2220, checked it first: 38,002 operati
 | c026851 (OFFSET, pages that stream first; reviews 22i, 22j; check 6 extended) | 2221 | 292,447 | 87,319 / 51,745 | 624 | 10 of 10 |
 | f66186a (import and export, object values, answers bounded in size; 2026-11-18) | 2222 | 280,705 | 86,610 / 51,245 | 676 | 10 of 10 |
 | 8b16e8e (sync keeps bucket sizes with the live sums) | 2223 | 301,740 | 91,642 / 53,527 | 667 | 10 of 10 |
+| cba0031 (accounts limited to tables, slow clients, reviews 22m, 22n; 2026-11-19) | 2224 | 327,421 | 101,072 / 59,066 | 611 | 10 of 10 |

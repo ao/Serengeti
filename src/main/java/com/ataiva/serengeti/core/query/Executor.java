@@ -1713,10 +1713,10 @@ public final class Executor {
     }
 
     private static QueryException noDb(String db) {
-        return new QueryException("database '" + db + "' does not exist");
+        return new NoSuchPlaceException(db, "database '" + db + "' does not exist");
     }
 
     private static QueryException noTable(String db, String table) {
-        return new QueryException("table '" + db + "." + table + "' does not exist");
+        return new NoSuchPlaceException(db, "table '" + db + "." + table + "' does not exist");
     }
 }

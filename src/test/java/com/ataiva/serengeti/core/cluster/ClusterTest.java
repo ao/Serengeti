@@ -178,6 +178,59 @@ class ClusterTest {
         }
     }
 
+    /**
+     * A statement that names a database or table this node has not got yet pulls the schema from its peers and
+     * runs again: through a load balancer, the statement after a CREATE DATABASE may reach a node the create has
+     * not reached (examples/kubernetes failed once so). Sync rounds are paused, so only that pull can bring it.
+     */
+    @Test
+    void aStatementNamingADatabaseMadeElsewherePullsItsSchema() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            start(i);
+        }
+        waitWritable(0);
+        waitWritable(2);
+        Cluster.syncPausedForTest = true;
+        try {
+            // On node 0 only, as if replicating it to the others had not happened yet.
+            com.ataiva.serengeti.core.storage.Stamp at = new com.ataiva.serengeti.core.storage.Stamp(
+                    System.currentTimeMillis(), 0, "n0");
+            nodes[0].cluster().applyHereOnlyForTest(List.of(new com.ataiva.serengeti.core.storage.Op.CreateDb("shop", at)));
+            HttpResponse<String> r = query(2, "CREATE TABLE shop.items");
+            assertEquals(200, r.statusCode(), r.body());
+            nodes[0].cluster().applyHereOnlyForTest(List.of(new com.ataiva.serengeti.core.storage.Op.CreateTable("shop",
+                    "orders", new com.ataiva.serengeti.core.storage.Stamp(System.currentTimeMillis() + 1, 0, "n0"))));
+            Thread.sleep(1_100); // past the once a second a database's schema is pulled
+            r = query(2, "INSERT INTO shop.orders (_id) VALUES ('o1')");
+            assertEquals(200, r.statusCode(), "a table made on node 0 only: " + r.body());
+            // Statements naming it at once share one pull, and each gets its answer.
+            nodes[0].cluster().applyHereOnlyForTest(List.of(new com.ataiva.serengeti.core.storage.Op.CreateTable("shop",
+                    "lines", new com.ataiva.serengeti.core.storage.Stamp(System.currentTimeMillis() + 2, 0, "n0"))));
+            Thread.sleep(1_100);
+            List<java.util.concurrent.CompletableFuture<HttpResponse<String>>> together = new java.util.ArrayList<>();
+            for (int k = 0; k < 6; k++) {
+                String stmt = "INSERT INTO shop.lines (_id) VALUES ('l" + k + "')";
+                together.add(java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return query(2, stmt);
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                    }
+                }));
+            }
+            for (java.util.concurrent.CompletableFuture<HttpResponse<String>> f : together) {
+                HttpResponse<String> each = f.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                assertEquals(200, each.statusCode(), "one of six at once: " + each.body());
+            }
+            // A database that exists nowhere is still refused, and pulled for at most once a second.
+            r = query(2, "SELECT * FROM nowhere.t");
+            assertEquals(400, r.statusCode());
+            assertTrue(r.body().contains("database 'nowhere' does not exist"), r.body());
+        } finally {
+            Cluster.syncPausedForTest = false;
+        }
+    }
+
     @Test
     void writesContinueWithOneNodeDownAndStopWithTwoDown() throws Exception {
         for (int i = 0; i < 3; i++) {

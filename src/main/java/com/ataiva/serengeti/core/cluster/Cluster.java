@@ -399,6 +399,54 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
 
     // ---- reads ----
 
+    /** A schema pull for one database (see pullSchema): when it began, and whether it merged anything. */
+    private record SchemaPull(long at, CompletableFuture<Boolean> merged) {}
+
+    /** The latest schema pull of each database a statement named that was not here. */
+    private final Map<String, SchemaPull> schemaPulls = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** A statement waits at most this long for the peers' schema of a database it names that is not here. */
+    static final long SCHEMA_PULL_MILLIS = 1_000;
+
+    /**
+     * Pulls the schema of {@code db} (its creates and drops of tables and indexes) from every peer, and merges
+     * it, waiting up to SCHEMA_PULL_MILLIS. For a statement naming a database or table this node has not got
+     * yet: a CREATE DATABASE acknowledged by a majority reaches the other nodes a moment later, and a client
+     * behind a load balancer whose next statement reached one of those got "does not exist" (seen in
+     * examples/kubernetes). A database is pulled at most once a second, so names that exist nowhere cost the
+     * peers little; statements that name it meanwhile wait for that pull and get its answer. Returns true if
+     * anything merged.
+     */
+    public boolean pullSchema(String db) {
+        if (closed || peers.isEmpty()) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        if (schemaPulls.size() > 10_000) {
+            schemaPulls.clear();
+        }
+        SchemaPull fresh = new SchemaPull(now, new CompletableFuture<>());
+        SchemaPull pull = schemaPulls.compute(db,
+                (k, old) -> old != null && now - old.at() < SCHEMA_PULL_MILLIS ? old : fresh);
+        if (pull == fresh) {
+            List<CompletableFuture<Integer>> runs = new ArrayList<>();
+            for (Peer p : peers) {
+                runs.add(client.schema(p.address, db).thenApply(this::mergeOrThrow).exceptionally(e -> 0)
+                        .completeOnTimeout(0, SCHEMA_PULL_MILLIS, TimeUnit.MILLISECONDS));
+            }
+            CompletableFuture.allOf(runs.toArray(new CompletableFuture<?>[0])).whenComplete((v, e) ->
+                    fresh.merged().complete(runs.stream().mapToInt(f -> f.getNow(0)).sum() > 0));
+        }
+        try {
+            return pull.merged().get(SCHEMA_PULL_MILLIS + 100, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /**
      * Brings this node up to date with enough peers that, with this node, they form a majority. Every write
      * acknowledged before this call is then visible locally.
@@ -450,6 +498,17 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
     }
 
     // ---- sync ----
+
+    /**
+     * For tests: while set, sync rounds of every node in this JVM reach their peers (so they count as
+     * reachable) but pull nothing from them; pullSchema and replication of new writes still run.
+     */
+    static volatile boolean syncPausedForTest;
+
+    /** For tests: applies ops to this node's storage only, as if they had come from a peer, sent to nobody. */
+    void applyHereOnlyForTest(List<Op> ops) throws IOException {
+        engine.apply(ops);
+    }
 
     /**
      * Starts a sync with every peer whose previous one has finished, and never waits for them: each peer
@@ -1120,6 +1179,9 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             List<CompletableFuture<Integer>> work = new ArrayList<>();
             for (Map.Entry<String, Map<String, Object>> e : theirs.entrySet()) {
                 String db = e.getKey();
+                if (syncPausedForTest) {
+                    break; // the peer counts as reached; nothing of its data or schema is pulled
+                }
                 Map<String, Object> m = mine.get(db);
                 long mySchema = m == null ? 0 : ((Number) m.get("schema")).longValue();
                 long theirSchema = ((Number) e.getValue().get("schema")).longValue();
