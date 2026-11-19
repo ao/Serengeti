@@ -330,17 +330,19 @@ public final class Json {
     }
 
     /**
-     * About how many characters {@code v} takes as JSON, without writing it: each string's length and quotes,
-     * 24 for any other scalar, and the punctuation. Escaped characters make the real text longer.
+     * About how many bytes {@code v} takes as JSON in UTF-8, without writing it: each string as written (its
+     * escapes counted: six bytes for {@code <}, {@code >}, {@code &} and control characters, two for a quote,
+     * backslash, newline, return or tab) and its quotes, 24 for any other scalar, and the punctuation. Counting a
+     * string as its length made an answer of {@code <} six times its estimate (review 22n).
      */
     public static long estimate(Object v) {
         if (v instanceof String s) {
-            return s.length() + 2L;
+            return stringBytes(s);
         }
         if (v instanceof Map<?, ?> m) {
             long n = 2;
             for (Map.Entry<?, ?> e : m.entrySet()) {
-                n += String.valueOf(e.getKey()).length() + 4L + estimate(e.getValue());
+                n += stringBytes(String.valueOf(e.getKey())) + 2L + estimate(e.getValue());
             }
             return n;
         }
@@ -352,6 +354,29 @@ public final class Json {
             return n;
         }
         return 24;
+    }
+
+    /** The bytes {@link #writeString} writes for {@code s}, in UTF-8, quotes included. */
+    private static long stringBytes(String s) {
+        long n = 2;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t') {
+                n += 2;
+            } else if (c == '<' || c == '>' || c == '&' || c == 0x2028 || c == 0x2029 || c < 0x20) {
+                n += 6;
+            } else if (c < 0x80) {
+                n += 1;
+            } else if (c < 0x800) {
+                n += 2;
+            } else if (Character.isHighSurrogate(c) && i + 1 < s.length() && Character.isLowSurrogate(s.charAt(i + 1))) {
+                n += 4;
+                i++;
+            } else {
+                n += 3;
+            }
+        }
+        return n;
     }
 
     public static void write(Object v, StringBuilder b) {

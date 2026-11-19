@@ -303,8 +303,8 @@ def run(host):
     stalled = stall(70)
     time.sleep(5)  # so the probe starts well after them, and is not itself near the 30 s limit when they go
     st, took = probe(60)
-    check("with 70 stalled (more than the threads), a query waits until the node drops them at 30 s",
-          st == 200 and 15 < took < 40, f"status {st} after {took:.1f} s")
+    check("with 70 stalled (more than the request threads), another client's query is answered at once",
+          st == 200 and took < 5, f"status {st} after {took:.1f} s")
     for cn in stalled:
         cn.close()
 

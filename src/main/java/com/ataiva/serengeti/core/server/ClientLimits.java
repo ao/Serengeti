@@ -112,6 +112,8 @@ final class ClientLimits implements Executor, AutoCloseable {
         private boolean cut;
         /** Only the thread itself touches these. */
         private boolean permit;
+        /** The permit held is one kept for node-to-node requests. */
+        private boolean peerPermit;
         private long bodyReserved;
 
         Slot(Thread thread, ClientLimits owner) {
@@ -183,6 +185,11 @@ final class ClientLimits implements Executor, AutoCloseable {
 
     private final ThreadPoolExecutor pool;
     private final Semaphore permits;
+    /**
+     * Permits kept for requests with the cluster key, taken before the shared ones: when clients hold every
+     * shared permit, replication and sync still run (review 22n). An eighth of the workers, at least 4.
+     */
+    private final Semaphore peerPermits;
     private final int connections;
     private final Settings settings;
     private final LongSupplier nanos;
@@ -210,6 +217,7 @@ final class ClientLimits implements Executor, AutoCloseable {
         this.settings = settings;
         this.nanos = nanos;
         this.permits = new Semaphore(workers, true);
+        this.peerPermits = new Semaphore(Math.max(4, workers / 8), true);
         // No core threads, and a hand-off queue: an idle thread takes a new task if there is one (the most recently
         // idle first), a new thread starts otherwise, and threads idle for a minute stop.
         this.pool = new ThreadPoolExecutor(0, connections, IDLE_SECONDS, TimeUnit.SECONDS, new SynchronousQueue<>(),
@@ -457,9 +465,23 @@ final class ClientLimits implements Executor, AutoCloseable {
      * holds at most one; off the server's threads there is no limit.
      */
     boolean acquire(Slot s) {
+        return acquire(s, false);
+    }
+
+    /**
+     * As above; a node-to-node request ({@code peer}: it holds the cluster key) takes one of the permits kept for
+     * those first, and else waits for a shared one as any request does.
+     */
+    boolean acquire(Slot s, boolean peer) {
         if (s == null || s.permit) {
             return true;
         }
+        if (peer && peerPermits.tryAcquire()) {
+            s.permit = true;
+            s.peerPermit = true;
+            return true;
+        }
+        s.peerPermit = false;
         try {
             if (!permits.tryAcquire(settings.permitWaitMillis(), TimeUnit.MILLISECONDS)) {
                 return false;
@@ -476,7 +498,7 @@ final class ClientLimits implements Executor, AutoCloseable {
     void release(Slot s) {
         if (s != null && s.permit) {
             s.permit = false;
-            permits.release();
+            (s.peerPermit ? peerPermits : permits).release();
         }
     }
 
@@ -502,6 +524,7 @@ final class ClientLimits implements Executor, AutoCloseable {
         }
         // Waiting holds no permit: requests that need none of this room go on meanwhile.
         boolean hadPermit = s.permit;
+        boolean peer = s.peerPermit;
         release(s);
         long end = nanos.getAsLong() + settings.permitWaitMillis() * 1_000_000;
         while (!tryReserve(s, n)) {
@@ -518,7 +541,7 @@ final class ClientLimits implements Executor, AutoCloseable {
                 }
             }
         }
-        if (hadPermit && !acquire(s)) {
+        if (hadPermit && !acquire(s, peer)) {
             sent(s);
             return false;
         }

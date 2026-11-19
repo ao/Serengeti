@@ -159,8 +159,8 @@ Reads return the column names and one array per row:
 
 `truncated` is true when more rows follow the ones returned: a `SELECT` without `LIMIT` matched more than
 10,000 rows and only the first 10,000 were returned, or, with or without `LIMIT`, the answer's rows reached
-the node's bound on an answer's size (a sixteenth of its heap, at least 1 MiB, estimated as the memory
-limit estimates rows) and the page ended there, with at least one row. Read on from the last row's `_id`
+the node's bound on an answer's size (a sixteenth of its heap, at least 1 MiB, of JSON in UTF-8 with its
+escapes counted) and the page ended there, with at least one row. Read on from the last row's `_id`
 (QUERY.md, "Reading a large table"). A client that holds answers whole can ask for a smaller bound with
 `"max_bytes": n` (a whole number, at least 1); `serengeti export` asks for 4 MiB. Writes return the number of rows changed, and `INSERT` also the ids:
 

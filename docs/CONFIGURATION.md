@@ -67,6 +67,11 @@ in or not, and cannot be changed:
   been sending its headers longest, or else its body, or else waiting for a write to be taken, if for a
   second or more. Otherwise the connection waits for a thread.
 
+`GET /health` and `GET /ready` take none of the `http_threads`, so a liveness or readiness probe is answered
+while every one of them is in use. Node-to-node requests that carry the cluster key have an eighth of
+`http_threads` (at least 4) kept for them, and wait for the others as any request does when those are taken,
+so replication and sync go on while clients hold every shared one.
+
 Each thread reserves 1 MiB for its stack and uses only the pages it reaches: a 1 GiB node held 276 MiB with
 1,000 connections sending their headers slowly, against 111 MiB with 64 (`tests/slow/run.sh` on a
 c7g.4xlarge). Past `http_connections`, connections wait or take a slow client's thread: with 3,000

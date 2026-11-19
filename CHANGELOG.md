@@ -312,8 +312,8 @@ GitHub release notes and tags.
   slowly or not reading 4 MB answers, from one address or four, over plain HTTP and TLS (`tests/slow/run.sh`:
   a 1 GiB node in Docker on a c7g.4xlarge, 60 s a case). `serengeti_http_cut_total{reason}` counts the
   connections closed. See docs/CONFIGURATION.md, "Slow clients", and `tests/slow/run.sh`.
-- A SELECT's rows hold at most a sixteenth of the node's heap (at least 1 MiB), as the memory limit
-  estimates them. The node builds an answer whole, so 10,000 rows of 100 kB would run it out of heap (2.1
+- A SELECT's rows hold at most a sixteenth of the node's heap (at least 1 MiB) of JSON in UTF-8, escapes
+  counted. The node builds an answer whole, so 10,000 rows of 100 kB would run it out of heap (2.1
   too). A page past the bound ends early, with at least one row, and `truncated` is true, with LIMIT too:
   read on from its last `_id`. A request may ask for a smaller bound with `"max_bytes": n`; `serengeti
   export` asks for 4 MiB. See docs/API.md.

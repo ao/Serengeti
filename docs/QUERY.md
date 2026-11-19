@@ -521,8 +521,8 @@ answers:
   argument), and with GROUP BY or DISTINCT at most 10,000 groups. A LIMIT above the cap is an error.
   Without LIMIT, if more rows or groups match (after HAVING and OFFSET), the first 10,000 are returned
   and `truncated` is true. COUNT(*) is not capped.
-- A SELECT's rows hold at most a sixteenth of the node's heap (at least 1 MiB), as the memory limit
-  estimates them: a page that would hold more ends early, with at least one row, and `truncated` is true,
+- A SELECT's rows hold at most a sixteenth of the node's heap (at least 1 MiB) of JSON in UTF-8, escapes
+  counted: a page that would hold more ends early, with at least one row, and `truncated` is true,
   with LIMIT too. A keyset page goes on from its last `_id`.
 - OFFSET plus LIMIT, or OFFSET plus the cap without LIMIT, is at most 100,000 (`Executor.MAX_OFFSET_ROWS`;
   see "LIMIT and OFFSET").

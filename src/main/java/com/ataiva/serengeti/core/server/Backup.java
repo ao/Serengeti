@@ -33,7 +33,8 @@ public final class Backup {
 
     /**
      * Sends the snapshot as {@code application/octet-stream}. The operations are already a consistent copy, so
-     * the response can take as long as the client needs. A client that disconnects part way gets a file with no
+     * the response can take as long as the client keeps taking it (a write it does not take within 30 s closes
+     * the connection, see ClientLimits). A client that disconnects part way gets a file with no
      * trailer, which {@link #restore} refuses.
      */
     static void send(HttpExchange ex, Path file) throws IOException {

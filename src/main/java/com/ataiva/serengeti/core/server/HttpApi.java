@@ -214,7 +214,14 @@ public final class HttpApi implements AutoCloseable {
                         throw new HttpError(503, "this node is stopping");
                     }
                     readAhead(ex, slot);
-                    if (!limits.acquire(slot)) {
+                    String path = ex.getRequestURI().getPath();
+                    // /health and /ready read a flag each: they answer without a permit, so a liveness probe
+                    // passes on a node whose permits are all in use (review 22n).
+                    boolean light = path.equals("/health") || path.equals("/ready");
+                    InternalRoutes peers = deps.internal();
+                    boolean peer = path.startsWith("/internal/") && peers != null
+                            && peers.authorized(ex.getRequestHeaders().getFirst(InternalRoutes.KEY_HEADER));
+                    if (!light && !limits.acquire(slot, peer)) {
                         HttpError busy = new HttpError(503, "busy: every request thread is in use; try again");
                         busy.retryAfter = 1;
                         throw busy;
@@ -1126,7 +1133,67 @@ public final class HttpApi implements AutoCloseable {
         StringBuilder b = new StringBuilder();
         Json.write(body, b);
         b.append('\n');
-        send(ex, status, "application/json; charset=utf-8", b.toString().getBytes(StandardCharsets.UTF_8));
+        // Encoded slice by slice as it is written: the text, a String of it and its bytes held at once were three
+        // copies of the answer, and a SELECT of escaped text ran a 1 GiB node out of heap (review 22n).
+        sendText(ex, status, "application/json; charset=utf-8", b);
+    }
+
+    /** As {@link #send}, for text encoded in UTF-8 as it is written, so that only the text is held whole. */
+    private static void sendText(HttpExchange ex, int status, String type, CharSequence text) throws IOException {
+        long length = utf8Length(text);
+        ex.getResponseHeaders().set("Content-Type", type);
+        ClientLimits.Slot s = ClientLimits.slot();
+        if (s != null) {
+            s.owner.unsent(s, length);
+        }
+        try {
+            ClientLimits.sendHeaders(ex, status, length == 0 ? -1 : length);
+            try (OutputStream out = ex.getResponseBody()) {
+                java.nio.charset.CharsetEncoder enc = StandardCharsets.UTF_8.newEncoder()
+                        .onMalformedInput(java.nio.charset.CodingErrorAction.REPLACE)
+                        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPLACE)
+                        .replaceWith(new byte[] {'?'});
+                java.nio.CharBuffer in = java.nio.CharBuffer.wrap(text);
+                java.nio.ByteBuffer slice = java.nio.ByteBuffer.allocate(WRITE_SLICE);
+                boolean more = true;
+                while (more) {
+                    java.nio.charset.CoderResult r = enc.encode(in, slice, true);
+                    if (r.isUnderflow()) {
+                        enc.flush(slice);
+                        more = false;
+                    }
+                    if (slice.position() > 0) {
+                        out.write(slice.array(), 0, slice.position());
+                        slice.clear();
+                    }
+                }
+            }
+        } finally {
+            if (s != null) {
+                s.owner.sent(s);
+            }
+        }
+    }
+
+    /** The bytes {@code text} takes in UTF-8, as String.getBytes makes them (a lone surrogate is one '?'). */
+    static long utf8Length(CharSequence text) {
+        long n = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c < 0x80) {
+                n += 1;
+            } else if (c < 0x800) {
+                n += 2;
+            } else if (Character.isHighSurrogate(c) && i + 1 < text.length() && Character.isLowSurrogate(text.charAt(i + 1))) {
+                n += 4;
+                i++;
+            } else if (Character.isSurrogate(c)) {
+                n += 1;
+            } else {
+                n += 3;
+            }
+        }
+        return n;
     }
 
     /**

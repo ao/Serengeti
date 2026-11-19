@@ -39,7 +39,7 @@ public final class Executor {
     private final int maxGroups;
     private final int maxDistinct;
     /**
-     * The most bytes the rows of one SELECT's answer may hold, by {@link com.ataiva.serengeti.core.storage.Weight}:
+     * The most bytes the rows of one SELECT's answer may hold, as JSON in UTF-8 (escapes counted, review 22n):
      * the node builds an answer whole, as text and then bytes, so 10,000 rows of 100 kB ran it out of heap. Past
      * this a page ends early (with at least one row) and says {@code truncated}, so the client reads on after its
      * last _id (review 22l). A sixteenth of the heap, at least 1 MiB.
@@ -1154,7 +1154,7 @@ public final class Executor {
             for (String c : columns) {
                 Object v = get(m.id, m.row, c);
                 r.add(v);
-                w += 8 + com.ataiva.serengeti.core.storage.Weight.ofAnswerValue(v);
+                w += 1 + com.ataiva.serengeti.core.json.Json.estimate(v);
             }
             if (!rows.isEmpty() && bytes + w > bound) {
                 // More rows follow; the client reads on after the last _id of this page (see maxAnswerBytes).
