@@ -884,6 +884,20 @@ public final class Users {
     /** What a merge did: names changed, and entries left out for being stamped too far ahead. */
     public record Merged(int changed, int ahead) {}
 
+    private static final java.util.logging.Logger LOG = java.util.logging.Logger.getLogger(Users.class.getName());
+
+    /** Names whose entry from a peer could not be read, logged once each (bounded, so a peer cannot grow it). */
+    private final java.util.Set<String> unreadable = ConcurrentHashMap.newKeySet();
+
+    private void skipped(Object entry, RuntimeException why) {
+        Object name = entry instanceof Map<?, ?> m ? m.get("name") : null;
+        String key = name instanceof String s ? (s.length() <= 64 ? s : s.substring(0, 64) + "...") : "?";
+        if (unreadable.size() < 1_000 && unreadable.add(key)) {
+            LOG.warning("left out an account entry from a peer that this node cannot read (" + key + "): "
+                    + why.getMessage() + "; the other accounts merge");
+        }
+    }
+
     /** {@link #mergeFrom}, returning only how many names changed. */
     public int merge(List<?> entries) throws IOException {
         return mergeFrom(entries).changed();
@@ -895,9 +909,10 @@ public final class Users {
      * order-independent. Writes the files
      * when any name changed. An entry with any stamp more than
      * {@link #MAX_AHEAD_MILLIS} ahead of this node's clock is left out (and counted), as row changes are: the
-     * peer sends it again once the clocks agree.
+     * peer sends it again once the clocks agree. An entry this node cannot read is left out and logged (once a
+     * name), and the others merge.
      *
-     * @throws IllegalArgumentException if an entry is malformed; nothing is merged then
+     * @throws IllegalArgumentException if there are more than MAX_ENTRIES entries; nothing is merged then
      */
     public Merged mergeFrom(List<?> entries) throws IOException {
         if (entries.size() > MAX_ENTRIES) {
@@ -907,7 +922,16 @@ public final class Users {
         long limit = clock.getAsLong() + MAX_AHEAD_MILLIS;
         int ahead = 0;
         for (Object o : entries) {
-            Map.Entry<String, Account> e = parse(o, true);
+            Map.Entry<String, Account> e;
+            try {
+                e = parse(o, true);
+            } catch (IllegalArgumentException | ClassCastException bad) {
+                // One entry this node cannot read (a later version's form, say) must not hold back every other
+                // account change from the peer, deletes and narrowed lists included (review 22m): it is left
+                // out, as it is, and the rest merge. The peer sends it again each round.
+                skipped(o, bad);
+                continue;
+            }
             Account a = e.getValue();
             if (a.last().wall() > limit) {
                 ahead++;

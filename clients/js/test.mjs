@@ -77,6 +77,8 @@ test("an account limited to some databases", async () => {
   const made = await db.setUser("js-shop", { password: "shop password 1", role: "write", databases: ["JS"] });
   try {
     assert.deepEqual(made, { user: "js-shop", role: "write", databases: ["js"] });
+    assert.deepEqual((await db.accounts()).find((a) => a.user === "js-shop"), made);
+    assert.equal((await db.users())["js-shop"], "write");
     const shop = new Client({ urls: URL, user: "js-shop", password: "shop password 1" });
     assert.equal((await shop.query("INSERT INTO js.items (_id) VALUES ('js-shop')")).affected, 1);
     assert.deepEqual([...(await shop.query("SHOW DATABASES"))], [["js"]]);

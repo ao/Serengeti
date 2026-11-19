@@ -62,7 +62,8 @@ GitHub release notes and tags.
   has other tables of it, the table (`this account may not use table D.T`). `SHOW DATABASES` lists the
   databases the list names, whole or by a table, and `SHOW TABLES` only the tables it gives. The role still
   applies. Admin and metrics accounts cannot have a list (400). The list replicates with the account as one
-  part, and a node refuses an account whose list is malformed. A limited account is not written to
+  part, and a node leaves out (and logs) an account from a peer whose entry it cannot read, a malformed
+  list among them, while the other accounts of that peer's batch merge. A limited account is not written to
   `users.json`, so it does not exist after a rollback to 2.0 or 2.1. Each statement type states what it
   reaches (a database, a table, a database's tables, or the list of databases) in one place, so a statement
   added later does not compile until that is decided. `serengeti import --create` runs CREATE DATABASE only

@@ -185,7 +185,12 @@ class Client:
     # ---- accounts (admin) ----
 
     def users(self):
-        return {u["user"]: u["role"] for u in self._call("GET", "/v1/users", None, retry=True)["users"]}
+        """Every account's role, by name. ``accounts()`` also gives each account's list of databases and tables."""
+        return {u["user"]: u["role"] for u in self.accounts()}
+
+    def accounts(self):
+        """Every account as the node lists it: ``{"user", "role"}``, and ``"databases"`` for a limited one."""
+        return self._call("GET", "/v1/users", None, retry=True)["users"]
 
     def set_user(self, name, password=None, role=None, databases=_KEEP):
         """Create or change an account; what is left out stays as it is.

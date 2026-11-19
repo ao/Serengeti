@@ -43,7 +43,7 @@ in an object, `query(statement, { ack, consistency, maxBytes })`, and ignores an
   cursor)`, JavaScript `{ changes, cursor }`), and `follow(db, table)`, which yields changes as they come,
   from now on. Cursors belong to one node, so both use the first URL. A cursor outlives a restart of that
   node: after `Unavailable`, call `changes` again with the last cursor.
-- `users()`, `set_user` / `setUser` (password, role and `databases`: a list of databases and `db.table`
+- `users()` (each account's role), `accounts()` (each account with its list), `set_user` / `setUser` (password, role and `databases`: a list of databases and `db.table`
   names limits the account to those, None or null removes the limit, left out keeps it), `delete_user` /
   `deleteUser` (an admin's) and `status()`.
 - Errors carry the HTTP status and the node's message (Python `serengeti.Error`, JavaScript

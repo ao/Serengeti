@@ -219,9 +219,14 @@ export class Client {
     }
   }
 
+  // Every account's role, by name. accounts() also gives each account's list of databases and tables.
   async users() {
-    const out = await this.#call("GET", "/v1/users", undefined, true);
-    return Object.fromEntries(out.users.map((u) => [u.user, u.role]));
+    return Object.fromEntries((await this.accounts()).map((u) => [u.user, u.role]));
+  }
+
+  // Every account as the node lists it: { user, role }, and databases for a limited one.
+  async accounts() {
+    return (await this.#call("GET", "/v1/users", undefined, true)).users;
   }
 
   // Creates or changes an account; what is left out stays as it is. `databases` limits a read or write

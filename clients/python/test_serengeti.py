@@ -89,6 +89,8 @@ class ClientTest(unittest.TestCase):
         made = self.db.set_user("py-shop", password="shop password 1", role="write", databases=["PY"])
         try:
             self.assertEqual(made, {"user": "py-shop", "role": "write", "databases": ["py"]})
+            self.assertIn(made, self.db.accounts())
+            self.assertEqual(self.db.users()["py-shop"], "write")
             shop = serengeti.Client(URL, "py-shop", "shop password 1")
             self.assertEqual(shop.query("INSERT INTO py.items (_id) VALUES ('py-shop')")["affected"], 1)
             self.assertEqual(list(shop.query("SHOW DATABASES")), [("py",)])

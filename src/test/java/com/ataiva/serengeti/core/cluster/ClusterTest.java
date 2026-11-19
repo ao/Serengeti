@@ -423,7 +423,7 @@ class ClusterTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void aListOfDatabasesMadeOnOneNodeHoldsOnEveryNodeAndAMalformedOneIsRefused() throws Exception {
+    void aListOfDatabasesMadeOnOneNodeHoldsOnEveryNodeAndAMalformedOneIsLeftOut() throws Exception {
         for (int i = 0; i < 3; i++) {
             start(i);
         }
@@ -470,7 +470,9 @@ class ClusterTest {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("users", List.of(e))))).build(),
                     HttpResponse.BodyHandlers.ofString());
-            assertEquals(400, r.statusCode(), bad + ": " + r.body());
+            // Left out, the rest of a batch merging (review 22m); nothing of it is taken.
+            assertEquals(200, r.statusCode(), bad + ": " + r.body());
+            assertEquals(0L, Json.parseObject(r.body()).get("merged"), bad + ": " + r.body());
         }
         assertEquals(403, as(0, "app", pw, "POST", "/v1/query", inE), "still limited");
         assertEquals(200, as(0, "app", pw, "POST", "/v1/query", inD));
@@ -550,7 +552,9 @@ class ClusterTest {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(Json.write(Map.of("users", List.of(e))))).build(),
                     HttpResponse.BodyHandlers.ofString());
-            assertEquals(400, r.statusCode(), bad + ": " + r.body());
+            // Left out, the rest of a batch merging (review 22m); nothing of it is taken.
+            assertEquals(200, r.statusCode(), bad + ": " + r.body());
+            assertEquals(0L, Json.parseObject(r.body()).get("merged"), bad + ": " + r.body());
         }
         assertEquals(200, as(0, "app", pw, "POST", "/v1/query", q("SELECT * FROM d.u")), "the list is as it was");
         assertEquals(403, as(0, "app", pw, "POST", "/v1/query", q("SELECT * FROM e.t")));

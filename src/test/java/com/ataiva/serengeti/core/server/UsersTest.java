@@ -244,20 +244,26 @@ class UsersTest {
     }
 
     @Test
-    void malformedEntriesFromAPeerAreRefusedWhole() throws IOException {
+    void malformedEntriesFromAPeerAreLeftOutAndTheRestMerge() throws IOException {
         Users a = node("a");
         a.setPassword("admin", PW, Users.Role.ADMIN);
         String before = a.digest();
         var good = new java.util.LinkedHashMap<String, Object>(a.entries().get(0));
         good.put("user", "ok");
-        for (var bad : java.util.List.<java.util.Map<String, Object>>of(
+        List<java.util.Map<String, Object>> bads = java.util.List.<java.util.Map<String, Object>>of(
                 java.util.Map.of("user", "x", "at", "5.0.n", "hash", "plain", "role", "write"),
                 java.util.Map.of("user", "a b", "at", "5.0.n", "deleted", true),
                 java.util.Map.of("user", "x", "hash", a.entries().get(0).get("hash"), "role", "write"),
-                java.util.Map.of("user", "x", "at", "5.0.n", "hash", a.entries().get(0).get("hash"), "role", "root"))) {
-            assertThrows(IllegalArgumentException.class, () -> a.merge(java.util.List.of(good, bad)), bad.toString());
+                java.util.Map.of("user", "x", "at", "5.0.n", "hash", a.entries().get(0).get("hash"), "role", "root"));
+        for (var bad : bads) {
+            assertEquals(0, a.merge(java.util.List.of(bad)), bad.toString());
         }
-        assertEquals(before, a.digest(), "nothing of a refused batch was merged");
+        assertEquals(before, a.digest(), "nothing of an entry left out was merged");
+        // The readable entries of a batch merge, and none of the unreadable ones (review 22m).
+        List<Object> batch = new java.util.ArrayList<>(bads);
+        batch.add(good);
+        assertEquals(1, a.merge(batch));
+        assertEquals(List.of("admin", "ok"), a.entries().stream().map(e -> (String) e.get("user")).toList());
     }
 
     @Test
@@ -454,7 +460,7 @@ class UsersTest {
     }
 
     @Test
-    void aMalformedListFromAPeerIsRefusedWholeAndNeverReadAsNoLimit() throws IOException {
+    void aMalformedListFromAPeerIsLeftOutAndNeverReadAsNoLimit() throws IOException {
         Users a = node("a");
         Users b = node("b");
         a.setPassword("admin", PW, Users.Role.ADMIN);
@@ -474,7 +480,7 @@ class UsersTest {
         for (Object bad : bads) {
             var entry = new java.util.LinkedHashMap<String, Object>(good);
             entry.put("databases", bad);
-            assertThrows(IllegalArgumentException.class, () -> b.merge(List.of(a.entries().get(0), entry)), String.valueOf(bad));
+            assertEquals(0, b.merge(List.of(a.entries().get(0), entry)), String.valueOf(bad)); // left out
         }
         // A list on a tombstone.
         var tomb = new java.util.LinkedHashMap<String, Object>();
@@ -482,8 +488,8 @@ class UsersTest {
         tomb.put("at", "5000.0.a");
         tomb.put("deleted", true);
         tomb.put("databases", List.of("shop"));
-        assertThrows(IllegalArgumentException.class, () -> b.merge(List.of(tomb)));
-        assertEquals(before, b.digest(), "nothing of a refused batch was merged");
+        assertEquals(0, b.merge(List.of(tomb)));
+        assertEquals(before, b.digest(), "nothing of an entry left out was merged");
         assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop"))), b.authenticate("app", PW));
         // The same holds for this node's own file: it does not start rather than read the account as unlimited.
         Path f = dir.resolve("b").resolve(Users.ACCOUNTS_FILE);
@@ -660,7 +666,7 @@ class UsersTest {
                 java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2b$12$" + salt, "role", "write"),
                 java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2y$12$" + salt, "role", "write"),
                 java.util.Map.of("user", "x", "at", "5.0.n", "hash", "$2a$12$" + "!".repeat(53), "role", "write"))) {
-            assertThrows(IllegalArgumentException.class, () -> a.merge(java.util.List.of(bad)), bad.toString());
+            assertEquals(0, a.merge(java.util.List.of(bad)), bad.toString()); // left out (review 22m)
         }
         // Left out, with the rest of the batch taken: stamps from the future, also one at the counter's limit.
         Users.Merged m = a.mergeFrom(java.util.List.of(
@@ -979,7 +985,7 @@ class UsersTest {
                 java.util.Map.of("user", "x", "at", "5.0.n", "role", "write"), // no hash
                 java.util.Map.of("user", "x", "at", "5.0.n", "cred_at", "6.0.n", "role", "write"), // no hash either
                 java.util.Map.of("user", "x", "at", "5.0.n", "cred_at", "6.0.n", "hash", false, "role", "write"))) {
-            assertThrows(IllegalArgumentException.class, () -> a.merge(List.of(bad)), bad.toString());
+            assertEquals(0, a.merge(List.of(bad)), bad.toString()); // left out (review 22m)
         }
         assertEquals(before, a.digest());
         for (String key : List.of("made_at", "at", "db_at", "cred_at", "pw_at")) {
@@ -1401,13 +1407,13 @@ class UsersTest {
 
     /** A peer's entry whose table entries are not in the form every node writes is refused, with its batch. */
     @Test
-    void aMalformedTableEntryFromAPeerIsRefusedWhole() throws IOException {
+    void aMalformedTableEntryFromAPeerIsLeftOutAndTheRestMerge() throws IOException {
         Users a = node("a");
         Users b = node("b");
         a.setPassword("admin", PW, Users.Role.ADMIN);
         a.change("app", PW, Users.Role.WRITE, Users.Limit.to(List.of("shop.orders")));
+        a.change("other", PW, Users.Role.WRITE, Users.Limit.to(List.of("crm")));
         b.merge(a.entries());
-        String before = b.digest();
         var good = new java.util.LinkedHashMap<String, Object>(entryOf(a, "app"));
         assertEquals(List.of("shop.orders"), good.get("databases"));
         good.put("at", "5000.0.a");
@@ -1417,9 +1423,15 @@ class UsersTest {
                 List.of("shop/orders"), List.of("shop.or-ders"), List.of("shop." + "x".repeat(64)))) {
             var entry = new java.util.LinkedHashMap<String, Object>(good);
             entry.put("databases", bad);
-            assertThrows(IllegalArgumentException.class, () -> b.merge(List.of(entryOf(a, "admin"), entry)), bad.toString());
+            assertEquals(0, b.merge(List.of(entryOf(a, "admin"), entry)), bad.toString());
         }
-        assertEquals(before, b.digest(), "nothing of a refused batch was merged");
+        // A newer change of another account in the same batch as an unreadable entry merges (review 22m: one
+        // unreadable entry held back every account change from the peer).
+        a.change("other", PW, Users.Role.READ, Users.Limit.to(List.of("crm")));
+        var bad = new java.util.LinkedHashMap<String, Object>(good);
+        bad.put("databases", List.of("shop..orders"));
+        assertEquals(1, b.merge(List.of(entryOf(a, "other"), bad)));
+        assertEquals(Optional.of(new Users.Access(Users.Role.READ, List.of("crm"))), b.authenticate("other", PW));
         assertEquals(Optional.of(new Users.Access(Users.Role.WRITE, List.of("shop.orders"))), b.authenticate("app", PW));
         // The stored form is checked for shape only: a table named by a word that is a keyword is read.
         var reserved = new java.util.LinkedHashMap<String, Object>(good);

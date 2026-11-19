@@ -385,7 +385,7 @@ Serengeti's code.
 |---|---|
 | 400 | The body is not the expected JSON, the query is invalid, or an account change the rules in [Accounts](#accounts) refuse. Query errors give the position: `expected FROM at position 9`. |
 | 401 | Missing or wrong credentials. The response has `WWW-Authenticate: Basic realm="serengeti", charset="UTF-8"`. |
-| 403 | Wrong setup token, a request other than GET whose `Origin` header does not match its `Host` header, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin, anything but `/metrics`, `/v1/status` and `/v1/password` by a metrics account), or a statement or `GET /v1/changes` that names a database a limited account does not have (`this account may not use database D`). |
+| 403 | Wrong setup token, a request other than GET whose `Origin` header does not match its `Host` header, or a statement or route the account's role does not allow (a write by a read account, accounts or backups by an account that is not admin, anything but `/metrics`, `/v1/status` and `/v1/password` by a metrics account), or a statement or `GET /v1/changes` that names a database or table a limited account does not have (`this account may not use database D`, `... may not use table D.T`, or `... may not use database D as a whole, only some of its tables`). |
 | 404 | No such route, whatever the method; no such account (`DELETE /v1/users/NAME`); the change feed on a node with `changes_buffer` 0. |
 | 405 | Wrong method for the route. `Allow` names the methods it takes. |
 | 409 | Setup when an admin password exists, or deleting or demoting the last admin. |
