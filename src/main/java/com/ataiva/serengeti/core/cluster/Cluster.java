@@ -636,7 +636,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             return CompletableFuture.failedFuture(new Superseded());
         }
         List<Integer> page = List.copyOf(differ.subList(from, Math.min(differ.size(), from + buckets)));
-        return limiter.run(() -> client.rows(p.address, db, table, page)).thenCompose(ops -> {
+        // Checked again once the limiter lets the page go: a page that waited there for a read that has since
+        // answered or given up is not asked for (from 2.2, bde4274: on 4 CPUs CatchUpSyncTest saw 4 such pages).
+        return limiter.run(() -> stop.getAsBoolean() ? CompletableFuture.<List<Op>>failedFuture(new Superseded())
+                : client.rows(p.address, db, table, page)).thenCompose(ops -> {
             p.lastContact = clock.getAsLong();
             int n = mergeOrThrow(ops);
             int next = nextPullBuckets(page.size(), ops.size(), estimateBytes(ops));
@@ -759,8 +762,10 @@ public final class Cluster implements StorageEngine.WriteHooks, InternalRoutes, 
             }
             List<CompletableFuture<List<Op>>> pulls = new ArrayList<>();
             for (String db : differ) {
-                // Each answer is a whole database: through the same limit as the row pages (review 22d).
-                pulls.add((readDone != null ? readPullLimiter : pullLimiter).run(() -> client.state(p.address, db)));
+                // Each answer is a whole database: through the same limit as the row pages (review 22d), and not
+                // asked for once the read it waited for is done.
+                pulls.add((readDone != null ? readPullLimiter : pullLimiter).run(() -> readDone != null && readDone.get()
+                        ? CompletableFuture.<List<Op>>failedFuture(new Superseded()) : client.state(p.address, db)));
             }
             List<CompletableFuture<Integer>> merged = new ArrayList<>();
             for (CompletableFuture<List<Op>> f : pulls) {
