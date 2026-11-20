@@ -4,7 +4,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases up to 1.3.4 are described in their
 GitHub release notes and tags.
 
-## [Unreleased] - 2.1.0
+## [2.1.0] - 2026-11-20
 
 ### Added
 - Writes that do not wait for a majority: `"ack": "local"` on a query, or `SERENGETI_WRITE_ACK=local` as a
@@ -83,6 +83,14 @@ GitHub release notes and tags.
 
 ### Removed
 - org.json, lz4-java and snappy-java, which the 2.0 jar contained but did not use.
+
+### Known issues, fixed in 2.2.0
+- Two different deletes of one row look equal to sync, which compares live rows only: a node that holds
+  the older delete does not get the newer one. A write made meanwhile on a node that was cut off,
+  concurrent with both deletes and older than the newer one, can then show as the row's value on that
+  node, also to a majority read.
+- In a cluster, a statement right after a CREATE DATABASE, TABLE or INDEX can reach a node the change has
+  not reached yet and get `does not exist`, for example behind a load balancer. Retrying it works.
 
 ## [2.0.0] - 2026-11-13
 
