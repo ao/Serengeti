@@ -4,7 +4,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases up to 1.3.4 are described in their
 GitHub release notes and tags.
 
-## [Unreleased] - 2.2.0
+## [2.2.0] - 2026-11-23
 
 ### Added
 - `serengeti-certs` in the image makes a cluster's CA, node key stores, trust store and password with
