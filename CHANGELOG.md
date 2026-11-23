@@ -359,7 +359,7 @@ GitHub release notes and tags.
   pattern for each record. The text is the same. Lookups by `_id` at 8 clients went from 14,633 to 20,767
   a second on one node (2.1: 16,643; EC2 c7g.2xlarge, docs/BENCHMARKS.md).
 
-## [Unreleased] - 2.1.0
+## [2.1.0] - 2026-11-23
 
 ### Added
 - Writes that do not wait for a majority: `"ack": "local"` on a query, or `SERENGETI_WRITE_ACK=local` as a
@@ -387,6 +387,32 @@ GitHub release notes and tags.
   acknowledged while cut off are not lost.
 
 ### Fixed
+- A node answering large requests (a SELECT of 20 MB, say) could be killed by the kernel (2.0.0 too): each
+  answer went to the socket in one write, and the JDK keeps a direct buffer of the largest write per thread,
+  outside the heap. Answers are written in slices of 64 KiB, and the image sets
+  `-Djdk.nio.maxCachedBufferSize=262144`. Found by 2.2's fourth review.
+- A node that had missed writes could run itself and its peers out of heap while catching up: it asked
+  every peer at once for the rows of every differing bucket, in pages of 200 buckets, and a few thousand
+  missed inserts touch most buckets. A node now runs at most two background row pulls at once, and four
+  more for majority reads, sizes each page from the last (about 2,000 rows or 4 MiB), and builds at most
+  four pages for its peers at once, answering 503 to more. Found by 2.2's soak test;
+  `tests/memory/catchup.sh` reproduces it.
+- A running node sometimes answered nothing for 20 to 83 s (2.0.0 has this too). It set the JDK server's
+  60 s limit on reading a response; the server closes an overdue connection while holding the set that
+  every request passes through, and closing a TLS connection waits for a write blocked on a peer that
+  stopped reading, so every request thread waited. There is no response limit now; the 30 s limit on
+  sending a request stays. A graceful stop, which could hang the same way until docker killed the node,
+  waits for the HTTP server 3 s at most. Found by the soak test on the 2.2 branch.
+- A node that was stopping answered 500 for about a second, also to writes it had already logged: it closed
+  its cluster layer before its HTTP server. It now stops the HTTP server first and answers what still
+  arrives with 503 "this node is stopping".
+- A string holding an unpaired UTF-16 surrogate (`'\ud800'`) was stored as `?`, so two such `_id`s became one
+  row after a restart. JSON with an unpaired surrogate, a body that is not valid UTF-8, and a body that
+  cannot be read (a malformed chunked body) are now refused with 400; `\u` escapes take ASCII hex only.
+- Nothing stopped a second node from opening a data directory in use (a second container on the same
+  volume), and both would write the same log. A node holds a lock on `data_dir/lock`; a second one stops
+  with exit status 2. `serengeti restore` takes the lock too.
+- A SELECT listing tens of thousands of columns ran the node out of memory; a SELECT lists at most 256.
 - A peer that does not answer no longer makes the others look unreachable. Each sync round waited for
   every peer in turn, so while a cut-off peer's calls ran to their timeout the reachable peers went
   uncontacted for longer than the 3-second window, and a node that had a majority refused writes with
@@ -412,6 +438,14 @@ GitHub release notes and tags.
 
 ### Removed
 - org.json, lz4-java and snappy-java, which the 2.0 jar contained but did not use.
+
+### Known issues, fixed in 2.2.0
+- Two different deletes of one row look equal to sync, which compares live rows only: a node that holds
+  the older delete does not get the newer one. A write made meanwhile on a node that was cut off,
+  concurrent with both deletes and older than the newer one, can then show as the row's value on that
+  node, also to a majority read.
+- In a cluster, a statement right after a CREATE DATABASE, TABLE or INDEX can reach a node the change has
+  not reached yet and get `does not exist`, for example behind a load balancer. Retrying it works.
 
 ## [2.0.0] - 2026-11-13
 
